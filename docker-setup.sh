@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 EXTRA_COMPOSE_FILE="$ROOT_DIR/docker-compose.extra.yml"
+# Load .env so OPENCLAW_* vars (e.g. OPENCLAW_EXTRA_MOUNTS) are applied when running this script
+if [[ -f "$ROOT_DIR/.env" ]]; then set -a; source "$ROOT_DIR/.env"; set +a; fi
 IMAGE_NAME="${OPENCLAW_IMAGE:-openclaw:local}"
 EXTRA_MOUNTS="${OPENCLAW_EXTRA_MOUNTS:-}"
 HOME_VOLUME_NAME="${OPENCLAW_HOME_VOLUME:-}"
@@ -26,6 +28,12 @@ OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}"
 
 mkdir -p "$OPENCLAW_CONFIG_DIR"
 mkdir -p "$OPENCLAW_WORKSPACE_DIR"
+
+# Ensure container user (node, uid 1000) can write to config dir.
+# When running as root, the dir is root-owned and the container gets EACCES.
+if [[ "$(id -u)" = "0" ]]; then
+  chown -R 1000:1000 "$OPENCLAW_CONFIG_DIR" "$OPENCLAW_WORKSPACE_DIR"
+fi
 
 export OPENCLAW_CONFIG_DIR
 export OPENCLAW_WORKSPACE_DIR
@@ -168,7 +176,10 @@ upsert_env "$ENV_FILE" \
   OPENCLAW_IMAGE \
   OPENCLAW_EXTRA_MOUNTS \
   OPENCLAW_HOME_VOLUME \
-  OPENCLAW_DOCKER_APT_PACKAGES
+  OPENCLAW_DOCKER_APT_PACKAGES \
+  CLAUDE_AI_SESSION_KEY \
+  CLAUDE_WEB_SESSION_KEY \
+  CLAUDE_WEB_COOKIE
 
 echo "==> Building Docker image: $IMAGE_NAME"
 docker build \

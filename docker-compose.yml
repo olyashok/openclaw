@@ -4,13 +4,17 @@ services:
     environment:
       HOME: /home/node
       TERM: xterm-256color
+      SHAPE_ROOT_DIR: /artifacts/shape
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      SHORTCUT_API_KEY: ${SHORTCUT_API_KEY}
+      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      - /root/marker:/home/node/marker
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
       - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
@@ -37,9 +41,12 @@ services:
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      SHORTCUT_API_KEY: ${SHORTCUT_API_KEY}
+      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      - /root/marker:/home/node/marker
     stdin_open: true
     tty: true
     init: true
