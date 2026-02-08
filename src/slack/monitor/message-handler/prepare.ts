@@ -45,6 +45,7 @@ import { resolveSlackEffectiveAllowFrom } from "../auth.js";
 import { resolveSlackChannelConfig } from "../channel-config.js";
 import { normalizeSlackChannelType, type SlackMonitorContext } from "../context.js";
 import { resolveSlackMedia, resolveSlackThreadStarter } from "../media.js";
+import { getAttachmentNote } from "../../overrides/attachment-helper.js";
 
 export async function prepareSlackMessage(params: {
   ctx: SlackMonitorContext;
@@ -336,7 +337,11 @@ export async function prepareSlackMessage(params: {
     token: ctx.botToken,
     maxBytes: ctx.mediaMaxBytes,
   });
-  const rawBody = (message.text ?? "").trim() || media?.placeholder || "";
+  const attachmentNote = getAttachmentNote(message.attachments);
+  const textWithAttachmentNote = attachmentNote
+    ? `${(message.text ?? "").trim()}\n\n${attachmentNote}`
+    : (message.text ?? "").trim();
+  const rawBody = textWithAttachmentNote || media?.placeholder || "";
   if (!rawBody) {
     return null;
   }
