@@ -1,4 +1,5 @@
 import { logVerbose } from "../../../globals.js";
+import { getAttachmentNote } from "../../overrides/attachment-helper.js";
 import type { SlackFile, SlackMessageEvent } from "../../types.js";
 import {
   MAX_SLACK_MEDIA_FILES,
@@ -85,10 +86,14 @@ export async function resolveSlackMessageContent(params: {
           .join("\n")
       : undefined;
 
+  // Extract attachment notes (non-forwarded attachment metadata)
+  const attachmentNote = getAttachmentNote(params.message.attachments);
+
   const rawBody =
     [
       (params.message.text ?? "").trim(),
       attachmentContent?.text,
+      attachmentNote,
       botAttachmentText,
       mediaPlaceholder,
       fileOnlyPlaceholder,
