@@ -22,3 +22,7 @@ export function buildSlackSlashCommandMatcher(name: string) {
   const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^/?${escaped}$`);
 }
+
+export function stripSlackMentionsForCommandDetection(text: string): string {
+  return text.replace(/<@[^>]+>/g, "").trim();
+}

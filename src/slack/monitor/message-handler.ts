@@ -6,13 +6,14 @@ import {
   createInboundDebouncer,
   resolveInboundDebounceMs,
 } from "../../auto-reply/inbound-debounce.js";
+import { writeSlackDiagKv } from "./diag.js";
 import { dispatchPreparedSlackMessage } from "./message-handler/dispatch.js";
 import { prepareSlackMessage } from "./message-handler/prepare.js";
 import { createSlackThreadTsResolver } from "./thread-resolution.js";
 
 export type SlackMessageHandler = (
   message: SlackMessageEvent,
-  opts: { source: "message" | "app_mention"; wasMentioned?: boolean },
+  opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean },
 ) => Promise<void>;
 
 export function createSlackMessageHandler(params: {
@@ -25,7 +26,7 @@ export function createSlackMessageHandler(params: {
 
   const debouncer = createInboundDebouncer<{
     message: SlackMessageEvent;
-    opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+    opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean };
   }>({
     debounceMs,
     buildKey: (entry) => {
@@ -57,6 +58,12 @@ export function createSlackMessageHandler(params: {
       if (!last) {
         return;
       }
+      writeSlackDiagKv("diag slack handler onFlush start", {
+        source: last.opts.source,
+        ch: last.message.channel ?? "?",
+        ts: last.message.ts ?? last.message.event_ts ?? "?",
+        entries: entries.length,
+      });
       const combinedText =
         entries.length === 1
           ? (last.message.text ?? "")
@@ -79,6 +86,13 @@ export function createSlackMessageHandler(params: {
         },
       });
       if (!prepared) {
+        writeSlackDiagKv("diag slack handler onFlush prepared=null", {
+          source: last.opts.source,
+          ch: syntheticMessage.channel ?? "?",
+          ts: syntheticMessage.ts ?? syntheticMessage.event_ts ?? "?",
+          files: syntheticMessage.files?.length ?? 0,
+          text_len: (syntheticMessage.text ?? "").length,
+        });
         return;
       }
       if (entries.length > 1) {
@@ -89,7 +103,17 @@ export function createSlackMessageHandler(params: {
           prepared.ctxPayload.MessageSidLast = ids[ids.length - 1];
         }
       }
+      writeSlackDiagKv("diag slack handler dispatch start", {
+        source: last.opts.source,
+        ch: syntheticMessage.channel ?? "?",
+        ts: syntheticMessage.ts ?? syntheticMessage.event_ts ?? "?",
+      });
       await dispatchPreparedSlackMessage(prepared);
+      writeSlackDiagKv("diag slack handler dispatch done", {
+        source: last.opts.source,
+        ch: syntheticMessage.channel ?? "?",
+        ts: syntheticMessage.ts ?? syntheticMessage.event_ts ?? "?",
+      });
     },
     onError: (err) => {
       ctx.runtime.error?.(`slack inbound debounce flush failed: ${String(err)}`);
@@ -97,7 +121,20 @@ export function createSlackMessageHandler(params: {
   });
 
   return async (message, opts) => {
+    writeSlackDiagKv("diag slack handler enter", {
+      source: opts.source,
+      ch: message.channel ?? "?",
+      ts: message.ts ?? message.event_ts ?? "?",
+      subtype: message.subtype ?? "-",
+      files: message.files?.length ?? 0,
+    });
     if (opts.source === "message" && message.type !== "message") {
+      writeSlackDiagKv("diag slack handler drop(non-message type)", {
+        source: opts.source,
+        ch: message.channel ?? "?",
+        ts: message.ts ?? message.event_ts ?? "?",
+        type: message.type,
+      });
       return;
     }
     if (
@@ -106,12 +143,31 @@ export function createSlackMessageHandler(params: {
       message.subtype !== "file_share" &&
       message.subtype !== "bot_message"
     ) {
+      writeSlackDiagKv("diag slack handler drop(subtype)", {
+        source: opts.source,
+        ch: message.channel ?? "?",
+        ts: message.ts ?? message.event_ts ?? "?",
+        subtype: message.subtype ?? "-",
+      });
       return;
     }
-    if (ctx.markMessageSeen(message.channel, message.ts)) {
+    // Let file_shared fallback re-enter even when ts was already seen via the
+    // lightweight event that didn't produce a message turn.
+    if (opts.source !== "file_shared" && ctx.markMessageSeen(message.channel, message.ts)) {
+      writeSlackDiagKv("diag slack handler drop(seen)", {
+        source: opts.source,
+        ch: message.channel ?? "?",
+        ts: message.ts ?? message.event_ts ?? "?",
+      });
       return;
     }
     const resolvedMessage = await threadTsResolver.resolve({ message, source: opts.source });
+    writeSlackDiagKv("diag slack handler enqueue", {
+      source: opts.source,
+      ch: resolvedMessage.channel ?? "?",
+      ts: resolvedMessage.ts ?? resolvedMessage.event_ts ?? "?",
+      files: resolvedMessage.files?.length ?? 0,
+    });
     await debouncer.enqueue({ message: resolvedMessage, opts });
   };
 }

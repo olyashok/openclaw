@@ -11,10 +11,19 @@ import { resolveStorePath, updateLastRoute } from "../../../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../../../globals.js";
 import { removeSlackReaction } from "../../actions.js";
 import { resolveSlackThreadTargets } from "../../threading.js";
+import { writeSlackDiagKv } from "../diag.js";
 import { createSlackReplyDeliveryPlan, deliverReplies } from "../replies.js";
 
 export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessage) {
   const { ctx, account, message, route } = prepared;
+  writeSlackDiagKv("diag dispatch start", {
+    ch: message.channel ?? "?",
+    ts: message.ts ?? message.event_ts ?? "?",
+    replyTarget: prepared.replyTarget ?? "",
+    sessionKey: prepared.ctxPayload.SessionKey ?? "",
+    mediaPath: prepared.ctxPayload.MediaPath ?? "",
+    mediaType: prepared.ctxPayload.MediaType ?? "",
+  });
   const cfg = ctx.cfg;
   const runtime = ctx.runtime;
 
@@ -142,10 +151,24 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
     },
   });
   markDispatchIdle();
+  writeSlackDiagKv("diag dispatch after dispatchInboundMessage", {
+    ch: message.channel ?? "?",
+    ts: message.ts ?? message.event_ts ?? "?",
+    queuedFinal,
+    count_block: counts.block ?? 0,
+    count_final: counts.final ?? 0,
+  });
 
   const anyReplyDelivered = queuedFinal || (counts.block ?? 0) > 0 || (counts.final ?? 0) > 0;
 
   if (!anyReplyDelivered) {
+    writeSlackDiagKv("diag dispatch no reply delivered", {
+      ch: message.channel ?? "?",
+      ts: message.ts ?? message.event_ts ?? "?",
+      queuedFinal,
+      count_block: counts.block ?? 0,
+      count_final: counts.final ?? 0,
+    });
     if (prepared.isRoomish) {
       clearHistoryEntriesIfEnabled({
         historyMap: ctx.channelHistories,
@@ -162,6 +185,12 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       `slack: delivered ${finalCount} reply${finalCount === 1 ? "" : "ies"} to ${prepared.replyTarget}`,
     );
   }
+  writeSlackDiagKv("diag dispatch reply delivered", {
+    ch: message.channel ?? "?",
+    ts: message.ts ?? message.event_ts ?? "?",
+    count_final: counts.final ?? 0,
+    replyTarget: prepared.replyTarget ?? "",
+  });
 
   removeAckReactionAfterReply({
     removeAfterReply: ctx.removeAckAfterReply,

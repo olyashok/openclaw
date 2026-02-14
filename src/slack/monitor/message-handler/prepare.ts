@@ -7,7 +7,6 @@ import { hasControlCommand } from "../../../auto-reply/command-detection.js";
 import { shouldHandleTextCommands } from "../../../auto-reply/commands-registry.js";
 import {
   formatInboundEnvelope,
-  formatThreadStarterEnvelope,
   resolveEnvelopeFormatOptions,
 } from "../../../auto-reply/envelope.js";
 import {
@@ -38,23 +37,33 @@ import { resolveAgentRoute } from "../../../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../../../routing/session-key.js";
 import { buildUntrustedChannelMetadata } from "../../../security/channel-metadata.js";
 import { reactSlackMessage } from "../../actions.js";
+import { getAttachmentNote } from "../../overrides/attachment-helper.js";
 import { sendMessageSlack } from "../../send.js";
 import { resolveSlackThreadContext } from "../../threading.js";
 import { resolveSlackAllowListMatch, resolveSlackUserAllowed } from "../allow-list.js";
 import { resolveSlackEffectiveAllowFrom } from "../auth.js";
 import { resolveSlackChannelConfig } from "../channel-config.js";
+import { stripSlackMentionsForCommandDetection } from "../commands.js";
 import { normalizeSlackChannelType, type SlackMonitorContext } from "../context.js";
+import { writeSlackDiagKv } from "../diag.js";
 import { resolveSlackMedia, resolveSlackThreadStarter } from "../media.js";
-import { getAttachmentNote } from "../../overrides/attachment-helper.js";
 
 export async function prepareSlackMessage(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
   message: SlackMessageEvent;
-  opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+  opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean };
 }): Promise<PreparedSlackMessage | null> {
   const { ctx, account, message, opts } = params;
   const cfg = ctx.cfg;
+  writeSlackDiagKv("diag prepare start", {
+    source: opts.source,
+    ch: message.channel ?? "?",
+    ts: message.ts ?? message.event_ts ?? "?",
+    subtype: message.subtype ?? "-",
+    files: message.files?.length ?? 0,
+    text_len: (message.text ?? "").length,
+  });
 
   let channelInfo: {
     name?: string;
@@ -92,22 +101,39 @@ export async function prepareSlackMessage(params: {
   const isBotMessage = Boolean(message.bot_id);
   if (isBotMessage) {
     if (message.user && ctx.botUserId && message.user === ctx.botUserId) {
+      writeSlackDiagKv("diag prepare drop(self bot)", {
+        ch: message.channel ?? "?",
+        ts: message.ts ?? message.event_ts ?? "?",
+      });
       return null;
     }
     if (!allowBots) {
       logVerbose(`slack: drop bot message ${message.bot_id ?? "unknown"} (allowBots=false)`);
+      writeSlackDiagKv("diag prepare drop(bot disallowed)", {
+        ch: message.channel ?? "?",
+        ts: message.ts ?? message.event_ts ?? "?",
+        bot_id: message.bot_id ?? "?",
+      });
       return null;
     }
   }
 
   if (isDirectMessage && !message.user) {
     logVerbose("slack: drop dm message (missing user id)");
+    writeSlackDiagKv("diag prepare drop(dm missing user)", {
+      ch: message.channel ?? "?",
+      ts: message.ts ?? message.event_ts ?? "?",
+    });
     return null;
   }
 
   const senderId = message.user ?? (isBotMessage ? message.bot_id : undefined);
   if (!senderId) {
     logVerbose("slack: drop message (missing sender id)");
+    writeSlackDiagKv("diag prepare drop(missing sender)", {
+      ch: message.channel ?? "?",
+      ts: message.ts ?? message.event_ts ?? "?",
+    });
     return null;
   }
 
@@ -119,6 +145,12 @@ export async function prepareSlackMessage(params: {
     })
   ) {
     logVerbose("slack: drop message (channel not allowed)");
+    writeSlackDiagKv("diag prepare drop(channel not allowed)", {
+      ch: message.channel ?? "?",
+      ts: message.ts ?? message.event_ts ?? "?",
+      channelName: channelName ?? "?",
+      channelType: resolvedChannelType,
+    });
     return null;
   }
 
@@ -251,7 +283,9 @@ export async function prepareSlackMessage(params: {
     cfg,
     surface: "slack",
   });
-  const hasControlCommandInMessage = hasControlCommand(message.text ?? "", cfg);
+  // Strip Slack mentions (<@U123>) before command detection so "@Labrador /new" is recognized
+  const textForCommandDetection = stripSlackMentionsForCommandDetection(message.text ?? "");
+  const hasControlCommandInMessage = hasControlCommand(textForCommandDetection, cfg);
 
   const ownerAuthorized = resolveSlackAllowListMatch({
     allowList: allowFromLower,
@@ -332,17 +366,56 @@ export async function prepareSlackMessage(params: {
     return null;
   }
 
-  const media = await resolveSlackMedia({
-    files: message.files,
-    token: ctx.botToken,
-    maxBytes: ctx.mediaMaxBytes,
+  const files = message.files ?? [];
+  const oversizedFile = files.find(
+    (file) => typeof file.size === "number" && file.size > ctx.mediaMaxBytes,
+  );
+  const media = oversizedFile
+    ? null
+    : await resolveSlackMedia({
+        files: message.files,
+        token: ctx.botToken,
+        maxBytes: ctx.mediaMaxBytes,
+      });
+  writeSlackDiagKv("diag prepare media resolved", {
+    ch: message.channel ?? "?",
+    ts: message.ts ?? message.event_ts ?? "?",
+    media: media ? "yes" : "no",
+    media_path: media?.path ?? "",
+    media_type: media?.contentType ?? "",
+    files: files.length,
+    oversized_file_name: oversizedFile?.name ?? "",
+    oversized_file_size: oversizedFile?.size ?? 0,
   });
   const attachmentNote = getAttachmentNote(message.attachments);
   const textWithAttachmentNote = attachmentNote
     ? `${(message.text ?? "").trim()}\n\n${attachmentNote}`
     : (message.text ?? "").trim();
-  const rawBody = textWithAttachmentNote || media?.placeholder || "";
+  // For large files, avoid download stalls and provide a reference instead.
+  const firstFile = files[0];
+  const firstFilePermalink = (firstFile as { permalink?: string } | undefined)?.permalink;
+  const filePlaceholder = firstFile?.name
+    ? `[Slack file: ${firstFile.name}]`
+    : files.length
+      ? "[Slack file]"
+      : "";
+  const fileReference = firstFilePermalink
+    ? `${filePlaceholder} ${firstFilePermalink}`
+    : filePlaceholder;
+  const textWithFileReference =
+    textWithAttachmentNote && fileReference
+      ? `${textWithAttachmentNote}\n\n${fileReference}`
+      : textWithAttachmentNote;
+  const rawBody = textWithFileReference || media?.placeholder || fileReference || "";
   if (!rawBody) {
+    writeSlackDiagKv("diag prepare drop(rawBody empty)", {
+      ch: message.channel ?? "?",
+      ts: message.ts ?? message.event_ts ?? "?",
+      text_len: (message.text ?? "").length,
+      files: message.files?.length ?? 0,
+      media: media ? "yes" : "no",
+      attachment_note: attachmentNote ? "yes" : "no",
+    });
     return null;
   }
 
@@ -402,7 +475,11 @@ export async function prepareSlackMessage(params: {
       GroupSubject: isRoomish ? roomLabel : undefined,
       From: slackFrom,
     }) ?? (isDirectMessage ? senderName : roomLabel);
-  const textWithId = `${rawBody}\n[slack message id: ${message.ts} channel: ${message.channel}]`;
+  const threadInfo =
+    isThreadReply && threadTs
+      ? ` thread_ts: ${threadTs}${message.parent_user_id ? ` parent_user_id: ${message.parent_user_id}` : ""}`
+      : "";
+  const textWithId = `${rawBody}\n[slack message id: ${message.ts} channel: ${message.channel}${threadInfo}]`;
   const storePath = resolveStorePath(ctx.cfg.session?.store, {
     agentId: route.agentId,
   });
@@ -460,6 +537,8 @@ export async function prepareSlackMessage(params: {
     systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : undefined;
 
   let threadStarterBody: string | undefined;
+  let threadHistoryBody: string | undefined;
+  let threadSessionPreviousTimestamp: number | undefined;
   let threadLabel: string | undefined;
   let threadStarterMedia: Awaited<ReturnType<typeof resolveSlackMedia>> = null;
   if (isThreadReply && threadTs) {
@@ -469,16 +548,8 @@ export async function prepareSlackMessage(params: {
       client: ctx.app.client,
     });
     if (starter?.text) {
-      const starterUser = starter.userId ? await ctx.resolveUserName(starter.userId) : null;
-      const starterName = starterUser?.name ?? starter.userId ?? "Unknown";
-      const starterWithId = `${starter.text}\n[slack message id: ${starter.ts ?? threadTs} channel: ${message.channel}]`;
-      threadStarterBody = formatThreadStarterEnvelope({
-        channel: "Slack",
-        author: starterName,
-        timestamp: starter.ts ? Math.round(Number(starter.ts) * 1000) : undefined,
-        body: starterWithId,
-        envelope: envelopeOptions,
-      });
+      // Keep thread starter as raw text; metadata is provided out-of-band in the system prompt.
+      threadStarterBody = starter.text;
       const snippet = starter.text.replace(/\s+/g, " ").slice(0, 80);
       threadLabel = `Slack thread ${roomLabel}${snippet ? `: ${snippet}` : ""}`;
       // If current message has no files but thread starter does, fetch starter's files
@@ -497,13 +568,29 @@ export async function prepareSlackMessage(params: {
     } else {
       threadLabel = `Slack thread ${roomLabel}`;
     }
+
+    threadSessionPreviousTimestamp = readSessionUpdatedAt({
+      storePath,
+      sessionKey, // Thread-specific session key
+    });
   }
 
   // Use thread starter media if current message has none
   const effectiveMedia = media ?? threadStarterMedia;
 
+  const inboundHistory =
+    isRoomish && ctx.historyLimit > 0
+      ? (ctx.channelHistories.get(historyKey) ?? []).map((entry) => ({
+          sender: entry.sender,
+          body: entry.body,
+          timestamp: entry.timestamp,
+        }))
+      : undefined;
+
   const ctxPayload = finalizeInboundContext({
     Body: combinedBody,
+    BodyForAgent: rawBody,
+    InboundHistory: inboundHistory,
     RawBody: rawBody,
     CommandBody: rawBody,
     From: slackFrom,
@@ -525,6 +612,9 @@ export async function prepareSlackMessage(params: {
     MessageThreadId: threadContext.messageThreadId,
     ParentSessionKey: threadKeys.parentSessionKey,
     ThreadStarterBody: threadStarterBody,
+    ThreadHistoryBody: threadHistoryBody,
+    IsFirstThreadTurn:
+      isThreadReply && threadTs && !threadSessionPreviousTimestamp ? true : undefined,
     ThreadLabel: threadLabel,
     Timestamp: message.ts ? Math.round(Number(message.ts) * 1000) : undefined,
     WasMentioned: isRoomish ? effectiveWasMentioned : undefined,
@@ -562,12 +652,24 @@ export async function prepareSlackMessage(params: {
 
   const replyTarget = ctxPayload.To ?? undefined;
   if (!replyTarget) {
+    writeSlackDiagKv("diag prepare drop(no replyTarget)", {
+      ch: message.channel ?? "?",
+      ts: message.ts ?? message.event_ts ?? "?",
+      sessionKey,
+    });
     return null;
   }
 
   if (shouldLogVerbose()) {
     logVerbose(`slack inbound: channel=${message.channel} from=${slackFrom} preview="${preview}"`);
   }
+  writeSlackDiagKv("diag prepare success", {
+    ch: message.channel ?? "?",
+    ts: message.ts ?? message.event_ts ?? "?",
+    replyTarget,
+    sessionKey,
+    media: effectiveMedia ? "yes" : "no",
+  });
 
   return {
     ctx,

@@ -44,9 +44,6 @@ RUN pnpm ui:build
 
 ENV NODE_ENV=production
 
-# Marker CLI: Python deps (marker repo mounted at runtime at /home/node/marker)
-RUN python3 -m pip install --no-cache-dir --break-system-packages click requests rich 'pydantic>=2.0.0' && chown -R node:node /usr/local/lib/python3.*/dist-packages /usr/local/bin 2>/dev/null || true
-
 # Bun + qmd wrapper for node user (Bun install is in /root, not readable by node)
 RUN cp -a /root/.bun /app/.bun && chown -R node:node /app/.bun
 RUN mkdir -p /app/bin \
@@ -60,6 +57,22 @@ RUN echo 'export PATH="/app/bin:/app/.bun/bin:${PATH}"' > /etc/profile.d/opencla
 
 # Allow non-root user to write temp files during runtime/tests.
 RUN chown -R node:node /app
+
+# --- Add-ons below here: changes won't invalidate the slow build layers above ---
+
+# Docker CLI (needed for sandbox container management via docker.sock)
+RUN install -m 0755 -d /etc/apt/keyrings \
+  && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+  && chmod a+r /etc/apt/keyrings/docker.asc \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+
+# Infisical CLI for secret injection
+RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | bash \
+  && apt-get update && apt-get install -y docker-ce-cli infisical \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Marker CLI: Python deps (marker repo mounted at runtime at /home/node/marker)
+RUN python3 -m pip install --no-cache-dir --break-system-packages click requests rich 'pydantic>=2.0.0' modal && chown -R node:node /usr/local/lib/python3.*/dist-packages /usr/local/bin 2>/dev/null || true
 
 # Security hardening: Run as non-root user
 # The node:22-bookworm image includes a 'node' user (uid 1000)
