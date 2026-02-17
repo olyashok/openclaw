@@ -161,13 +161,13 @@ export function execDockerRaw(
   });
 }
 
+import type { SandboxConfig, SandboxDockerConfig, SandboxWorkspaceAccess } from "./types.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { defaultRuntime } from "../../runtime.js";
 import { computeSandboxConfigHash } from "./config-hash.js";
 import { DEFAULT_SANDBOX_IMAGE } from "./constants.js";
 import { readRegistry, updateRegistry } from "./registry.js";
 import { resolveSandboxAgentId, resolveSandboxScopeKey, slugifySessionKey } from "./shared.js";
-import type { SandboxConfig, SandboxDockerConfig, SandboxWorkspaceAccess } from "./types.js";
 import { validateSandboxSecurity } from "./validate-sandbox-security.js";
 import { appendWorkspaceMountArgs } from "./workspace-mounts.js";
 
@@ -365,7 +365,11 @@ export function buildSandboxCreateArgs(params: {
   if (params.cfg.user) {
     args.push("--user", params.cfg.user);
   }
-  const envSanitization = sanitizeEnvVars(params.cfg.env ?? {});
+  // Admin-configured env vars bypass the blocklist — they are intentional.
+  const configEnv = params.cfg.env ?? {};
+  const envSanitization = sanitizeEnvVars(configEnv, {
+    forceAllowKeys: new Set(Object.keys(configEnv)),
+  });
   if (envSanitization.blocked.length > 0) {
     log.warn(`Blocked sensitive environment variables: ${envSanitization.blocked.join(", ")}`);
   }

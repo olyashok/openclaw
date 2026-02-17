@@ -1,12 +1,19 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import {
   formatSkillsForPrompt,
   loadSkillsFromDir,
   type Skill,
 } from "@mariozechner/pi-coding-agent";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
+import type {
+  ParsedSkillFrontmatter,
+  SkillEligibilityContext,
+  SkillCommandSpec,
+  SkillEntry,
+  SkillSnapshot,
+} from "./types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
 import { resolveSandboxPath } from "../sandbox-paths.js";
@@ -20,13 +27,6 @@ import {
 } from "./frontmatter.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
 import { serializeByKey } from "./serialize.js";
-import type {
-  ParsedSkillFrontmatter,
-  SkillEligibilityContext,
-  SkillCommandSpec,
-  SkillEntry,
-  SkillSnapshot,
-} from "./types.js";
 
 const fsp = fs.promises;
 const skillsLogger = createSubsystemLogger("skills");
@@ -70,7 +70,13 @@ function filterSkillEntries(
   skillFilter?: string[],
   eligibility?: SkillEligibilityContext,
 ): SkillEntry[] {
-  let filtered = entries.filter((entry) => shouldIncludeSkill({ entry, config, eligibility }));
+  // When a skill filter is provided, skills explicitly listed bypass eligibility checks
+  // (the admin has asserted availability by listing them in the agent config).
+  const explicitNames = skillFilter ? new Set(normalizeSkillFilter(skillFilter) ?? []) : undefined;
+  let filtered = entries.filter(
+    (entry) =>
+      explicitNames?.has(entry.skill.name) || shouldIncludeSkill({ entry, config, eligibility }),
+  );
   // If skillFilter is provided, only include skills in the filter list.
   if (skillFilter !== undefined) {
     const normalized = normalizeSkillFilter(skillFilter) ?? [];
