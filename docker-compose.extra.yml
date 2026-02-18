@@ -1,0 +1,48 @@
+services:
+  openclaw-gateway:
+    # Override Dockerfile USER node -> root so container UID matches
+    # root-owned NFS mount (scripts download/modify content there).
+    user: "root"
+    environment:
+      - INFISICAL_WORKSPACE_ID=${INFISICAL_WORKSPACE_ID}
+      - INFISICAL_ENV=${INFISICAL_ENV}
+      - INFISICAL_PATH_SHAPE=${INFISICAL_PATH_SHAPE}
+      - INFISICAL_PATH_PERSONAL=${INFISICAL_PATH_PERSONAL}
+      - INFISICAL_API_URL=${INFISICAL_API_URL}
+      - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
+      - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
+    volumes:
+      - openclaw_home:/home/node
+      - /root/.openclaw:/home/node/.openclaw
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Skill dirs must be visible to gateway for discovery/loading
+      - /root/common-claw/skills:/extras/skills/common:ro
+      - /root/shape-claw/skills:/extras/skills/shape:ro
+      # Patched voice-call response generator to resolve agent from bindings
+      - /root/openclaw/patches/response-generator.ts:/app/extensions/voice-call/src/response-generator.ts:ro
+    command:
+      - sh
+      - -c
+      - |
+        export INFISICAL_TOKEN=$$(infisical login --method=universal-auth --client-id="$$INFISICAL_CLIENT_ID" --client-secret="$$INFISICAL_CLIENT_SECRET" --silent --plain --domain="$$INFISICAL_API_URL") &&
+        infisical export --projectId "$$INFISICAL_WORKSPACE_ID" --domain "$$INFISICAL_API_URL" --env "$$INFISICAL_ENV" --path "$$INFISICAL_PATH_SHAPE" --format dotenv > /tmp/.env.shape &&
+        infisical export --projectId "$$INFISICAL_WORKSPACE_ID" --domain "$$INFISICAL_API_URL" --env "$$INFISICAL_ENV" --path "$$INFISICAL_PATH_PERSONAL" --include-imports=false --format dotenv > /tmp/.env.personal &&
+        set -a && . /tmp/.env.shape && . /tmp/.env.personal && set +a &&
+        rm -f /tmp/.env.shape /tmp/.env.personal &&
+        exec node dist/index.js gateway --bind lan --port 18789
+  openclaw-cli:
+    user: "root"
+    environment:
+      - INFISICAL_WORKSPACE_ID=${INFISICAL_WORKSPACE_ID}
+      - INFISICAL_ENV=${INFISICAL_ENV}
+      - INFISICAL_PATH_SHAPE=${INFISICAL_PATH_SHAPE}
+      - INFISICAL_PATH_PERSONAL=${INFISICAL_PATH_PERSONAL}
+      - INFISICAL_API_URL=${INFISICAL_API_URL}
+      - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
+      - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
+    volumes:
+      - openclaw_home:/home/node
+      - /root/.openclaw:/home/node/.openclaw
+
+volumes:
+  openclaw_home:

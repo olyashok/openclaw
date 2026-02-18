@@ -1,3 +1,7 @@
+import type { CliDeps } from "../../cli/outbound-send-deps.js";
+import type { OpenClawConfig } from "../../config/config.js";
+import type { AgentDefaultsConfig } from "../../config/types.js";
+import type { CronJob, CronRunOutcome, CronRunTelemetry } from "../types.js";
 import {
   resolveAgentConfig,
   resolveAgentDir,
@@ -32,14 +36,11 @@ import {
   normalizeVerboseLevel,
   supportsXHighThinking,
 } from "../../auto-reply/thinking.js";
-import type { CliDeps } from "../../cli/outbound-send-deps.js";
-import type { OpenClawConfig } from "../../config/config.js";
 import {
   resolveSessionTranscriptPath,
   setSessionRuntimeModel,
   updateSessionStore,
 } from "../../config/sessions.js";
-import type { AgentDefaultsConfig } from "../../config/types.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { logWarn } from "../../logger.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
@@ -50,7 +51,6 @@ import {
   isExternalHookSession,
 } from "../../security/external-content.js";
 import { resolveCronDeliveryPlan } from "../delivery.js";
-import type { CronJob, CronRunOutcome, CronRunTelemetry } from "../types.js";
 import {
   dispatchCronDelivery,
   matchesMessagingToolDeliveryTarget,
@@ -120,7 +120,11 @@ export async function runCronIsolatedAgentTurn(params: {
   const agentConfigOverride = normalizedRequested
     ? resolveAgentConfig(params.cfg, normalizedRequested)
     : undefined;
-  const { model: overrideModel, ...agentOverrideRest } = agentConfigOverride ?? {};
+  const {
+    model: overrideModel,
+    sandbox: _overrideSandbox,
+    ...agentOverrideRest
+  } = agentConfigOverride ?? {};
   // Use the requested agentId even when there is no explicit agent config entry.
   // This ensures auth-profiles, workspace, and agentDir all resolve to the
   // correct per-agent paths (e.g. ~/.openclaw/agents/<agentId>/agent/).
@@ -139,6 +143,11 @@ export async function runCronIsolatedAgentTurn(params: {
   } else if (overrideModel) {
     agentCfg.model = { ...existingModel, ...overrideModel };
   }
+  // NOTE: `sandbox` is intentionally destructured out of `agentOverrideRest`
+  // above so that `Object.assign` does not clobber `agents.defaults.sandbox`.
+  // The downstream `resolveSandboxConfigForAgent()` reads both the defaults
+  // and the per-agent entry from `agents.list` independently and merges them
+  // correctly (concatenating docker.binds, merging docker.env, etc.).
   const cfgWithAgentDefaults: OpenClawConfig = {
     ...params.cfg,
     agents: Object.assign({}, params.cfg.agents, { defaults: agentCfg }),
