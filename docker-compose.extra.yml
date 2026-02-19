@@ -44,5 +44,20 @@ services:
       - openclaw_home:/home/node
       - /root/.openclaw:/home/node/.openclaw
 
+  stealthy-browser:
+    container_name: stealthy-browser
+    image: psyb0t/stealthy-auto-browse
+    environment:
+      - TZ=America/New_York
+      - LANG=en_US.UTF-8
+    volumes:
+      - /root/.openclaw/agents/personal-main/config/browser-profile:/userdata
+    tmpfs:
+      - /tmp
+    ports:
+      - "18880:8080"
+      - "18881:5900"
+    restart: unless-stopped
+
 volumes:
   openclaw_home:
