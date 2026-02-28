@@ -1,5 +1,6 @@
 services:
   openclaw-gateway:
+    container_name: openclaw-gateway
     # Override Dockerfile USER node -> root so container UID matches
     # root-owned NFS mount (scripts download/modify content there).
     user: "root"
