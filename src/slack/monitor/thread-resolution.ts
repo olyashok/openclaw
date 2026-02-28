@@ -1,7 +1,7 @@
 import type { WebClient as SlackWebClient } from "@slack/web-api";
+import type { SlackMessageEvent } from "../types.js";
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
-import type { SlackMessageEvent } from "../types.js";
 
 type ThreadTsCacheEntry = {
   threadTs: string | null;
@@ -75,7 +75,7 @@ export function createSlackThreadTsResolver(params: {
   return {
     resolve: async (request: {
       message: SlackMessageEvent;
-      source: "message" | "app_mention";
+      source: "message" | "app_mention" | "file_shared";
     }): Promise<SlackMessageEvent> => {
       const { message } = request;
       if (!message.parent_user_id || message.thread_ts || !message.ts) {

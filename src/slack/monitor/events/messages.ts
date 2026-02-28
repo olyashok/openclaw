@@ -1,12 +1,63 @@
 import type { SlackEventMiddlewareArgs } from "@slack/bolt";
-import { danger } from "../../../globals.js";
-import { enqueueSystemEvent } from "../../../infra/system-events.js";
 import type { SlackAppMentionEvent, SlackMessageEvent } from "../../types.js";
 import { normalizeSlackChannelType } from "../channel-type.js";
 import type { SlackMonitorContext } from "../context.js";
 import type { SlackMessageHandler } from "../message-handler.js";
+import type {
+  SlackMessageChangedEvent,
+  SlackMessageDeletedEvent,
+  SlackThreadBroadcastEvent,
+} from "../types.js";
+import { danger } from "../../../globals.js";
+import { enqueueSystemEvent } from "../../../infra/system-events.js";
+import { writeSlackDiag, writeSlackDiagKv } from "../diag.js";
+import { markMessageHandled } from "./file-shared.js";
 import { resolveSlackMessageSubtypeHandler } from "./message-subtype-handlers.js";
 import { authorizeAndResolveSlackSystemEventContext } from "./system-event-context.js";
+
+writeSlackDiag("diag init: messages.ts loaded");
+
+async function hydrateAppMentionMessage(params: {
+  ctx: SlackMonitorContext;
+  mention: SlackAppMentionEvent;
+}): Promise<SlackMessageEvent> {
+  const { ctx, mention } = params;
+  if (!mention.ts || !mention.channel) {
+    return mention as unknown as SlackMessageEvent;
+  }
+  try {
+    const history = await ctx.app.client.conversations.history({
+      channel: mention.channel,
+      latest: mention.ts,
+      oldest: mention.ts,
+      inclusive: true,
+      limit: 1,
+    });
+    const candidate = history.messages?.find((m) => m.ts === mention.ts) ?? history.messages?.[0];
+    if (!candidate) {
+      return mention as unknown as SlackMessageEvent;
+    }
+    const channelInfo = await ctx.resolveChannelName(mention.channel);
+    return {
+      type: "message",
+      user: candidate.user ?? mention.user,
+      bot_id: candidate.bot_id ?? mention.bot_id,
+      subtype: candidate.subtype,
+      username: candidate.username,
+      text: candidate.text ?? mention.text ?? "",
+      ts: candidate.ts ?? mention.ts,
+      thread_ts: candidate.thread_ts ?? mention.thread_ts,
+      event_ts: mention.event_ts,
+      parent_user_id: candidate.parent_user_id,
+      channel: mention.channel,
+      channel_type: mention.channel_type ?? channelInfo?.type,
+      files: (candidate as { files?: SlackMessageEvent["files"] }).files,
+      attachments: (candidate as { attachments?: SlackMessageEvent["attachments"] }).attachments,
+    } satisfies SlackMessageEvent;
+  } catch {
+    return mention as unknown as SlackMessageEvent;
+  }
+}
 
 export function registerSlackMessageEvents(params: {
   ctx: SlackMonitorContext;
@@ -42,6 +93,9 @@ export function registerSlackMessageEvents(params: {
       }
 
       await handleSlackMessage(message, { source: "message" });
+      if (message.files?.length && message.ts) {
+        markMessageHandled(message.ts);
+      }
     } catch (err) {
       ctx.runtime.error?.(danger(`slack handler failed: ${String(err)}`));
     }
@@ -66,16 +120,25 @@ export function registerSlackMessageEvents(params: {
       const mention = event as SlackAppMentionEvent;
 
       // Skip app_mention for DMs - they're already handled by message.im event
-      // This prevents duplicate processing when both message and app_mention fire for DMs
       const channelType = normalizeSlackChannelType(mention.channel_type, mention.channel);
       if (channelType === "im" || channelType === "mpim") {
         return;
       }
 
-      await handleSlackMessage(mention as unknown as SlackMessageEvent, {
+      const hydrated = await hydrateAppMentionMessage({ ctx, mention });
+      writeSlackDiagKv("diag slack app_mention hydrated", {
+        ch: hydrated.channel ?? "?",
+        ts: hydrated.ts ?? hydrated.event_ts ?? "?",
+        files: hydrated.files?.length ?? 0,
+        subtype: hydrated.subtype ?? "-",
+      });
+      await handleSlackMessage(hydrated, {
         source: "app_mention",
         wasMentioned: true,
       });
+      if (hydrated.files?.length && hydrated.ts) {
+        markMessageHandled(hydrated.ts);
+      }
     } catch (err) {
       ctx.runtime.error?.(danger(`slack mention handler failed: ${String(err)}`));
     }

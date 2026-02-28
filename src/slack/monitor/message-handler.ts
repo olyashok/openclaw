@@ -4,15 +4,20 @@ import {
 } from "../../channels/inbound-debounce-policy.js";
 import type { ResolvedSlackAccount } from "../accounts.js";
 import type { SlackMessageEvent } from "../types.js";
-import { stripSlackMentionsForCommandDetection } from "./commands.js";
 import type { SlackMonitorContext } from "./context.js";
+import { hasControlCommand } from "../../auto-reply/command-detection.js";
+import {
+  createInboundDebouncer,
+  resolveInboundDebounceMs,
+} from "../../auto-reply/inbound-debounce.js";
+import { stripSlackMentionsForCommandDetection } from "./commands.js";
 import { dispatchPreparedSlackMessage } from "./message-handler/dispatch.js";
 import { prepareSlackMessage } from "./message-handler/prepare.js";
 import { createSlackThreadTsResolver } from "./thread-resolution.js";
 
 export type SlackMessageHandler = (
   message: SlackMessageEvent,
-  opts: { source: "message" | "app_mention"; wasMentioned?: boolean },
+  opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean },
 ) => Promise<void>;
 
 function resolveSlackSenderId(message: SlackMessageEvent): string | null {
@@ -87,7 +92,7 @@ export function createSlackMessageHandler(params: {
   const { ctx, account, trackEvent } = params;
   const { debounceMs, debouncer } = createChannelInboundDebouncer<{
     message: SlackMessageEvent;
-    opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+    opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean };
   }>({
     cfg: ctx.cfg,
     channel: "slack",
@@ -165,7 +170,9 @@ export function createSlackMessageHandler(params: {
     ) {
       return;
     }
-    if (ctx.markMessageSeen(message.channel, message.ts)) {
+    // Let file_shared fallback re-enter even when ts was already seen via the
+    // lightweight event that didn't produce a message turn.
+    if (opts.source !== "file_shared" && ctx.markMessageSeen(message.channel, message.ts)) {
       return;
     }
     trackEvent?.();
