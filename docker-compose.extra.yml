@@ -16,6 +16,7 @@ services:
       - openclaw_home:/home/node
       - /root/.openclaw:/home/node/.openclaw
       - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
       # Skill dirs must be visible to gateway for discovery/loading
       - /root/common-claw/skills:/extras/skills/common:ro
       - /root/shape-claw/skills:/extras/skills/shape:ro
