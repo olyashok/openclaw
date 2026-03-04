@@ -13,6 +13,16 @@ RUN apt-get update \
     ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends nodejs npm \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g mcporter
+
+# Install gog (Google Workspace CLI)
+RUN curl -fsSL https://github.com/steipete/gogcli/releases/download/v0.11.0/gogcli_0.11.0_linux_amd64.tar.gz \
+  | tar -xz -C /usr/local/bin gog \
+  && chmod +x /usr/local/bin/gog
+
 RUN useradd --create-home --shell /bin/bash sandbox
 USER sandbox
 WORKDIR /home/sandbox

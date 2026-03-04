@@ -126,6 +126,12 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
 
 ENV NODE_ENV=production
 
+# mcporter CLI + gog CLI (Google Workspace) for agent exec tool
+RUN npm install -g mcporter \
+  && curl -fsSL https://github.com/steipete/gogcli/releases/download/v0.11.0/gogcli_0.11.0_linux_amd64.tar.gz \
+  | tar -xz -C /usr/local/bin gog \
+  && chmod +x /usr/local/bin/gog
+
 # Marker CLI: Python deps (marker repo mounted at runtime at /home/node/marker)
 RUN python3 -m pip install --no-cache-dir --break-system-packages click requests rich 'pydantic>=2.0.0' && chown -R node:node /usr/local/lib/python3.*/dist-packages /usr/local/bin 2>/dev/null || true
 
