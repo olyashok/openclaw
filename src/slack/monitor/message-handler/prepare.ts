@@ -1,7 +1,3 @@
-import type { FinalizedMsgContext } from "../../../auto-reply/templating.js";
-import type { ResolvedSlackAccount } from "../../accounts.js";
-import type { SlackMessageEvent } from "../../types.js";
-import type { PreparedSlackMessage } from "./types.js";
 import { resolveAckReaction } from "../../../agents/identity.js";
 import { hasControlCommand } from "../../../auto-reply/command-detection.js";
 import { shouldHandleTextCommands } from "../../../auto-reply/commands-registry.js";
@@ -18,6 +14,7 @@ import {
   buildMentionRegexes,
   matchesMentionWithExplicit,
 } from "../../../auto-reply/reply/mentions.js";
+import type { FinalizedMsgContext } from "../../../auto-reply/templating.js";
 import {
   shouldAckReaction as shouldAckReactionGate,
   type AckReactionScope,
@@ -35,7 +32,6 @@ import { resolveThreadSessionKeys } from "../../../routing/session-key.js";
 import { resolvePinnedMainDmOwnerFromAllowlist } from "../../../security/dm-policy-shared.js";
 import { resolveSlackReplyToMode, type ResolvedSlackAccount } from "../../accounts.js";
 import { reactSlackMessage } from "../../actions.js";
-import { getAttachmentNote } from "../../overrides/attachment-helper.js";
 import { sendMessageSlack } from "../../send.js";
 import { hasSlackThreadParticipation } from "../../sent-thread-cache.js";
 import { resolveSlackThreadContext } from "../../threading.js";
