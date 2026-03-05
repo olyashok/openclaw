@@ -5,6 +5,7 @@ services:
     # root-owned NFS mount (scripts download/modify content there).
     user: "root"
     environment:
+      - TZ=America/New_York
       - INFISICAL_WORKSPACE_ID=${INFISICAL_WORKSPACE_ID}
       - INFISICAL_ENV=${INFISICAL_ENV}
       - INFISICAL_PATH_SHAPE=${INFISICAL_PATH_SHAPE}
