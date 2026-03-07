@@ -369,7 +369,12 @@ export function buildSandboxCreateArgs(params: {
   if (params.cfg.user) {
     args.push("--user", params.cfg.user);
   }
-  const envSanitization = sanitizeEnvVars(params.cfg.env ?? {}, params.envSanitizationOptions);
+  // Admin-configured env vars bypass the blocklist — they are intentional.
+  const configEnv = params.cfg.env ?? {};
+  const envSanitization = sanitizeEnvVars(configEnv, {
+    ...params.envSanitizationOptions,
+    forceAllowKeys: new Set(Object.keys(configEnv)),
+  });
   if (envSanitization.blocked.length > 0) {
     log.warn(`Blocked sensitive environment variables: ${envSanitization.blocked.join(", ")}`);
   }
