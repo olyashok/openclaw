@@ -147,6 +147,37 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       procps hostname curl git lsof openssl
 
+# Basic tools: Python 3, sqlite3 (CLI + lib), plus any extra apt packages
+RUN apt-get update && \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  python3 \
+  python3-pip \
+  python3-venv \
+  sqlite3 \
+  jq \
+  curl \
+  libsqlite3-0 \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Infisical CLI for runtime secrets injection (used by docker-compose.extra.yml entrypoint)
+RUN curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | bash \
+  && apt-get install -y --no-install-recommends infisical \
+  && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Install Bun (required for qmd wrapper). Retry to tolerate transient failures.
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+      if curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL https://bun.sh/install | bash; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 5 ]; then \
+        exit 1; \
+      fi; \
+      sleep $((attempt * 2)); \
+    done
+ENV PATH="/root/.bun/bin:${PATH}"
+
 RUN chown node:node /app
 
 COPY --from=runtime-assets --chown=node:node /app/dist ./dist
@@ -241,6 +272,25 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
  && chmod 755 /app/openclaw.mjs
 
 ENV NODE_ENV=production
+
+# mcporter CLI + gog CLI (Google Workspace) for agent exec tool
+RUN npm install -g mcporter \
+  && curl -fsSL https://github.com/steipete/gogcli/releases/download/v0.11.0/gogcli_0.11.0_linux_amd64.tar.gz \
+  | tar -xz -C /usr/local/bin gog \
+  && chmod +x /usr/local/bin/gog
+
+# Marker CLI: Python deps (marker repo mounted at runtime at /home/node/marker)
+RUN python3 -m pip install --no-cache-dir --break-system-packages click requests rich 'pydantic>=2.0.0' && chown -R node:node /usr/local/lib/python3.*/dist-packages /usr/local/bin 2>/dev/null || true
+
+# Bun + qmd wrapper for node user (Bun install is in /root, not readable by node)
+RUN cp -a /root/.bun /app/.bun && chown -R node:node /app/.bun
+RUN mkdir -p /app/bin \
+  && printf '%s\n' '#!/bin/sh' 'exec /app/.bun/bin/bun /home/node/qmd-remote/src/cli/qmd.ts "$@"' > /app/bin/qmd \
+  && (echo '#!/bin/sh'; echo 'export PYTHONPATH=/home/node/marker/src'; echo 'exec python3 -m marker_cli.cli "$@"') > /app/bin/marker \
+  && chmod +x /app/bin/qmd /app/bin/marker && chown node:node /app/bin/qmd /app/bin/marker
+ENV PATH="/app/bin:/app/.bun/bin:${PATH}"
+# Persist PATH for login shells (docker exec bash -l, interactive sessions)
+RUN echo 'export PATH="/app/bin:/app/.bun/bin:${PATH}"' > /etc/profile.d/openclaw-path.sh
 
 # Security hardening: Run as non-root user
 # The node:24-bookworm image includes a 'node' user (uid 1000)

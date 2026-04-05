@@ -17,6 +17,20 @@ RUN --mount=type=cache,id=openclaw-sandbox-bookworm-apt-cache,target=/var/cache/
     python3 \
     ripgrep
 
+# Node 22 (required by mcporter for regex v-flag support)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g mcporter
+
+# Install gog (Google Workspace CLI)
+RUN curl -fsSL https://github.com/steipete/gogcli/releases/download/v0.11.0/gogcli_0.11.0_linux_amd64.tar.gz \
+  | tar -xz -C /usr/local/bin gog \
+  && chmod +x /usr/local/bin/gog
+
+# Set timezone
+ENV TZ=America/New_York
+
 RUN useradd --create-home --shell /bin/bash sandbox
 USER sandbox
 WORKDIR /home/sandbox
