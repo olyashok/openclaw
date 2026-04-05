@@ -594,6 +594,12 @@ export function buildWorkspaceSkillSnapshot(
 ): SkillSnapshot {
   const { eligible, prompt, resolvedSkills } = resolveWorkspaceSkillPromptState(workspaceDir, opts);
   const skillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
+  const skillsForSnapshot = opts?.containerWorkdir
+    ? resolvedSkills.map((skill) => ({
+        ...skill,
+        filePath: path.join("skills", skill.name, "SKILL.md"),
+      }))
+    : resolvedSkills;
   return {
     prompt,
     skills: eligible.map((entry) => ({
@@ -602,7 +608,7 @@ export function buildWorkspaceSkillSnapshot(
       requiredEnv: entry.metadata?.requires?.env?.slice(),
     })),
     ...(skillFilter === undefined ? {} : { skillFilter }),
-    resolvedSkills,
+    resolvedSkills: skillsForSnapshot,
     version: opts?.snapshotVersion,
   };
 }
@@ -623,6 +629,8 @@ type WorkspaceSkillBuildOptions = {
   /** If provided, only include skills with these names */
   skillFilter?: string[];
   eligibility?: SkillEligibilityContext;
+  /** When set, rewrite skill file paths for the sandbox container (e.g. "/workspace"). */
+  containerWorkdir?: string;
 };
 
 function resolveEffectiveWorkspaceSkillFilter(

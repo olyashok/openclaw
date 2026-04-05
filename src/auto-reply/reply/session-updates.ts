@@ -102,6 +102,8 @@ export async function ensureSkillSnapshot(params: {
   cfg: OpenClawConfig;
   /** If provided, only load skills with these names (for per-channel skill filtering) */
   skillFilter?: string[];
+  /** When set, rewrite skill file paths for the sandbox container (e.g. "/workspace"). */
+  containerWorkdir?: string;
 }): Promise<{
   sessionEntry?: SessionEntry;
   skillsSnapshot?: SessionEntry["skillsSnapshot"];
@@ -127,6 +129,7 @@ export async function ensureSkillSnapshot(params: {
     workspaceDir,
     cfg,
     skillFilter,
+    containerWorkdir,
   } = params;
 
   let nextEntry = sessionEntry;
@@ -146,6 +149,7 @@ export async function ensureSkillSnapshot(params: {
       skillFilter,
       eligibility: { remote: remoteEligibility },
       snapshotVersion,
+      containerWorkdir,
     });
 
   if (isFirstTurnInSession && sessionStore && sessionKey) {

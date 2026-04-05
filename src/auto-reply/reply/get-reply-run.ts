@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveSandboxContainerWorkdir } from "../../agents/sandbox.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import {
@@ -416,6 +417,7 @@ export async function runPreparedReply(
             workspaceDir,
             cfg,
             skillFilter: opts?.skillFilter,
+            containerWorkdir: resolveSandboxContainerWorkdir({ cfg, sessionKey }),
           });
         })();
   sessionEntry = skillResult.sessionEntry ?? sessionEntry;

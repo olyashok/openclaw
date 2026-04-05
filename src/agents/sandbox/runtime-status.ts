@@ -83,6 +83,21 @@ export function resolveSandboxRuntimeStatus(params: {
   };
 }
 
+/**
+ * Returns the container workdir for a sandboxed session, or undefined if not sandboxed.
+ */
+export function resolveSandboxContainerWorkdir(params: {
+  cfg?: OpenClawConfig;
+  sessionKey?: string;
+}): string | undefined {
+  const runtime = resolveSandboxRuntimeStatus(params);
+  if (!runtime.sandboxed) {
+    return undefined;
+  }
+  const sandboxCfg = resolveSandboxConfigForAgent(params.cfg, runtime.agentId);
+  return sandboxCfg.docker.workdir;
+}
+
 function sanitizeForSingleLineDisplay(value: string): string {
   return Array.from(value, (char) => {
     if (char === "\n") {
