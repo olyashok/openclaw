@@ -1,24 +1,82 @@
-import { resolveGlobalMap } from "openclaw/plugin-sdk/global-singleton";
+import fs from "node:fs";
+import path from "node:path";
+import { STATE_DIR } from "openclaw/plugin-sdk/state-paths";
 import type { DiscordComponentEntry, DiscordModalEntry } from "./components.js";
 
-const DEFAULT_COMPONENT_TTL_MS = 30 * 60 * 1000;
-const DISCORD_COMPONENT_ENTRIES_KEY = Symbol.for("openclaw.discord.componentEntries");
-const DISCORD_MODAL_ENTRIES_KEY = Symbol.for("openclaw.discord.modalEntries");
+const DEFAULT_COMPONENT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-let componentEntries: Map<string, DiscordComponentEntry> | undefined;
-let modalEntries: Map<string, DiscordModalEntry> | undefined;
+// In-memory cache mirrors the file to avoid reading on every resolve.
+let componentEntries = new Map<string, DiscordComponentEntry>();
+let modalEntries = new Map<string, DiscordModalEntry>();
+let cacheLoaded = false;
 
-function getComponentEntries(): Map<string, DiscordComponentEntry> {
-  componentEntries ??= resolveGlobalMap<string, DiscordComponentEntry>(
-    DISCORD_COMPONENT_ENTRIES_KEY,
-  );
-  return componentEntries;
+const REGISTRY_DIR = path.join(STATE_DIR, "discord");
+const REGISTRY_PATH = path.join(REGISTRY_DIR, "component-registry.json");
+
+// ---------------------------------------------------------------------------
+// File I/O
+// ---------------------------------------------------------------------------
+
+type RegistryFile = {
+  components: Record<string, DiscordComponentEntry>;
+  modals: Record<string, DiscordModalEntry>;
+};
+
+function loadFromFile(): {
+  components: Map<string, DiscordComponentEntry>;
+  modals: Map<string, DiscordModalEntry>;
+} {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const parsed: RegistryFile = JSON.parse(raw);
+    const components = new Map(Object.entries(parsed.components ?? {}));
+    const modals = new Map(Object.entries(parsed.modals ?? {}));
+    return { components, modals };
+  } catch {
+    // ENOENT or corrupt file — start fresh.
+    return { components: new Map(), modals: new Map() };
+  }
 }
 
-function getModalEntries(): Map<string, DiscordModalEntry> {
-  modalEntries ??= resolveGlobalMap<string, DiscordModalEntry>(DISCORD_MODAL_ENTRIES_KEY);
-  return modalEntries;
+function saveToFile(): void {
+  try {
+    fs.mkdirSync(REGISTRY_DIR, { recursive: true });
+    const data: RegistryFile = {
+      components: Object.fromEntries(componentEntries),
+      modals: Object.fromEntries(modalEntries),
+    };
+    const json = JSON.stringify(data, null, 2);
+    const tmp = `${REGISTRY_PATH}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, json, "utf-8");
+    fs.renameSync(tmp, REGISTRY_PATH);
+  } catch {
+    // Best-effort — don't crash the bot if disk write fails.
+  }
 }
+
+function ensureLoaded(): void {
+  if (cacheLoaded) {
+    return;
+  }
+  const loaded = loadFromFile();
+  // Merge file entries into any in-memory entries (in case register was
+  // called before the first resolve in this process).
+  for (const [id, entry] of loaded.components) {
+    if (!componentEntries.has(id)) {
+      componentEntries.set(id, entry);
+    }
+  }
+  for (const [id, entry] of loaded.modals) {
+    if (!modalEntries.has(id)) {
+      modalEntries.set(id, entry);
+    }
+  }
+  cacheLoaded = true;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function isExpired(entry: { expiresAt?: number }, now: number) {
   return typeof entry.expiresAt === "number" && entry.expiresAt <= now;
@@ -34,41 +92,9 @@ function normalizeEntryTimestamps<T extends { createdAt?: number; expiresAt?: nu
   return { ...entry, createdAt, expiresAt };
 }
 
-function registerEntries<
-  T extends { id: string; messageId?: string; createdAt?: number; expiresAt?: number },
->(
-  entries: T[],
-  store: Map<string, T>,
-  params: { now: number; ttlMs: number; messageId?: string },
-): void {
-  for (const entry of entries) {
-    const normalized = normalizeEntryTimestamps(
-      { ...entry, messageId: params.messageId ?? entry.messageId },
-      params.now,
-      params.ttlMs,
-    );
-    store.set(entry.id, normalized);
-  }
-}
-
-function resolveEntry<T extends { expiresAt?: number }>(
-  store: Map<string, T>,
-  params: { id: string; consume?: boolean },
-): T | null {
-  const entry = store.get(params.id);
-  if (!entry) {
-    return null;
-  }
-  const now = Date.now();
-  if (isExpired(entry, now)) {
-    store.delete(params.id);
-    return null;
-  }
-  if (params.consume !== false) {
-    store.delete(params.id);
-  }
-  return entry;
-}
+// ---------------------------------------------------------------------------
+// Public API (unchanged signatures)
+// ---------------------------------------------------------------------------
 
 export function registerDiscordComponentEntries(params: {
   entries: DiscordComponentEntry[];
@@ -76,31 +102,79 @@ export function registerDiscordComponentEntries(params: {
   ttlMs?: number;
   messageId?: string;
 }): void {
+  ensureLoaded();
   const now = Date.now();
   const ttlMs = params.ttlMs ?? DEFAULT_COMPONENT_TTL_MS;
-  registerEntries(params.entries, getComponentEntries(), {
-    now,
-    ttlMs,
-    messageId: params.messageId,
-  });
-  registerEntries(params.modals, getModalEntries(), { now, ttlMs, messageId: params.messageId });
+  for (const entry of params.entries) {
+    const normalized = normalizeEntryTimestamps(
+      { ...entry, messageId: params.messageId ?? entry.messageId },
+      now,
+      ttlMs,
+    );
+    componentEntries.set(entry.id, normalized);
+  }
+  for (const modal of params.modals) {
+    const normalized = normalizeEntryTimestamps(
+      { ...modal, messageId: params.messageId ?? modal.messageId },
+      now,
+      ttlMs,
+    );
+    modalEntries.set(modal.id, normalized);
+  }
+  saveToFile();
 }
 
 export function resolveDiscordComponentEntry(params: {
   id: string;
   consume?: boolean;
 }): DiscordComponentEntry | null {
-  return resolveEntry(getComponentEntries(), params);
+  ensureLoaded();
+  const entry = componentEntries.get(params.id);
+  if (!entry) {
+    return null;
+  }
+  const now = Date.now();
+  if (isExpired(entry, now)) {
+    componentEntries.delete(params.id);
+    saveToFile();
+    return null;
+  }
+  if (params.consume !== false) {
+    componentEntries.delete(params.id);
+    saveToFile();
+  }
+  return entry;
 }
 
 export function resolveDiscordModalEntry(params: {
   id: string;
   consume?: boolean;
 }): DiscordModalEntry | null {
-  return resolveEntry(getModalEntries(), params);
+  ensureLoaded();
+  const entry = modalEntries.get(params.id);
+  if (!entry) {
+    return null;
+  }
+  const now = Date.now();
+  if (isExpired(entry, now)) {
+    modalEntries.delete(params.id);
+    saveToFile();
+    return null;
+  }
+  if (params.consume !== false) {
+    modalEntries.delete(params.id);
+    saveToFile();
+  }
+  return entry;
 }
 
 export function clearDiscordComponentEntries(): void {
-  getComponentEntries().clear();
-  getModalEntries().clear();
+  componentEntries.clear();
+  modalEntries.clear();
+  cacheLoaded = false;
+  try {
+    fs.unlinkSync(REGISTRY_PATH);
+  } catch {
+    // File may not exist.
+  }
 }
