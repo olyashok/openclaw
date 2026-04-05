@@ -321,7 +321,7 @@ export async function prepareSlackMessage(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
   message: SlackMessageEvent;
-  opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+  opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean };
 }): Promise<PreparedSlackMessage | null> {
   const { ctx, account, message, opts } = params;
   const cfg = ctx.cfg;

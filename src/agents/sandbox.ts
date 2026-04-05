@@ -29,6 +29,7 @@ export {
 } from "./sandbox/manage.js";
 export {
   formatSandboxToolPolicyBlockedMessage,
+  resolveSandboxContainerWorkdir,
   resolveSandboxRuntimeStatus,
 } from "./sandbox/runtime-status.js";
 
