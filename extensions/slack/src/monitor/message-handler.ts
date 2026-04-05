@@ -12,7 +12,7 @@ import { createSlackThreadTsResolver } from "./thread-resolution.js";
 
 export type SlackMessageHandler = (
   message: SlackMessageEvent,
-  opts: { source: "message" | "app_mention"; wasMentioned?: boolean },
+  opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean },
 ) => Promise<void>;
 
 const APP_MENTION_RETRY_TTL_MS = 60_000;
@@ -96,7 +96,7 @@ export function createSlackMessageHandler(params: {
   const { ctx, account, trackEvent } = params;
   const { debounceMs, debouncer } = createChannelInboundDebouncer<{
     message: SlackMessageEvent;
-    opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+    opts: { source: "message" | "app_mention" | "file_shared"; wasMentioned?: boolean };
   }>({
     cfg: ctx.cfg,
     channel: "slack",
@@ -226,9 +226,12 @@ export function createSlackMessageHandler(params: {
       rememberAppMentionRetryKey(seenMessageKey);
     }
     if (seenMessageKey && wasSeen) {
-      // Allow exactly one app_mention retry if the same ts was previously dropped
-      // from the message stream before it reached dispatch.
-      if (opts.source !== "app_mention" || !consumeAppMentionRetryKey(seenMessageKey)) {
+      // Allow file_shared fallback to re-enter even when ts was already seen
+      if (opts.source === "file_shared") {
+        /* pass through */
+      } else if (opts.source === "app_mention" && consumeAppMentionRetryKey(seenMessageKey)) {
+        /* pass through */
+      } else {
         return;
       }
     }

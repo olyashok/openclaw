@@ -1,6 +1,7 @@
 import type { ResolvedSlackAccount } from "../accounts.js";
 import type { SlackMonitorContext } from "./context.js";
 import { registerSlackChannelEvents } from "./events/channels.js";
+import { registerSlackFileSharedEvents } from "./events/file-shared.js";
 import { registerSlackInteractionEvents } from "./events/interactions.js";
 import { registerSlackMemberEvents } from "./events/members.js";
 import { registerSlackMessageEvents } from "./events/messages.js";
@@ -24,4 +25,8 @@ export function registerSlackMonitorEvents(params: {
   registerSlackChannelEvents({ ctx: params.ctx, trackEvent: params.trackEvent });
   registerSlackPinEvents({ ctx: params.ctx, trackEvent: params.trackEvent });
   registerSlackInteractionEvents({ ctx: params.ctx });
+  registerSlackFileSharedEvents({
+    ctx: params.ctx,
+    handleSlackMessage: params.handleSlackMessage,
+  });
 }
