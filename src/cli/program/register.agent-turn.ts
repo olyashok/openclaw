@@ -58,6 +58,11 @@ export function registerAgentTurnCommand(
       "Run the embedded agent locally (requires model provider API keys in your shell)",
       false,
     )
+    .option(
+      "--no-embedded-fallback",
+      "Fail closed when the Gateway transport fails instead of starting a second local run",
+    )
+    .option("--run-id <id>", "Stable idempotency key for transport retries")
     .option("--deliver", "Send the agent's reply back to the selected channel", false)
     .option("--json", "Output result as JSON", false)
     .option(

@@ -25,11 +25,18 @@ describe("Codex app-server steering queue", () => {
     await vi.advanceTimersByTimeAsync(0);
     await queued;
 
-    expect(request).toHaveBeenCalledWith("turn/steer", {
-      threadId: "thread-1",
-      expectedTurnId: "turn-1",
-      input: [{ type: "text", text: "accepted", text_elements: [] }],
-    });
+    expect(request).toHaveBeenCalledWith(
+      "turn/steer",
+      {
+        threadId: "thread-1",
+        expectedTurnId: "turn-1",
+        input: [{ type: "text", text: "accepted", text_elements: [] }],
+      },
+      {
+        timeoutMs: 5_000,
+        signal: expect.any(AbortSignal),
+      },
+    );
   });
 
   it("rejects queued steering when turn/steer is rejected", async () => {
@@ -48,11 +55,18 @@ describe("Codex app-server steering queue", () => {
     const rejected = expect(queued).rejects.toThrow("cannot steer a compact turn");
     await vi.advanceTimersByTimeAsync(0);
     await rejected;
-    expect(request).toHaveBeenCalledWith("turn/steer", {
-      threadId: "thread-1",
-      expectedTurnId: "turn-1",
-      input: [{ type: "text", text: "rejected", text_elements: [] }],
-    });
+    expect(request).toHaveBeenCalledWith(
+      "turn/steer",
+      {
+        threadId: "thread-1",
+        expectedTurnId: "turn-1",
+        input: [{ type: "text", text: "rejected", text_elements: [] }],
+      },
+      {
+        timeoutMs: 5_000,
+        signal: expect.any(AbortSignal),
+      },
+    );
   });
 
   it("batches queued steering after a nonzero debounce while the turn is active", async () => {
@@ -73,14 +87,21 @@ describe("Codex app-server steering queue", () => {
     await vi.advanceTimersByTimeAsync(5);
     await Promise.all([firstQueued, secondQueued]);
 
-    expect(request).toHaveBeenCalledWith("turn/steer", {
-      threadId: "thread-1",
-      expectedTurnId: "turn-1",
-      input: [
-        { type: "text", text: "first", text_elements: [] },
-        { type: "text", text: "second", text_elements: [] },
-      ],
-    });
+    expect(request).toHaveBeenCalledWith(
+      "turn/steer",
+      {
+        threadId: "thread-1",
+        expectedTurnId: "turn-1",
+        input: [
+          { type: "text", text: "first", text_elements: [] },
+          { type: "text", text: "second", text_elements: [] },
+        ],
+      },
+      {
+        timeoutMs: 5_000,
+        signal: expect.any(AbortSignal),
+      },
+    );
   });
 
   it("rejects queued steering when the run aborts before debounce flush", async () => {

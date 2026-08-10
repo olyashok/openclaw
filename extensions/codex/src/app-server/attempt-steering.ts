@@ -7,6 +7,7 @@ import type { CodexAppServerClient } from "./client.js";
 import type { CodexUserInput } from "./protocol.js";
 
 const CODEX_STEER_ALL_DEBOUNCE_MS = 500;
+const CODEX_STEER_REQUEST_TIMEOUT_MS = 5_000;
 
 /** Per-message options for Codex steering queue behavior. */
 export type CodexSteeringQueueOptions = {
@@ -47,11 +48,18 @@ export function createCodexSteeringQueue(params: {
     if (params.signal.aborted) {
       throw new Error("codex app-server steering queue aborted");
     }
-    await params.client.request("turn/steer", {
-      threadId: params.threadId,
-      expectedTurnId: params.turnId,
-      input: texts.map(toCodexTextInput),
-    });
+    await params.client.request(
+      "turn/steer",
+      {
+        threadId: params.threadId,
+        expectedTurnId: params.turnId,
+        input: texts.map(toCodexTextInput),
+      },
+      {
+        timeoutMs: CODEX_STEER_REQUEST_TIMEOUT_MS,
+        signal: params.signal,
+      },
+    );
   };
 
   const enqueueSend = (texts: string[]) => {

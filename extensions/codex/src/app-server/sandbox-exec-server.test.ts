@@ -1,5 +1,6 @@
 // Codex tests cover sandbox exec server plugin behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { WebSocket } from "ws";
 import {
   CODEX_SANDBOX_EXEC_SERVER_MAX_INBOUND_MESSAGE_BYTES,
   closeCodexSandboxExecServersForTests,
@@ -476,6 +477,29 @@ describe("OpenClaw Codex sandbox exec-server", () => {
     await releaseCodexSandboxExecServerEnvironment(sandbox);
 
     await expect(openSocket(execServerUrl)).rejects.toThrow();
+  });
+
+  it("force-closes exec clients that ignore the graceful shutdown", async () => {
+    const sandbox = createSandboxContext({});
+    const client = createClient();
+    await ensureCodexSandboxExecServerEnvironment({
+      client: client as never,
+      sandbox,
+    });
+    const socket = await openSocket(execServerUrlFromClient(client));
+    const closed = waitForSocketClose(socket);
+    const closeSpy = vi.spyOn(WebSocket.prototype, "close").mockImplementation(() => undefined);
+
+    try {
+      const startedAt = Date.now();
+      await releaseCodexSandboxExecServerEnvironment(sandbox);
+
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+      await expect(closed).resolves.toEqual({ code: 1006 });
+    } finally {
+      closeSpy.mockRestore();
+      socket.terminate();
+    }
   });
 
   it("keeps a shared exec-server open when another turn reacquires during release", async () => {

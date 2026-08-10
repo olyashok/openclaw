@@ -50,6 +50,10 @@ dist-runtime
 **/dist-runtime
 openclaw-path-alias-*
 
+# test files that must not land in /app/extensions (would be treated as plugin candidates)
+extensions/*.test.ts
+extensions/*.test.js
+
 # build artifacts
 dist
 **/dist

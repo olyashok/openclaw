@@ -47,6 +47,8 @@ export type CodexSandboxExecEnvironment = {
 };
 
 const SANDBOX_EXEC_SERVERS = new Map<string, Promise<OpenClawExecServer>>();
+const SANDBOX_EXEC_SERVER_CLOSE_GRACE_MS = 1_000;
+const SANDBOX_EXEC_SERVER_FORCE_CLOSE_SETTLE_MS = 1_000;
 export const CODEX_SANDBOX_EXEC_SERVER_MAX_INBOUND_MESSAGE_BYTES = 100 * 1024 * 1024;
 
 /** Closes all cached sandbox exec-server instances for deterministic tests. */
@@ -245,7 +247,46 @@ async function closeOpenClawExecServer(execServer: OpenClawExecServer): Promise<
     client.close(1001, "shutdown");
   }
   await new Promise<void>((resolve) => {
-    execServer.server.close(() => resolve());
+    let settled = false;
+    let forceCloseTimer: ReturnType<typeof setTimeout> | undefined;
+    let forceSettleTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (forceCloseTimer) {
+        clearTimeout(forceCloseTimer);
+      }
+      if (forceSettleTimer) {
+        clearTimeout(forceSettleTimer);
+      }
+      resolve();
+    };
+    execServer.server.close((error) => {
+      if (error) {
+        embeddedAgentLog.warn("codex sandbox exec-server close failed", {
+          environmentId: execServer.environmentId,
+          error,
+        });
+      }
+      finish();
+    });
+    forceCloseTimer = setTimeout(() => {
+      const lingeringClients = [...execServer.server.clients];
+      if (lingeringClients.length > 0) {
+        embeddedAgentLog.warn("codex sandbox exec-server forcing lingering clients closed", {
+          environmentId: execServer.environmentId,
+          clientCount: lingeringClients.length,
+        });
+      }
+      for (const client of lingeringClients) {
+        client.terminate();
+      }
+      forceSettleTimer = setTimeout(finish, SANDBOX_EXEC_SERVER_FORCE_CLOSE_SETTLE_MS);
+      forceSettleTimer.unref?.();
+    }, SANDBOX_EXEC_SERVER_CLOSE_GRACE_MS);
+    forceCloseTimer.unref?.();
   });
 }
 

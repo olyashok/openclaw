@@ -89,6 +89,7 @@ type AgentCliOpts = {
   runId?: string;
   extraSystemPrompt?: string;
   local?: boolean;
+  embeddedFallback?: boolean;
 };
 type AgentDispatchOpts = Omit<AgentCliOpts, "messageFile"> & {
   message: string;
@@ -959,6 +960,9 @@ export async function agentCliCommand(
         throw err;
       }
       if (isGatewayAgentTimeoutError(err)) {
+        if (dispatchOpts.embeddedFallback === false) {
+          throw err;
+        }
         const fallbackAgentId = await resolveAgentIdForGatewayTimeoutFallback(dispatchOpts);
         const fallbackSession = createGatewayTimeoutFallbackSession(fallbackAgentId);
         runtime.error?.(
@@ -985,6 +989,9 @@ export async function agentCliCommand(
       }
 
       if (!isGatewayAgentEmbeddedFallbackError(err)) {
+        throw err;
+      }
+      if (dispatchOpts.embeddedFallback === false) {
         throw err;
       }
 

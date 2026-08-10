@@ -1,0 +1,124 @@
+services:
+  openclaw-gateway:
+    container_name: openclaw-gateway
+    # Include extension plugins this deployment uses. Upstream v2026.5.x prunes
+    # excluded extensions during the docker build unless listed here.
+    build:
+      args:
+        OPENCLAW_EXTENSIONS: "acpx,codex,discord,slack,voice-call"
+        # v2026.5.x browser plugin uses CDP against a local Chromium; install it.
+        OPENCLAW_INSTALL_BROWSER: "1"
+        # Superadmin Fi ops need native Postgres CLI tools inside sandboxes.
+        OPENCLAW_IMAGE_APT_PACKAGES: "postgresql-client"
+    # Override Dockerfile USER node -> root so container UID matches
+    # root-owned NFS mount (scripts download/modify content there).
+    user: "root"
+    environment:
+      - TZ=America/New_York
+      - INFISICAL_WORKSPACE_ID=${INFISICAL_WORKSPACE_ID}
+      - INFISICAL_ENV=${INFISICAL_ENV}
+      - INFISICAL_PATH_FI_USER=${INFISICAL_PATH_FI_USER}
+      - INFISICAL_PATH_FI_ADMIN=${INFISICAL_PATH_FI_ADMIN}
+      - INFISICAL_PATH_CELLECT_MAIN=${INFISICAL_PATH_CELLECT_MAIN}
+      - INFISICAL_PATH_PERSONAL=${INFISICAL_PATH_PERSONAL}
+      - INFISICAL_API_URL=${INFISICAL_API_URL}
+      - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
+      - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
+    volumes:
+      - openclaw_home:/home/node
+      - /root/.openclaw:/home/node/.openclaw
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
+    command:
+      - bash
+      - -lc
+      - |
+        export INFISICAL_TOKEN=$$(infisical login --method=universal-auth --client-id="$$INFISICAL_CLIENT_ID" --client-secret="$$INFISICAL_CLIENT_SECRET" --silent --plain --domain="$$INFISICAL_API_URL") &&
+        infisical export --projectId "$$INFISICAL_WORKSPACE_ID" --domain "$$INFISICAL_API_URL" --env "$$INFISICAL_ENV" --path "/main" --include-imports=false --format dotenv > /tmp/.env.main &&
+        set -a && . /tmp/.env.main && set +a &&
+        rm -f /tmp/.env.main &&
+        runtime_keys=$$(node - <<'NODE'
+        const fs = require("fs");
+        const root = "/home/node/.openclaw/skill-packages";
+        const keys = new Set();
+        if (fs.existsSync(root)) {
+          for (const runtime of fs.readdirSync(root)) {
+            const dir = root + "/" + runtime;
+            for (const version of fs.readdirSync(dir)) {
+              const file = dir + "/" + version + "/package.json";
+              if (!fs.existsSync(file)) continue;
+              for (const key of JSON.parse(fs.readFileSync(file)).secret_keys || []) keys.add(key);
+            }
+          }
+        }
+        process.stdout.write([...keys].sort().join("\n"));
+        NODE
+        ) &&
+        for tag in PERSONAL_ FI_USER_ FI_ADMIN_ CELLECT_MAIN_; do
+          while IFS= read -r key; do
+            [[ -z "$$key" ]] && continue
+            export "$${tag}$${key}="
+          done <<< "$$runtime_keys"
+        done &&
+        load_prefixed() {
+          local tag="$$1" path="$$2"
+          while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+            export "$${tag}$${key}=$${value}"
+          done < <(
+            infisical export --projectId "$$INFISICAL_WORKSPACE_ID" --domain "$$INFISICAL_API_URL" --env "$$INFISICAL_ENV" --path "$$path" --include-imports=false --format json |
+            node -e '
+              let raw = "";
+              process.stdin.on("data", c => raw += c).on("end", () => {
+                const parsed = JSON.parse(raw);
+                const entries = Array.isArray(parsed)
+                  ? parsed.map(v => [v.secretKey || v.key, v.secretValue ?? v.value ?? ""])
+                  : Object.entries(parsed).map(([k, v]) => [k, typeof v === "object" ? (v.secretValue ?? v.value ?? "") : v]);
+                for (const [k, v] of entries) {
+                  if (!k) continue;
+                  process.stdout.write(String(k) + "\0" + String(v ?? "") + "\0");
+                }
+              });
+            '
+          )
+        } &&
+        load_slack() {
+          local tag="$$1" path="$$2"
+          local bot app
+          bot=$$(infisical secrets get SLACK_BOT_TOKEN --projectId "$$INFISICAL_WORKSPACE_ID" --domain "$$INFISICAL_API_URL" --env "$$INFISICAL_ENV" --path "$$path" --plain)
+          app=$$(infisical secrets get SLACK_APP_TOKEN --projectId "$$INFISICAL_WORKSPACE_ID" --domain "$$INFISICAL_API_URL" --env "$$INFISICAL_ENV" --path "$$path" --plain)
+          export "SLACK_$${tag}_BOT_TOKEN=$$bot"
+          export "SLACK_$${tag}_APP_TOKEN=$$app"
+        } &&
+        load_prefixed PERSONAL_ "$$INFISICAL_PATH_PERSONAL" &&
+        load_prefixed FI_USER_ "$$INFISICAL_PATH_FI_USER" &&
+        load_prefixed FI_ADMIN_ "$$INFISICAL_PATH_FI_ADMIN" &&
+        load_prefixed CELLECT_MAIN_ "$$INFISICAL_PATH_CELLECT_MAIN" &&
+        load_slack FI_USER "$$INFISICAL_PATH_FI_USER" &&
+        load_slack FI_ADMIN "$$INFISICAL_PATH_FI_ADMIN" &&
+        load_slack CELLECT_MAIN "$$INFISICAL_PATH_CELLECT_MAIN" &&
+        export DISCORD_BOT_TOKEN="$${PERSONAL_DISCORD_BOT_TOKEN:-}" &&
+        while IFS= read -r key; do
+          [[ -z "$$key" ]] && continue
+          unset "$$key"
+        done <<< "$$runtime_keys" &&
+        unset SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_CELLECT_BOT_TOKEN SLACK_CELLECT_APP_TOKEN GOG_KEYRING_PASSWORD &&
+        chmod o+x /home/node/.openclaw && \
+        exec node dist/index.js gateway --bind lan --port 18789
+  openclaw-cli:
+    user: "root"
+    environment:
+      - INFISICAL_WORKSPACE_ID=${INFISICAL_WORKSPACE_ID}
+      - INFISICAL_ENV=${INFISICAL_ENV}
+      - INFISICAL_PATH_FI_USER=${INFISICAL_PATH_FI_USER}
+      - INFISICAL_PATH_FI_ADMIN=${INFISICAL_PATH_FI_ADMIN}
+      - INFISICAL_PATH_CELLECT_MAIN=${INFISICAL_PATH_CELLECT_MAIN}
+      - INFISICAL_PATH_PERSONAL=${INFISICAL_PATH_PERSONAL}
+      - INFISICAL_API_URL=${INFISICAL_API_URL}
+      - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
+      - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
+    volumes:
+      - openclaw_home:/home/node
+      - /root/.openclaw:/home/node/.openclaw
+
+volumes:
+  openclaw_home:

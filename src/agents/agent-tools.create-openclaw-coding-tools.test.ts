@@ -1542,6 +1542,49 @@ describe("createOpenClawCodingTools", () => {
     expect(toolNameList(tools)).not.toContain("browser");
   });
 
+  it("keeps source delivery tools available through the sandbox allowlist", () => {
+    const sandboxDir = path.join(os.tmpdir(), "openclaw-sandbox");
+    const sandbox = createAgentToolsSandboxContext({
+      workspaceDir: sandboxDir,
+      agentWorkspaceDir: path.join(os.tmpdir(), "openclaw-workspace"),
+      workspaceAccess: "none" as const,
+      fsBridge: createHostSandboxFsBridge(sandboxDir),
+      tools: {
+        allow: ["exec"],
+        deny: [],
+      },
+    });
+
+    const tools = createOpenClawCodingTools({
+      sandbox,
+      sourceReplyDeliveryMode: "message_tool_only",
+    });
+
+    expect(toolNameList(tools)).toContain("exec");
+    expect(toolNameList(tools)).toContain("message");
+  });
+
+  it("respects an explicit sandbox deny for source delivery tools", () => {
+    const sandboxDir = path.join(os.tmpdir(), "openclaw-sandbox");
+    const sandbox = createAgentToolsSandboxContext({
+      workspaceDir: sandboxDir,
+      agentWorkspaceDir: path.join(os.tmpdir(), "openclaw-workspace"),
+      workspaceAccess: "none" as const,
+      fsBridge: createHostSandboxFsBridge(sandboxDir),
+      tools: {
+        allow: ["exec"],
+        deny: ["message"],
+      },
+    });
+
+    const tools = createOpenClawCodingTools({
+      sandbox,
+      sourceReplyDeliveryMode: "message_tool_only",
+    });
+
+    expect(toolNameList(tools)).not.toContain("message");
+  });
+
   it("hard-disables write/edit when sandbox workspaceAccess is ro", () => {
     const sandboxDir = path.join(os.tmpdir(), "openclaw-sandbox");
     const sandbox = createAgentToolsSandboxContext({

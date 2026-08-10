@@ -1581,6 +1581,22 @@ describe("agentCliCommand", () => {
     });
   });
 
+  it("fails closed when gateway transport fails and embedded fallback is disabled", async () => {
+    await withTempStore(async () => {
+      callGateway.mockRejectedValue(createGatewayClosedError());
+
+      await expect(
+        agentCliCommand({ message: "hi", to: "+1555", embeddedFallback: false }, runtime),
+      ).rejects.toThrow("gateway closed before response");
+
+      expect(callGateway).toHaveBeenCalledTimes(1);
+      expect(agentCommand).not.toHaveBeenCalled();
+      expect(
+        mockMessages(runtime.error).some((message) => message.includes("EMBEDDED FALLBACK")),
+      ).toBe(false);
+    });
+  });
+
   it("retries transient normal gateway closes before embedded fallback", async () => {
     vi.useFakeTimers();
     try {
@@ -1703,6 +1719,30 @@ describe("agentCliCommand", () => {
         ),
       ).toBe(true);
       expect(runtime.log).toHaveBeenCalledWith("local");
+    });
+  });
+
+  it("fails closed when gateway times out and embedded fallback is disabled", async () => {
+    await withTempStore(async () => {
+      callGateway.mockRejectedValue(createGatewayTimeoutError());
+
+      await expect(
+        agentCliCommand(
+          {
+            message: "hi",
+            sessionId: "locked-session",
+            runId: "locked-run",
+            embeddedFallback: false,
+          },
+          runtime,
+        ),
+      ).rejects.toThrow("gateway timeout");
+
+      expect(callGateway).toHaveBeenCalledTimes(1);
+      expect(agentCommand).not.toHaveBeenCalled();
+      expect(
+        mockMessages(runtime.error).some((message) => message.includes("EMBEDDED FALLBACK")),
+      ).toBe(false);
     });
   });
 
