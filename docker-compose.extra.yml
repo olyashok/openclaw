@@ -102,6 +102,7 @@ services:
           unset "$$key"
         done <<< "$$runtime_keys" &&
         unset SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_CELLECT_BOT_TOKEN SLACK_CELLECT_APP_TOKEN GOG_KEYRING_PASSWORD &&
+        unset INFISICAL_TOKEN INFISICAL_CLIENT_ID INFISICAL_CLIENT_SECRET &&
         chmod o+x /home/node/.openclaw && \
         exec node dist/index.js gateway --bind lan --port 18789
   openclaw-cli:
