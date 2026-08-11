@@ -122,3 +122,5 @@ services:
 
 volumes:
   openclaw_home:
+    external: true
+    name: openclaw_openclaw_home
