@@ -30,14 +30,21 @@ function resolveSlackActionContext(params: {
   toolContext: unknown;
   mediaLocalRoots: readonly string[] | undefined;
   mediaReadFile: ((filePath: string) => Promise<Buffer>) | undefined;
+  mediaWorkspaceDir: string | undefined;
 }): SlackActionContext | undefined {
-  if (!params.toolContext && !params.mediaLocalRoots && !params.mediaReadFile) {
+  if (
+    !params.toolContext &&
+    !params.mediaLocalRoots &&
+    !params.mediaReadFile &&
+    !params.mediaWorkspaceDir
+  ) {
     return undefined;
   }
   return {
     ...(params.toolContext as SlackActionContext | undefined),
     ...(params.mediaLocalRoots ? { mediaLocalRoots: params.mediaLocalRoots } : {}),
     ...(params.mediaReadFile ? { mediaReadFile: params.mediaReadFile } : {}),
+    ...(params.mediaWorkspaceDir ? { mediaWorkspaceDir: params.mediaWorkspaceDir } : {}),
   };
 }
 
@@ -62,6 +69,7 @@ export function createSlackActions(
             toolContext,
             mediaLocalRoots: ctx.mediaLocalRoots,
             mediaReadFile: ctx.mediaReadFile,
+            mediaWorkspaceDir: ctx.mediaAccess?.workspaceDir,
           });
           return await (options?.invoke
             ? options.invoke(action, cfg, actionContext)

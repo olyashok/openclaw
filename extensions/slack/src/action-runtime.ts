@@ -1,6 +1,8 @@
 // Slack plugin module implements action runtime behavior.
+import path from "node:path";
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
+import { root as fsRoot } from "openclaw/plugin-sdk/file-access-runtime";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { isSingleUseReplyToMode } from "openclaw/plugin-sdk/reply-reference";
 import { resolveOpenProviderRuntimeGroupPolicy } from "openclaw/plugin-sdk/runtime-group-policy";
@@ -83,7 +85,27 @@ export type SlackActionContext = {
   /** Allowed local media directories for file uploads. */
   mediaLocalRoots?: readonly string[];
   mediaReadFile?: (filePath: string) => Promise<Buffer>;
+  /** Trusted agent workspace used to stage downloaded files for sandbox access. */
+  mediaWorkspaceDir?: string;
 };
+
+async function stageDownloadedSlackFile(
+  downloadedPath: string,
+  context: SlackActionContext | undefined,
+): Promise<string> {
+  const workspaceDir = context?.mediaWorkspaceDir?.trim();
+  if (!workspaceDir) {
+    return downloadedPath;
+  }
+  const fileName = path.basename(downloadedPath);
+  const relativePath = path.join("media", "inbound", fileName);
+  const workspace = await fsRoot(workspaceDir);
+  await workspace.copyIn(relativePath, downloadedPath, {
+    mkdir: true,
+    sourceHardlinks: "reject",
+  });
+  return relativePath.split(path.sep).join(path.posix.sep);
+}
 
 /**
  * Resolve threadTs for a Slack message based on context and replyToMode.
@@ -498,15 +520,16 @@ export async function handleSlackAction(
             error: "File could not be downloaded (not found, too large, or inaccessible).",
           });
         }
+        const agentPath = await stageDownloadedSlackFile(downloaded.path, context);
         if (!isImageContentType(downloaded.contentType)) {
           return jsonResult({
             ok: true,
             fileId,
-            path: downloaded.path,
+            path: agentPath,
             contentType: downloaded.contentType,
             placeholder: downloaded.placeholder,
             media: {
-              mediaUrl: downloaded.path,
+              mediaUrl: agentPath,
               outbound: false,
               ...(downloaded.contentType ? { contentType: downloaded.contentType } : {}),
             },
@@ -518,7 +541,7 @@ export async function handleSlackAction(
           extraText: downloaded.placeholder,
           details: {
             fileId,
-            path: downloaded.path,
+            path: agentPath,
             ...(downloaded.contentType ? { contentType: downloaded.contentType } : {}),
             media: { outbound: false },
           },

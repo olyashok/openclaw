@@ -1,4 +1,7 @@
 // Slack tests cover action runtime plugin behavior.
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleSlackAction, slackActionRuntime } from "./action-runtime.js";
@@ -458,6 +461,39 @@ describe("handleSlackAction", () => {
       outbound: false,
       contentType: "application/pdf",
     });
+  });
+
+  it("stages downloaded files into the trusted agent workspace", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-slack-download-"));
+    try {
+      const sourcePath = path.join(tempDir, "source.pdf");
+      const workspaceDir = path.join(tempDir, "workspace");
+      await fs.mkdir(workspaceDir);
+      await fs.writeFile(sourcePath, "invoice evidence");
+      downloadSlackFile.mockResolvedValueOnce({
+        path: sourcePath,
+        contentType: "application/pdf",
+        placeholder: "[Slack file: source.pdf (fileId: F123)]",
+      });
+
+      const result = await handleSlackAction(
+        {
+          action: "downloadFile",
+          fileId: "F123",
+          channelId: "C1",
+        },
+        slackConfig(),
+        { mediaWorkspaceDir: workspaceDir },
+      );
+
+      const stagedPath = "media/inbound/source.pdf";
+      await expect(fs.readFile(path.join(workspaceDir, stagedPath), "utf8")).resolves.toBe(
+        "invoice evidence",
+      );
+      expect(requireDetails(result).path).toBe(stagedPath);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("forwards resolved botToken to action functions instead of relying on config re-read", async () => {
