@@ -55,6 +55,7 @@ function resolveSlackActionContext(
     requesterAccountId: ctx.requesterAccountId ?? undefined,
     requesterSenderId: ctx.requesterSenderId ?? undefined,
     assertDirectAdapterHandoff: ctx.assertDirectAdapterHandoff,
+    mediaWorkspaceDir: ctx.mediaAccess?.workspaceDir,
   };
 }
 

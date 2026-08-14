@@ -514,6 +514,7 @@ describe("slackPlugin actions", () => {
       },
       mediaLocalRoots,
       mediaReadFile,
+      mediaAccess: { workspaceDir: "/tmp/workspace-agent" },
       toolContext: {
         currentChannelId: "C123",
         replyToMode: "all",
@@ -532,6 +533,7 @@ describe("slackPlugin actions", () => {
       replyToMode: "all",
       mediaLocalRoots,
       mediaReadFile,
+      mediaWorkspaceDir: "/tmp/workspace-agent",
     });
   });
 
