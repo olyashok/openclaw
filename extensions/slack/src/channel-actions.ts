@@ -54,6 +54,7 @@ function resolveSlackActionContext(
     conversationReadOrigin: ctx.conversationReadOrigin,
     requesterAccountId: ctx.requesterAccountId ?? undefined,
     requesterSenderId: ctx.requesterSenderId ?? undefined,
+    mediaWorkspaceDir: ctx.mediaAccess?.workspaceDir,
   };
 }
 

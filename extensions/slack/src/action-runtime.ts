@@ -1,7 +1,9 @@
 // Slack plugin module implements action runtime behavior.
+import path from "node:path";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-resolution";
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
+import { root as fsRoot } from "openclaw/plugin-sdk/file-access-runtime";
 import {
   createActionGate,
   imageResultFromFile,
@@ -128,7 +130,27 @@ export type SlackActionContext = {
   mediaReadFile?: (filePath: string) => Promise<Buffer>;
   /** Slack-private ordered delivery plan prepared after presentation normalization. */
   preparedMessages?: readonly SlackReplyDeliveryMessage[];
+  /** Trusted agent workspace used to stage downloaded files for sandbox access. */
+  mediaWorkspaceDir?: string;
 };
+
+async function stageDownloadedSlackFile(
+  downloadedPath: string,
+  context: SlackActionContext | undefined,
+): Promise<string> {
+  const workspaceDir = context?.mediaWorkspaceDir?.trim();
+  if (!workspaceDir) {
+    return downloadedPath;
+  }
+  const fileName = path.basename(downloadedPath);
+  const relativePath = path.join("media", "inbound", fileName);
+  const workspace = await fsRoot(workspaceDir);
+  await workspace.copyIn(relativePath, downloadedPath, {
+    mkdir: true,
+    sourceHardlinks: "reject",
+  });
+  return relativePath.split(path.sep).join(path.posix.sep);
+}
 
 function resolveThreadTsFromContext(
   explicitThreadTs: string | undefined,
@@ -931,15 +953,16 @@ export async function handleSlackAction(
               "File could not be downloaded. Confirm the fileId came from the requested Slack channel or explicit thread and that the file is accessible and within the size limit.",
           });
         }
+        const agentPath = await stageDownloadedSlackFile(downloaded.path, context);
         if (!isImageContentType(downloaded.contentType)) {
           return jsonResult({
             ok: true,
             fileId,
-            path: downloaded.path,
+            path: agentPath,
             contentType: downloaded.contentType,
             placeholder: downloaded.placeholder,
             media: {
-              mediaUrl: downloaded.path,
+              mediaUrl: agentPath,
               outbound: false,
               ...(downloaded.contentType ? { contentType: downloaded.contentType } : {}),
             },
@@ -951,7 +974,7 @@ export async function handleSlackAction(
           extraText: downloaded.placeholder,
           details: {
             fileId,
-            path: downloaded.path,
+            path: agentPath,
             ...(downloaded.contentType ? { contentType: downloaded.contentType } : {}),
             media: { outbound: false },
           },
