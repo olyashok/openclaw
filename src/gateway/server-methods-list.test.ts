@@ -83,4 +83,11 @@ describe("listGatewayMethods", () => {
       .filter((method) => typeof coreGatewayHandlers[method] !== "function");
     expect(missing).toEqual([]);
   });
+
+  it("wires a dispatchable handler for every chat.* descriptor", () => {
+    const missing = listCoreGatewayMethodNames()
+      .filter((method) => method.startsWith("chat."))
+      .filter((method) => typeof coreGatewayHandlers[method] !== "function");
+    expect(missing).toEqual([]);
+  });
 });

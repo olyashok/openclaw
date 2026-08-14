@@ -346,6 +346,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
       "chat.metadata",
       "chat.message.get",
       "chat.abort",
+      "chat.handoff.arm",
       "chat.send",
       "chat.inject",
     ],
