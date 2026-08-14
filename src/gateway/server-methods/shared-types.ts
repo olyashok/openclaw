@@ -104,6 +104,7 @@ export type GatewayRequestContext = {
     opts?: { role?: string; reason?: string },
   ) => void;
   disconnectClientsUsingSharedGatewayAuth?: () => void;
+  isClientConnected?: (connId: string) => boolean;
   enforceSharedGatewayAuthGenerationForConfigWrite?: (nextConfig: OpenClawConfig) => void;
   nodeRegistry: NodeRegistry;
   // Operator terminal session store. Absent in local/in-process contexts where

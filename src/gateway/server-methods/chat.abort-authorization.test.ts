@@ -1,13 +1,14 @@
 /**
  * Tests chat abort authorization checks for gateway clients and session owners.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createActiveRun,
   createChatAbortContext,
   invokeChatAbortHandler,
 } from "./chat.abort.test-helpers.js";
 import { chatHandlers } from "./chat.js";
+import type { GatewayRequestHandlerOptions } from "./types.js";
 
 type AbortResponsePayload = {
   aborted?: boolean;
@@ -268,6 +269,67 @@ describe("chat.abort authorization", () => {
     const [ok, payload] = requireLastRespondCall(respond);
     expect(ok).toBe(true);
     expectAbortPayload(payload, { aborted: true, runIds: ["run-1"] });
+  });
+});
+
+describe("chat.handoff.arm authorization", () => {
+  async function arm(params: {
+    context: ReturnType<typeof createChatAbortContext>;
+    connId: string;
+    deviceId: string;
+  }) {
+    const respond = vi.fn();
+    await chatHandlers["chat.handoff.arm"]({
+      params: { runId: "run-1" },
+      respond,
+      context: params.context,
+      client: {
+        connId: params.connId,
+        connect: {
+          client: { id: "openclaw-control-ui", version: "1", platform: "web", mode: "webchat" },
+          device: { id: params.deviceId },
+          scopes: ["operator.write"],
+        },
+      },
+    } as unknown as GatewayRequestHandlerOptions);
+    return respond;
+  }
+
+  it("arms only the same device's signed completion route", async () => {
+    const active = createActiveRun("main", {
+      owner: { connId: "conn-old", deviceId: "dev-owner" },
+      webchatCompletionDelivery: {
+        route: { channel: "slack", to: "user:U123", accountId: "fi-admin" },
+      },
+    });
+    const context = createChatAbortContext({
+      chatAbortControllers: new Map([["run-1", active]]),
+    });
+
+    const respond = await arm({ context, connId: "conn-new", deviceId: "dev-owner" });
+
+    expect(respond).toHaveBeenLastCalledWith(true, { ok: true, armed: true });
+    expect(active.webchatCompletionDelivery?.armedAtMs).toEqual(expect.any(Number));
+  });
+
+  it("rejects another device without exposing or changing the route", async () => {
+    const active = createActiveRun("main", {
+      owner: { connId: "conn-owner", deviceId: "dev-owner" },
+      webchatCompletionDelivery: {
+        route: { channel: "slack", to: "user:U123", accountId: "fi-admin" },
+      },
+    });
+    const context = createChatAbortContext({
+      chatAbortControllers: new Map([["run-1", active]]),
+    });
+
+    const respond = await arm({ context, connId: "conn-other", deviceId: "dev-other" });
+
+    const [ok, payload, error] = respond.mock.calls.at(-1) ?? [];
+    expect(ok).toBe(false);
+    expect(payload).toBeUndefined();
+    expect(error?.message).toBe("unauthorized");
+    expect(active.webchatCompletionDelivery?.armedAtMs).toBeUndefined();
   });
 });
 

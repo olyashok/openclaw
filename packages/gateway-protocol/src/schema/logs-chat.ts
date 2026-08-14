@@ -97,7 +97,16 @@ export const ChatSendParamsSchema = Type.Object(
     systemProvenanceReceipt: Type.Optional(Type.String()),
     suppressCommandInterpretation: Type.Optional(Type.Boolean()),
     expectedSessionRoutingContract: Type.Optional(NonEmptyString),
+    completionDeliveryClaim: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
     idempotencyKey: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+/** Arms an already-authorized completion route when the initiating WebChat is no longer visible. */
+export const ChatHandoffArmParamsSchema = Type.Object(
+  {
+    runId: NonEmptyString,
   },
   { additionalProperties: false },
 );

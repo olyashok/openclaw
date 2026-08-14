@@ -4,6 +4,7 @@
 import { vi } from "vitest";
 import type { Mock } from "vitest";
 import type { ChatAbortMarker } from "../server-chat-state.js";
+import type { WebchatCompletionDeliveryState } from "../webchat-completion-delivery.js";
 import type { GatewayRequestHandler, RespondFn } from "./types.js";
 
 export function createActiveRun(
@@ -14,6 +15,7 @@ export function createActiveRun(
     controlUiVisible?: boolean;
     owner?: { connId?: string; deviceId?: string };
     turnKind?: "main" | "btw";
+    webchatCompletionDelivery?: WebchatCompletionDeliveryState;
   } = {},
 ) {
   const now = Date.now();
@@ -28,6 +30,7 @@ export function createActiveRun(
     ownerConnId: params.owner?.connId,
     ownerDeviceId: params.owner?.deviceId,
     turnKind: params.turnKind,
+    webchatCompletionDelivery: params.webchatCompletionDelivery,
   };
 }
 

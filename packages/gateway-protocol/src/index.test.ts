@@ -6,6 +6,7 @@ import {
   formatValidationErrors,
   validateChatAbortParams,
   validateChatHistoryParams,
+  validateChatHandoffArmParams,
   validateChatMetadataParams,
   validateChatSendParams,
   validateChatEvent,
@@ -801,7 +802,17 @@ describe("validateChatSendParams", () => {
       }),
     ).toBe(true);
     expect(validateChatSendParams({ ...base, fastAutoOnSeconds: 2 })).toBe(true);
+    expect(validateChatSendParams({ ...base, completionDeliveryClaim: "claim.signature" })).toBe(
+      true,
+    );
     expect(validateChatSendParams({ ...base, fastAutoOnSeconds: 0 })).toBe(false);
+  });
+});
+
+describe("validateChatHandoffArmParams", () => {
+  it("accepts only a run id", () => {
+    expect(validateChatHandoffArmParams({ runId: "run-1" })).toBe(true);
+    expect(validateChatHandoffArmParams({ runId: "run-1", to: "user:U1" })).toBe(false);
   });
 });
 

@@ -181,6 +181,14 @@ export function createGatewayRequestContext(
     disconnectClientsUsingSharedGatewayAuth: () => {
       disconnectAllSharedGatewayAuthClients(params.clients);
     },
+    isClientConnected: (connId: string) => {
+      for (const gatewayClient of params.clients) {
+        if (gatewayClient.connId === connId && gatewayClient.invalidated !== true) {
+          return true;
+        }
+      }
+      return false;
+    },
     enforceSharedGatewayAuthGenerationForConfigWrite:
       params.enforceSharedGatewayAuthGenerationForConfigWrite,
     nodeRegistry: params.nodeRegistry,

@@ -26,6 +26,7 @@ import {
   errorShape,
   formatValidationErrors,
   validateChatAbortParams,
+  validateChatHandoffArmParams,
   validateChatHistoryParams,
   validateChatInjectParams,
   validateChatMetadataParams,
@@ -211,6 +212,13 @@ import {
   resolveSessionModelRef,
   resolveSessionStoreKey,
 } from "../session-utils.js";
+import { deliverWebchatCompletionFallback } from "../webchat-completion-delivery-send.js";
+import {
+  armWebchatCompletionDelivery,
+  verifyWebchatCompletionDeliveryClaim,
+  WEBCHAT_COMPLETION_DELIVERY_SECRET_ENV,
+  type WebchatCompletionDeliveryRoute,
+} from "../webchat-completion-delivery.js";
 import { formatForLog } from "../ws-log.js";
 import { setGatewayDedupeEntry } from "./agent-wait-dedupe.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
@@ -3434,6 +3442,40 @@ export const chatHandlers: GatewayRequestHandlers = {
       message: projected,
     });
   },
+  "chat.handoff.arm": async ({ params, respond, context, client }) => {
+    if (!validateChatHandoffArmParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid chat.handoff.arm params: ${formatValidationErrors(validateChatHandoffArmParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    if (!isWebchatClient(client?.connect?.client)) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "WebChat client required"));
+      return;
+    }
+    const { runId } = params as { runId: string };
+    const active = context.chatAbortControllers.get(runId);
+    if (
+      !active ||
+      active.kind === "agent" ||
+      active.controlUiVisible === false ||
+      !active.webchatCompletionDelivery
+    ) {
+      respond(true, { ok: true, armed: false });
+      return;
+    }
+    if (!canRequesterAbortChatRunWithoutSessionMatch(active, resolveChatAbortRequester(client))) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unauthorized"));
+      return;
+    }
+    armWebchatCompletionDelivery(active.webchatCompletionDelivery);
+    respond(true, { ok: true, armed: active.webchatCompletionDelivery.armedAtMs !== undefined });
+  },
   "chat.abort": async ({ params, respond, context, client }) => {
     if (!validateChatAbortParams(params)) {
       respond(
@@ -3735,6 +3777,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       systemProvenanceReceipt?: string;
       suppressCommandInterpretation?: boolean;
       expectedSessionRoutingContract?: string;
+      completionDeliveryClaim?: string;
       idempotencyKey: string;
     };
     const suppressCommandInterpretation = p.suppressCommandInterpretation === true;
@@ -3866,6 +3909,33 @@ export const chatHandlers: GatewayRequestHandlers = {
       config: cfg,
       agentId: selectedAgent.agentId,
     });
+    let webchatCompletionDeliveryRoute: WebchatCompletionDeliveryRoute | undefined;
+    if (p.completionDeliveryClaim) {
+      if (!isWebchatClient(clientInfo)) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "completion delivery claims are limited to WebChat clients",
+          ),
+        );
+        return;
+      }
+      webchatCompletionDeliveryRoute = verifyWebchatCompletionDeliveryClaim({
+        claim: p.completionDeliveryClaim,
+        secret: process.env[WEBCHAT_COMPLETION_DELIVERY_SECRET_ENV],
+        expectedAgentId: selectedAgent.agentId ?? agentId,
+      });
+      if (!webchatCompletionDeliveryRoute) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "invalid completion delivery claim"),
+        );
+        return;
+      }
+    }
     const activeRunScopeKey = resolveChatSendActiveScopeKey({
       sessionKey,
       agentId: selectedAgent.agentId,
@@ -4136,6 +4206,17 @@ export const chatHandlers: GatewayRequestHandlers = {
             throw new Error(archivedError);
           }
           admittedSessionId = latestEntry?.sessionId ?? backingSessionId ?? clientRunId;
+          const ownerConnId = normalizeOptionalText(client?.connId);
+          const webchatCompletionDelivery = webchatCompletionDeliveryRoute
+            ? { route: webchatCompletionDeliveryRoute }
+            : undefined;
+          if (
+            webchatCompletionDelivery &&
+            ownerConnId &&
+            context.isClientConnected?.(ownerConnId) === false
+          ) {
+            armWebchatCompletionDelivery(webchatCompletionDelivery);
+          }
           admittedRunAbort = registerChatAbortController({
             chatAbortControllers: context.chatAbortControllers,
             runId: clientRunId,
@@ -4144,8 +4225,9 @@ export const chatHandlers: GatewayRequestHandlers = {
             agentId: selectedAgent.agentId,
             timeoutMs,
             now,
-            ownerConnId: normalizeOptionalText(client?.connId),
+            ownerConnId,
             ownerDeviceId: normalizeOptionalText(client?.connect?.device?.id),
+            webchatCompletionDelivery,
             providerId: resolvedSessionModel.provider,
             authProviderId: resolvedSessionAuthProvider,
             isAbortable: (active) => isReplyRunAbortableForSignal(active.controller.signal),
@@ -4750,6 +4832,24 @@ export const chatHandlers: GatewayRequestHandlers = {
           }
         },
       });
+
+      const deliverCompletionFallback = async (fallbackError?: string) => {
+        if (context.chatAbortedRuns.has(clientRunId)) {
+          return;
+        }
+        await deliverWebchatCompletionFallback({
+          cfg,
+          state: activeRunAbort.entry?.webchatCompletionDelivery,
+          startedAtMs: activeRunAbort.entry?.startedAtMs ?? now,
+          runId: clientRunId,
+          sessionId: admittedSessionId,
+          agentId,
+          ctx,
+          replies: deliveredReplies,
+          fallbackError,
+          log: context.logGateway,
+        });
+      };
 
       const emitServerTiming = (
         phase: ChatSendServerTimingPhase,
@@ -5704,6 +5804,9 @@ export const chatHandlers: GatewayRequestHandlers = {
                   errorMessage: returnedAgentErrorMessage,
                 });
               }
+              await deliverCompletionFallback(
+                shouldBroadcastAgentError ? returnedAgentErrorMessage : undefined,
+              );
               if (!context.chatAbortedRuns.has(clientRunId)) {
                 const returnedAgentError = shouldBroadcastAgentError
                   ? errorShape(
@@ -5821,6 +5924,7 @@ export const chatHandlers: GatewayRequestHandlers = {
             agentId,
             errorMessage,
           });
+          await deliverCompletionFallback(errorMessage);
         })
         .finally(() => {
           cleanupAdmittedRun();

@@ -185,6 +185,33 @@ describe("attachGatewayWsConnectionHandler", () => {
     expect(socket.ping).toHaveBeenCalledTimes(1);
   });
 
+  it("arms completion delivery when an owning WebChat connection closes", async () => {
+    const state = { route: { channel: "slack", to: "user:U123" } };
+    const context = createGatewayWsTestRequestContext({
+      chatAbortControllers: new Map(),
+    });
+    const { passed, socket } = await connectTestWs({
+      options: { buildRequestContext: () => context as never },
+    });
+    const handlerParams = passed as { connId: string; setClient: (client: unknown) => boolean };
+    context.chatAbortControllers.set("run-1", {
+      ownerConnId: handlerParams.connId,
+      webchatCompletionDelivery: state,
+    });
+    expect(
+      handlerParams.setClient({
+        socket,
+        connect: { client: { id: "openclaw-control-ui", mode: "webchat" } },
+        connId: handlerParams.connId,
+        usesSharedGatewayAuth: false,
+      }),
+    ).toBe(true);
+
+    socket.emit("close", 1001, Buffer.from("page left"));
+
+    expect(state).toMatchObject({ armedAtMs: expect.any(Number) });
+  });
+
   it("closes slow consumers before writing direct response frames", async () => {
     const socket = createGatewayWsTestSocket();
     const { passed } = await connectTestWs({ socket });

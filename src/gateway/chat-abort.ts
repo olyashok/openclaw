@@ -14,6 +14,7 @@ import { emitAgentEvent, getAgentEventLifecycleGeneration } from "../infra/agent
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
 import { projectLiveAssistantBufferedText } from "./live-chat-projector.js";
 import { createChatAbortMarker, type ChatAbortMarker } from "./server-chat-state.js";
+import type { WebchatCompletionDeliveryState } from "./webchat-completion-delivery.js";
 
 const DEFAULT_CHAT_RUN_ABORT_GRACE_MS = 60_000;
 
@@ -27,6 +28,7 @@ export type ChatAbortControllerEntry = {
   expiresAtMs: number;
   ownerConnId?: string;
   ownerDeviceId?: string;
+  webchatCompletionDelivery?: WebchatCompletionDeliveryState;
   providerId?: string;
   authProviderId?: string;
   abortStopReason?: string;
@@ -152,6 +154,7 @@ export function registerChatAbortController(params: {
   timeoutMs: number;
   ownerConnId?: string;
   ownerDeviceId?: string;
+  webchatCompletionDelivery?: WebchatCompletionDeliveryState;
   providerId?: string;
   authProviderId?: string;
   controlUiVisible?: boolean;
@@ -218,6 +221,7 @@ export function registerChatAbortController(params: {
       resolveChatRunExpiresAtMs({ now: rawNow, timeoutMs: params.timeoutMs }),
     ownerConnId: params.ownerConnId,
     ownerDeviceId: params.ownerDeviceId,
+    webchatCompletionDelivery: params.webchatCompletionDelivery,
     providerId: normalizeProviderIdForActiveRun(params.providerId),
     authProviderId: normalizeProviderIdForActiveRun(params.authProviderId),
     controlUiVisible: params.controlUiVisible,

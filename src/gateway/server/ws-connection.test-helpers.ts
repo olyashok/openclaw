@@ -42,10 +42,12 @@ export function createResolvedGatewayTokenAuth(token: string): ResolvedGatewayAu
 export function createGatewayWsTestRequestContext(
   overrides: {
     nodeRegistry?: { unregister: ReturnType<typeof vi.fn> };
+    chatAbortControllers?: Map<string, unknown>;
   } = {},
 ) {
   return {
     unsubscribeAllSessionEvents: vi.fn(),
+    chatAbortControllers: overrides.chatAbortControllers ?? new Map(),
     nodeRegistry: overrides.nodeRegistry ?? { unregister: vi.fn() },
     nodeUnsubscribeAll: vi.fn(),
   };
