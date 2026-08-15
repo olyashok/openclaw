@@ -89,6 +89,11 @@ const coreCliCommandCatalog = defineCommandDescriptorCatalog([
     hasSubcommands: true,
   },
   {
+    name: "thread",
+    description: "Inspect or resume one Slack thread by permalink",
+    hasSubcommands: true,
+  },
+  {
     name: "status",
     description: "Show channel health and recent session recipients",
     hasSubcommands: false,
