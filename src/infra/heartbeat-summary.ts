@@ -86,9 +86,9 @@ export function resolveHeartbeatSummaryForAgent(
 ): HeartbeatSummary {
   const defaults = cfg.agents?.defaults?.heartbeat;
   const overrides = agentId ? resolveAgentConfig(cfg, agentId)?.heartbeat : undefined;
-  const enabled = isHeartbeatEnabledForAgent(cfg, agentId);
+  const selected = isHeartbeatEnabledForAgent(cfg, agentId);
 
-  if (!enabled) {
+  if (!selected) {
     return {
       enabled: false,
       every: "disabled",
@@ -103,6 +103,17 @@ export function resolveHeartbeatSummaryForAgent(
   const merged = defaults || overrides ? { ...defaults, ...overrides } : undefined;
   const every = merged?.every ?? defaults?.every ?? overrides?.every ?? DEFAULT_HEARTBEAT_EVERY;
   const everyMs = resolveHeartbeatIntervalMs(cfg, undefined, merged);
+  if (everyMs === null) {
+    return {
+      enabled: false,
+      every: "disabled",
+      everyMs: null,
+      prompt: resolveHeartbeatPromptText(merged?.prompt),
+      target: merged?.target ?? DEFAULT_HEARTBEAT_TARGET,
+      model: merged?.model,
+      ackMaxChars: Math.max(0, merged?.ackMaxChars ?? DEFAULT_HEARTBEAT_ACK_MAX_CHARS),
+    };
+  }
   const prompt = resolveHeartbeatPromptText(
     merged?.prompt ?? defaults?.prompt ?? overrides?.prompt,
   );

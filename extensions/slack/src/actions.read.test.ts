@@ -36,7 +36,7 @@ describe("Slack read actions", () => {
     expect(client.conversations.info).toHaveBeenNthCalledWith(2, { channel: "C1" });
   });
 
-  it("uses conversations.replies and drops the parent message", async () => {
+  it("uses conversations.replies and preserves the parent message", async () => {
     const client = createClient();
     client.conversations.replies.mockResolvedValueOnce({
       messages: [{ ts: "171234.567" }, { ts: "171234.890" }, { ts: "171235.000" }],
@@ -57,7 +57,11 @@ describe("Slack read actions", () => {
       oldest: undefined,
     });
     expect(client.conversations.history).not.toHaveBeenCalled();
-    expect(result.messages.map((message) => message.ts)).toEqual(["171234.890", "171235.000"]);
+    expect(result.messages.map((message) => message.ts)).toEqual([
+      "171234.567",
+      "171234.890",
+      "171235.000",
+    ]);
   });
 
   it("filters a specific thread reply by messageId", async () => {

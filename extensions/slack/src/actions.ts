@@ -399,8 +399,10 @@ export async function readSlackMessages(
       if (exactMessageId) {
         return message.ts === exactMessageId;
       }
-      // conversations.replies includes the parent message; drop it for replies-only reads.
-      return message.ts !== opts.threadId;
+      // Preserve the parent message so a bounded thread read always contains
+      // the instruction that started the conversation. Exact reply lookups
+      // above remain exact and do not add unrelated context.
+      return true;
     });
     return {
       messages,

@@ -19,6 +19,20 @@ function createSlackFileActionSchema(): Record<string, TSchema> {
           'Slack file id, starting with "F" (for example F0B0LTT8M36). Required for action="download-file". Read it from inbound Slack file metadata at event.files[].id. This is not the Slack message timestamp/messageId.',
       }),
     ),
+    fileIds: Type.Optional(
+      Type.Array(Type.String(), {
+        minItems: 1,
+        maxItems: 20,
+        description:
+          'Slack file ids to download and stage in one bounded action. Use this for a thread with several attachments instead of calling action="download-file" once per file.',
+      }),
+    ),
+    allThreadFiles: Type.Optional(
+      Type.Boolean({
+        description:
+          "Read the bounded Slack thread and stage every attached file in one action. Requires threadId and cannot be combined with fileId/fileIds.",
+      }),
+    ),
   };
 }
 

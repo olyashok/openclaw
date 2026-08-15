@@ -1,4 +1,6 @@
 // Slack plugin module implements action runtime behavior.
+import { createHash } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
@@ -92,12 +94,15 @@ export type SlackActionContext = {
 async function stageDownloadedSlackFile(
   downloadedPath: string,
   context: SlackActionContext | undefined,
+  fileId?: string,
 ): Promise<string> {
   const workspaceDir = context?.mediaWorkspaceDir?.trim();
   if (!workspaceDir) {
     return downloadedPath;
   }
-  const fileName = path.basename(downloadedPath);
+  const fileName = fileId
+    ? `${fileId}-${path.basename(downloadedPath)}`
+    : path.basename(downloadedPath);
   const relativePath = path.join("media", "inbound", fileName);
   const workspace = await fsRoot(workspaceDir);
   await workspace.copyIn(relativePath, downloadedPath, {
@@ -490,7 +495,27 @@ export async function handleSlackAction(
         return jsonResult({ ok: true, messages, hasMore: result.hasMore });
       }
       case "downloadFile": {
-        const fileId = readStringParam(params, "fileId", { required: true });
+        const fileId = readStringParam(params, "fileId");
+        const allThreadFiles = readBooleanParam(params, "allThreadFiles") === true;
+        const rawFileIds = params.fileIds;
+        const fileIds = Array.isArray(rawFileIds)
+          ? rawFileIds.map((value) => (typeof value === "string" ? value.trim() : ""))
+          : undefined;
+        if (rawFileIds !== undefined && (!fileIds || fileIds.some((value) => !value))) {
+          throw new Error("Slack fileIds must be an array of non-empty file ids.");
+        }
+        const uniqueFileIds = fileIds ? Array.from(new Set(fileIds)) : undefined;
+        if ([Boolean(fileId), Boolean(uniqueFileIds), allThreadFiles].filter(Boolean).length > 1) {
+          throw new Error(
+            "Slack file download accepts exactly one of fileId, fileIds, or allThreadFiles.",
+          );
+        }
+        if (!fileId && (!uniqueFileIds || uniqueFileIds.length === 0) && !allThreadFiles) {
+          throw new Error("Slack file download requires fileId, fileIds, or allThreadFiles.");
+        }
+        if (uniqueFileIds && uniqueFileIds.length > 20) {
+          throw new Error("Slack file download accepts at most 20 unique file ids.");
+        }
         const channelTarget =
           readStringParam(params, "channelId") ??
           readStringParam(params, "to") ??
@@ -503,10 +528,87 @@ export async function handleSlackAction(
         const channelId = resolveSlackChannelId(channelTarget);
         await assertReadTargetAllowed(channelId);
         const threadId = readStringParam(params, "threadId") ?? readStringParam(params, "replyTo");
+        if (allThreadFiles && !threadId) {
+          throw new Error("Slack allThreadFiles download requires threadId.");
+        }
         const maxBytes = account.config?.mediaMaxMb
           ? account.config.mediaMaxMb * 1024 * 1024
           : 20 * 1024 * 1024;
         const readToken = getTokenForOperation("read");
+        const threadMessages = allThreadFiles
+          ? await slackActionRuntime.readSlackMessages(channelId, {
+              ...readOpts,
+              limit: 100,
+              threadId: threadId ?? undefined,
+            })
+          : undefined;
+        const threadFileIds = threadMessages
+          ? Array.from(
+              new Set(
+                threadMessages.messages.flatMap((message) =>
+                  (message.files ?? []).flatMap((file) => (file.id ? [file.id] : [])),
+                ),
+              ),
+            )
+          : undefined;
+        const batchFileIds = uniqueFileIds ?? threadFileIds;
+        if (batchFileIds && batchFileIds.length > 20) {
+          throw new Error(
+            `Slack thread contains ${batchFileIds.length} files; bounded batch download supports at most 20.`,
+          );
+        }
+        if (allThreadFiles && (!batchFileIds || batchFileIds.length === 0)) {
+          return jsonResult({
+            ok: true,
+            channelId,
+            threadId,
+            messages: threadMessages?.messages ?? [],
+            files: [],
+          });
+        }
+        if (batchFileIds) {
+          const files = [];
+          for (const batchFileId of batchFileIds) {
+            const downloaded = await slackActionRuntime.downloadSlackFile(batchFileId, {
+              ...readOpts,
+              ...(readToken && !readOpts?.token ? { token: readToken } : {}),
+              maxBytes,
+              channelId,
+              threadId: threadId ?? undefined,
+            });
+            if (!downloaded) {
+              files.push({
+                fileId: batchFileId,
+                ok: false,
+                error: "File could not be downloaded (not found, too large, or inaccessible).",
+              });
+              continue;
+            }
+            const [contents, fileStat] = await Promise.all([
+              readFile(downloaded.path),
+              stat(downloaded.path),
+            ]);
+            const agentPath = await stageDownloadedSlackFile(downloaded.path, context, batchFileId);
+            files.push({
+              fileId: batchFileId,
+              ok: true,
+              path: agentPath,
+              contentType: downloaded.contentType,
+              size: fileStat.size,
+              sha256: createHash("sha256").update(contents).digest("hex"),
+            });
+          }
+          return jsonResult({
+            ok: files.every((file) => file.ok),
+            channelId,
+            threadId: threadId ?? null,
+            ...(threadMessages ? { messages: threadMessages.messages } : {}),
+            files,
+          });
+        }
+        if (!fileId) {
+          throw new Error("Slack single-file download is missing fileId.");
+        }
         const downloaded = await slackActionRuntime.downloadSlackFile(fileId, {
           ...readOpts,
           ...(readToken && !readOpts?.token ? { token: readToken } : {}),

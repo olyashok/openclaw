@@ -237,22 +237,44 @@ export async function handleSlackMessageAction(params: {
 
   if (action === "download-file") {
     const fileIdParam = readStringParam(actionParams, "fileId");
+    const allThreadFiles = readBooleanParam(actionParams, "allThreadFiles") === true;
+    const fileIdsParam = actionParams.fileIds;
+    const fileIds = Array.isArray(fileIdsParam)
+      ? fileIdsParam.map((value) => (typeof value === "string" ? value.trim() : ""))
+      : undefined;
+    if (fileIdsParam !== undefined && (!fileIds || fileIds.some((value) => !value))) {
+      throw new Error("download-file fileIds must be an array of non-empty Slack file ids.");
+    }
+    const uniqueFileIds = fileIds ? Array.from(new Set(fileIds)) : undefined;
+    if (uniqueFileIds && (uniqueFileIds.length === 0 || uniqueFileIds.length > 20)) {
+      throw new Error("download-file fileIds must contain between 1 and 20 unique ids.");
+    }
+    if ([Boolean(fileIdParam), Boolean(uniqueFileIds), allThreadFiles].filter(Boolean).length > 1) {
+      throw new Error("download-file accepts exactly one of fileId, fileIds, or allThreadFiles.");
+    }
     const messageIdParam =
       readStringParam(actionParams, "messageId") ?? readStringParam(actionParams, "message_id");
-    if (!fileIdParam && messageIdParam) {
+    if (!fileIdParam && !uniqueFileIds && messageIdParam) {
       throw new Error(
         "download-file requires fileId (the Slack file id, for example F0B0LTT8M36 from event.files[].id), not messageId. Did you mean to pass fileId? messageId is the Slack message timestamp and is used by react / reactions / edit / delete / pin / unpin actions, not download-file.",
       );
     }
-    const fileId = readStringParam(actionParams, "fileId", { required: true });
+    if (!fileIdParam && !uniqueFileIds && !allThreadFiles) {
+      throw new Error("download-file requires fileId, fileIds, or allThreadFiles.");
+    }
     const channelId =
       readStringParam(actionParams, "channelId") ?? readStringParam(actionParams, "to");
     const threadId =
       readStringParam(actionParams, "threadId") ?? readStringParam(actionParams, "replyTo");
+    if (allThreadFiles && !threadId) {
+      throw new Error("download-file allThreadFiles requires threadId.");
+    }
     return await invoke(
       {
         action: "downloadFile",
-        fileId,
+        fileId: fileIdParam,
+        fileIds: uniqueFileIds,
+        allThreadFiles,
         channelId: channelId ?? undefined,
         threadId: threadId ?? undefined,
         accountId,

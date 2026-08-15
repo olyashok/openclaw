@@ -27,6 +27,7 @@ import {
   resolveHeartbeatPrompt,
   runHeartbeatOnce,
 } from "./heartbeat-runner.js";
+import { resolveHeartbeatSummaryForAgent } from "./heartbeat-summary.js";
 import {
   resolveHeartbeatDeliveryTarget,
   resolveHeartbeatDeliveryTargetWithSessionRoute,
@@ -369,6 +370,22 @@ describe("resolveHeartbeatIntervalMs", () => {
         { every: "5m" },
       ),
     ).toBe(5 * 60_000);
+  });
+});
+
+describe("resolveHeartbeatSummaryForAgent", () => {
+  it("reports an explicit zero interval as disabled", () => {
+    expect(
+      resolveHeartbeatSummaryForAgent(
+        {
+          agents: {
+            defaults: { heartbeat: { every: "1h" } },
+            list: [{ id: "ops", heartbeat: { every: "0m" } }],
+          },
+        },
+        "ops",
+      ),
+    ).toMatchObject({ enabled: false, every: "disabled", everyMs: null });
   });
 });
 

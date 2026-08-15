@@ -472,6 +472,45 @@ describe("handleSlackMessageAction", () => {
     expectForwardedCfg(invoke, cfg);
   });
 
+  it("maps a bounded fileIds batch to one internal download action", async () => {
+    const invoke = createInvokeSpy();
+
+    await handleSlackMessageAction({
+      providerId: "slack",
+      ctx: {
+        action: "download-file",
+        cfg: slackConfig(),
+        params: {
+          channelId: "C1",
+          fileIds: ["F1", "F2", "F1"],
+          threadId: "111.222",
+        },
+      } as never,
+      invoke: invoke as never,
+    });
+
+    expect(firstAction(invoke)).toMatchObject({
+      action: "downloadFile",
+      fileIds: ["F1", "F2"],
+      channelId: "C1",
+      threadId: "111.222",
+    });
+  });
+
+  it("rejects ambiguous single and batch file ids", async () => {
+    await expect(
+      handleSlackMessageAction({
+        providerId: "slack",
+        ctx: {
+          action: "download-file",
+          cfg: slackConfig(),
+          params: { channelId: "C1", fileId: "F1", fileIds: ["F2"] },
+        } as never,
+        invoke: createInvokeSpy() as never,
+      }),
+    ).rejects.toThrow("exactly one of fileId, fileIds, or allThreadFiles");
+  });
+
   it("forwards tool context for current-channel download-file actions", async () => {
     const invoke = createInvokeSpy();
     const cfg = slackConfig();

@@ -496,6 +496,118 @@ describe("handleSlackAction", () => {
     }
   });
 
+  it("downloads, hashes, and stages a bounded attachment batch", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-slack-batch-"));
+    try {
+      const firstPath = path.join(tempDir, "invoice.pdf");
+      const secondPath = path.join(tempDir, "receipt.png");
+      const workspaceDir = path.join(tempDir, "workspace");
+      await fs.mkdir(workspaceDir);
+      await fs.writeFile(firstPath, "invoice evidence");
+      await fs.writeFile(secondPath, "receipt evidence");
+      downloadSlackFile
+        .mockResolvedValueOnce({
+          path: firstPath,
+          contentType: "application/pdf",
+          placeholder: "invoice",
+        })
+        .mockResolvedValueOnce({
+          path: secondPath,
+          contentType: "image/png",
+          placeholder: "receipt",
+        });
+
+      const result = await handleSlackAction(
+        {
+          action: "downloadFile",
+          fileIds: ["F1", "F2"],
+          channelId: "C1",
+          threadId: "123.456",
+        },
+        slackConfig(),
+        { mediaWorkspaceDir: workspaceDir },
+      );
+
+      const details = requireDetails(result);
+      expect(details.ok).toBe(true);
+      expect(details.channelId).toBe("C1");
+      expect(details.threadId).toBe("123.456");
+      const files = requireArray(details.files, "batch files").map((value) =>
+        requireRecord(value, "batch file"),
+      );
+      expect(files).toMatchObject([
+        {
+          fileId: "F1",
+          ok: true,
+          path: "media/inbound/F1-invoice.pdf",
+          contentType: "application/pdf",
+          size: 16,
+        },
+        {
+          fileId: "F2",
+          ok: true,
+          path: "media/inbound/F2-receipt.png",
+          contentType: "image/png",
+          size: 16,
+        },
+      ]);
+      expect(String(files[0]?.sha256)).toMatch(/^[a-f0-9]{64}$/u);
+      await expect(
+        fs.readFile(path.join(workspaceDir, "media/inbound/F1-invoice.pdf"), "utf8"),
+      ).resolves.toBe("invoice evidence");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a thread and stages all attached files in one action", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-slack-thread-batch-"));
+    try {
+      const sourcePath = path.join(tempDir, "invoice.pdf");
+      const workspaceDir = path.join(tempDir, "workspace");
+      await fs.mkdir(workspaceDir);
+      await fs.writeFile(sourcePath, "thread invoice");
+      readSlackMessages.mockResolvedValueOnce({
+        messages: [
+          { ts: "123.456", text: "root", user: "U1", files: [{ id: "F1", name: "invoice.pdf" }] },
+          { ts: "123.789", text: "reply", user: "U2" },
+        ],
+        hasMore: false,
+      });
+      downloadSlackFile.mockResolvedValueOnce({
+        path: sourcePath,
+        contentType: "application/pdf",
+        placeholder: "invoice",
+      });
+
+      const result = await handleSlackAction(
+        {
+          action: "downloadFile",
+          allThreadFiles: true,
+          channelId: "C1",
+          threadId: "123.456",
+        },
+        slackConfig(),
+        { mediaWorkspaceDir: workspaceDir },
+      );
+
+      expect(readSlackMessages).toHaveBeenCalledWith(
+        "C1",
+        expect.objectContaining({
+          limit: 100,
+          threadId: "123.456",
+        }),
+      );
+      const details = requireDetails(result);
+      expect(requireArray(details.messages, "thread messages")).toHaveLength(2);
+      expect(requireArray(details.files, "thread files")).toMatchObject([
+        { fileId: "F1", ok: true, path: "media/inbound/F1-invoice.pdf" },
+      ]);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("forwards resolved botToken to action functions instead of relying on config re-read", async () => {
     downloadSlackFile.mockResolvedValueOnce(null);
     await handleSlackAction(
