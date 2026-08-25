@@ -1,6 +1,7 @@
 // Slack tests cover format plugin behavior.
 import { describe, expect, it } from "vitest";
 import {
+  formatSlackUserMention,
   markdownToSlackMrkdwn,
   markdownToSlackMrkdwnChunks,
   normalizeSlackOutboundText,
@@ -76,6 +77,15 @@ describe("markdownToSlackMrkdwn", () => {
         .map((chunk, index) => ({ index, length: chunk.length }))
         .filter((chunk) => chunk.length > 8),
     ).toStrictEqual([]);
+  });
+});
+
+describe("formatSlackUserMention", () => {
+  it("formats stable Slack user IDs and rejects unsafe values", () => {
+    expect(formatSlackUserMention("u123abc")).toBe("<@U123ABC>");
+    expect(formatSlackUserMention("W123ABC")).toBe("<@W123ABC>");
+    expect(formatSlackUserMention("U123> <!channel")).toBe("");
+    expect(formatSlackUserMention(undefined)).toBe("");
   });
 });
 

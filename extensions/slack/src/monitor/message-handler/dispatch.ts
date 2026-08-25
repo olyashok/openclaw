@@ -56,7 +56,7 @@ import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";
 import { reactSlackMessage, removeSlackReaction } from "../../actions.js";
 import { createSlackDraftStream } from "../../draft-stream.js";
 import { formatSlackError } from "../../errors.js";
-import { normalizeSlackOutboundText } from "../../format.js";
+import { formatSlackUserMention, normalizeSlackOutboundText } from "../../format.js";
 import {
   compileSlackInteractiveReplies,
   isSlackInteractiveRepliesEnabled,
@@ -643,6 +643,8 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       },
     },
   });
+  const responsePrefixContextProvider = replyPipeline.responsePrefixContextProvider;
+  const senderMention = prepared.isRoomish ? formatSlackUserMention(message.user) : "";
 
   const slackStreaming = resolveSlackStreamingConfig({
     streaming: account.config.streaming,
@@ -1831,6 +1833,10 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       dispatchReplyWithBufferedBlockDispatcher,
       dispatcherOptions: {
         ...replyPipeline,
+        responsePrefixContextProvider: () => ({
+          ...responsePrefixContextProvider(),
+          senderMention,
+        }),
         humanDelay: resolveHumanDelayConfig(cfg, route.agentId),
       },
       delivery: {

@@ -105,6 +105,11 @@ type SlackMarkdownOptions = {
   tableMode?: MarkdownTableMode;
 };
 
+export function formatSlackUserMention(userId: string | null | undefined): string {
+  const normalized = userId?.trim().toUpperCase();
+  return normalized && /^[UW][A-Z0-9]+$/.test(normalized) ? `<@${normalized}>` : "";
+}
+
 function buildSlackRenderOptions() {
   return {
     styleMarkers: {
