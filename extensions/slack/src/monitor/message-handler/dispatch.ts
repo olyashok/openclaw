@@ -21,7 +21,7 @@ import {
 import type { ReplyPayload, ReplyDispatchRuntimeInfo } from "openclaw/plugin-sdk/reply-runtime";
 import { danger, logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { formatSlackError } from "../../errors.js";
-import { normalizeSlackOutboundText } from "../../format.js";
+import { formatSlackUserMention, normalizeSlackOutboundText } from "../../format.js";
 import { SLACK_EDIT_TEXT_MAX_BYTES } from "../../limits.js";
 import { emitSlackMessageSentHooks } from "../../message-sent-hook.js";
 import { resolveSlackReplyRenderPlan } from "../../reply-blocks.js";
@@ -138,6 +138,8 @@ async function dispatchSlackMessageWithSetup(
         teamId?: string;
       }
     | undefined;
+  const responsePrefixContextProvider = replyPipeline.responsePrefixContextProvider;
+  const senderMention = prepared.isRoomish ? formatSlackUserMention(message.user) : "";
 
   const filterPassiveThreadFailure = (payload: ReplyPayload): ReplyPayload | null => {
     if (
@@ -439,6 +441,10 @@ async function dispatchSlackMessageWithSetup(
             : payload;
           return transformed ? filterPassiveThreadFailure(transformed) : null;
         },
+        responsePrefixContextProvider: () => ({
+          ...responsePrefixContextProvider(),
+          senderMention,
+        }),
         humanDelay: resolveHumanDelayConfig(cfg, route.agentId),
       },
       delivery: {
