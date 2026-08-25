@@ -19,6 +19,8 @@ export type ResponsePrefixContext = {
   thinkingLevel?: string;
   /** Agent identity name */
   identityName?: string;
+  /** Channel-native mention for the inbound sender (for example, `<@U123>` on Slack). */
+  senderMention?: string;
 };
 
 // Regex pattern for template variables: {variableName} or {variable.name}
@@ -62,6 +64,9 @@ export function resolveResponsePrefixTemplate(
       case "identity.name":
       case "identityname":
         return context.identityName ?? match;
+      case "sender.mention":
+      case "sendermention":
+        return context.senderMention ?? match;
       default:
         // Leave unrecognized variables as-is
         return match;
