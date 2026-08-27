@@ -7,6 +7,7 @@ import {
   validateChatAbortParams,
   validateChatHistoryParams,
   validateChatHandoffArmParams,
+  validateChatHandoffSeenParams,
   validateChatMetadataParams,
   validateChatSendParams,
   validateChatEvent,
@@ -813,6 +814,19 @@ describe("validateChatHandoffArmParams", () => {
   it("accepts only a run id", () => {
     expect(validateChatHandoffArmParams({ runId: "run-1" })).toBe(true);
     expect(validateChatHandoffArmParams({ runId: "run-1", to: "user:U1" })).toBe(false);
+  });
+});
+
+describe("validateChatHandoffSeenParams", () => {
+  it("accepts a session receipt with an optional run id", () => {
+    expect(validateChatHandoffSeenParams({ sessionKey: "agent:main:device:abc" })).toBe(true);
+    expect(
+      validateChatHandoffSeenParams({
+        sessionKey: "agent:main:device:abc",
+        runId: "run-1",
+      }),
+    ).toBe(true);
+    expect(validateChatHandoffSeenParams({ runId: "run-1" })).toBe(false);
   });
 });
 

@@ -27,6 +27,7 @@ import {
   formatValidationErrors,
   validateChatAbortParams,
   validateChatHandoffArmParams,
+  validateChatHandoffSeenParams,
   validateChatHistoryParams,
   validateChatInjectParams,
   validateChatMetadataParams,
@@ -212,7 +213,10 @@ import {
   resolveSessionModelRef,
   resolveSessionStoreKey,
 } from "../session-utils.js";
-import { deliverWebchatCompletionFallback } from "../webchat-completion-delivery-send.js";
+import {
+  markWebchatCompletionSeen,
+  scheduleWebchatCompletionFallback,
+} from "../webchat-completion-delivery-send.js";
 import {
   armWebchatCompletionDelivery,
   verifyWebchatCompletionDeliveryClaim,
@@ -3476,6 +3480,53 @@ export const chatHandlers: GatewayRequestHandlers = {
     armWebchatCompletionDelivery(active.webchatCompletionDelivery);
     respond(true, { ok: true, armed: active.webchatCompletionDelivery.armedAtMs !== undefined });
   },
+  "chat.handoff.seen": async ({ params, respond, context, client }) => {
+    if (!validateChatHandoffSeenParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid chat.handoff.seen params: ${formatValidationErrors(validateChatHandoffSeenParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    if (!isWebchatClient(client?.connect?.client)) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "WebChat client required"));
+      return;
+    }
+    const { runId, sessionKey: seenSessionKey } = params as {
+      runId?: string;
+      sessionKey: string;
+    };
+    const requester = resolveChatAbortRequester(client);
+    const pendingResult = markWebchatCompletionSeen({
+      runId,
+      sessionKey: seenSessionKey,
+      requesterConnId: requester.connId,
+      requesterDeviceId: requester.deviceId,
+    });
+    if (pendingResult === "unauthorized") {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unauthorized"));
+      return;
+    }
+    if (pendingResult === "seen") {
+      respond(true, { ok: true, seen: true });
+      return;
+    }
+    const active = runId ? context.chatAbortControllers.get(runId) : undefined;
+    if (!active || active.sessionKey !== seenSessionKey || !active.webchatCompletionDelivery) {
+      respond(true, { ok: true, seen: false });
+      return;
+    }
+    if (!canRequesterAbortChatRunWithoutSessionMatch(active, requester)) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unauthorized"));
+      return;
+    }
+    active.webchatCompletionDelivery.seenAtMs = Date.now();
+    respond(true, { ok: true, seen: true });
+  },
   "chat.abort": async ({ params, respond, context, client }) => {
     if (!validateChatAbortParams(params)) {
       respond(
@@ -4833,20 +4884,27 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       });
 
-      const deliverCompletionFallback = async (fallbackError?: string) => {
+      const scheduleCompletionFallback = (fallbackError?: string) => {
         if (context.chatAbortedRuns.has(clientRunId)) {
           return;
         }
-        await deliverWebchatCompletionFallback({
+        scheduleWebchatCompletionFallback({
           cfg,
           state: activeRunAbort.entry?.webchatCompletionDelivery,
           startedAtMs: activeRunAbort.entry?.startedAtMs ?? now,
           runId: clientRunId,
           sessionId: admittedSessionId,
+          sessionKey,
           agentId,
           ctx,
           replies: deliveredReplies,
           fallbackError,
+          ...(activeRunAbort.entry?.ownerConnId
+            ? { ownerConnId: activeRunAbort.entry.ownerConnId }
+            : {}),
+          ...(activeRunAbort.entry?.ownerDeviceId
+            ? { ownerDeviceId: activeRunAbort.entry.ownerDeviceId }
+            : {}),
           log: context.logGateway,
         });
       };
@@ -5804,7 +5862,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                   errorMessage: returnedAgentErrorMessage,
                 });
               }
-              await deliverCompletionFallback(
+              scheduleCompletionFallback(
                 shouldBroadcastAgentError ? returnedAgentErrorMessage : undefined,
               );
               if (!context.chatAbortedRuns.has(clientRunId)) {
@@ -5924,7 +5982,7 @@ export const chatHandlers: GatewayRequestHandlers = {
             agentId,
             errorMessage,
           });
-          await deliverCompletionFallback(errorMessage);
+          scheduleCompletionFallback(errorMessage);
         })
         .finally(() => {
           cleanupAdmittedRun();

@@ -111,6 +111,15 @@ export const ChatHandoffArmParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Marks a completed WebChat answer visible on the initiating device. */
+export const ChatHandoffSeenParamsSchema = Type.Object(
+  {
+    runId: Type.Optional(NonEmptyString),
+    sessionKey: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
 /** Cancels the active or named run for a chat session. */
 export const ChatAbortParamsSchema = Type.Object(
   {

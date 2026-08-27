@@ -229,6 +229,7 @@ export const CORE_GATEWAY_METHOD_SPECS: readonly CoreGatewayMethodSpec[] = [
   { name: "chat.message.get", scope: "operator.read", startup: true },
   { name: "chat.abort", scope: "operator.write" },
   { name: "chat.handoff.arm", scope: "operator.write" },
+  { name: "chat.handoff.seen", scope: "operator.write" },
   { name: "chat.send", scope: "operator.write" },
   // Operator terminal: admin-only PTY surface. Appended to the advertised block
   // so existing advertised method indices stay stable for older clients.

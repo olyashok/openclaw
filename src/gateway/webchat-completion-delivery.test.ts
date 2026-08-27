@@ -98,7 +98,7 @@ describe("webchat completion delivery", () => {
     expect(first.armedAtMs).toBe(5_000);
   });
 
-  it("resolves slow only after the threshold and suppresses attempted delivery", () => {
+  it("resolves unread before the slow threshold and suppresses seen or attempted delivery", () => {
     const state: WebchatCompletionDeliveryState = {
       route: { channel: "slack", to: "user:U1" },
     };
@@ -108,7 +108,7 @@ describe("webchat completion delivery", () => {
         startedAtMs: 10,
         nowMs: 10 + WEBCHAT_COMPLETION_DELIVERY_SLOW_MS - 1,
       }),
-    ).toBeUndefined();
+    ).toBe("unread");
     expect(
       resolveWebchatCompletionDeliveryReason({
         state,
@@ -116,6 +116,11 @@ describe("webchat completion delivery", () => {
         nowMs: 10 + WEBCHAT_COMPLETION_DELIVERY_SLOW_MS,
       }),
     ).toBe("slow");
+    state.seenAtMs = 80_000;
+    expect(
+      resolveWebchatCompletionDeliveryReason({ state, startedAtMs: 10, nowMs: 90_000 }),
+    ).toBeUndefined();
+    state.seenAtMs = undefined;
     state.attemptedAtMs = 90_000;
     expect(
       resolveWebchatCompletionDeliveryReason({ state, startedAtMs: 10, nowMs: 100_000 }),

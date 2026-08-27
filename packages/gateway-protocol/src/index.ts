@@ -158,6 +158,7 @@ import {
   type ChatEvent,
   ChatEventSchema,
   ChatHandoffArmParamsSchema,
+  ChatHandoffSeenParamsSchema,
   ChatHistoryParamsSchema,
   type ChatMetadataParams,
   ChatMetadataParamsSchema,
@@ -1078,6 +1079,7 @@ export const validateChatMetadataParams = lazyCompile<ChatMetadataParams>(ChatMe
 export const validateChatMessageGetParams = lazyCompile(ChatMessageGetParamsSchema);
 export const validateChatSendParams = lazyCompile(ChatSendParamsSchema);
 export const validateChatHandoffArmParams = lazyCompile(ChatHandoffArmParamsSchema);
+export const validateChatHandoffSeenParams = lazyCompile(ChatHandoffSeenParamsSchema);
 export const validateChatAbortParams = lazyCompile<ChatAbortParams>(ChatAbortParamsSchema);
 export const validateChatInjectParams = lazyCompile<ChatInjectParams>(ChatInjectParamsSchema);
 export const validateChatEvent = lazyCompile(ChatEventSchema);
@@ -1408,6 +1410,7 @@ export {
   ChatMetadataParamsSchema,
   ChatSendParamsSchema,
   ChatHandoffArmParamsSchema,
+  ChatHandoffSeenParamsSchema,
   ChatInjectParamsSchema,
   UpdateRunParamsSchema,
   TickEventSchema,

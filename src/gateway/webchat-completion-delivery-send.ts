@@ -8,12 +8,13 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isSuppressedControlReplyText } from "./control-reply-text.js";
 import {
   resolveWebchatCompletionDeliveryReason,
+  WEBCHAT_COMPLETION_DELIVERY_UNREAD_GRACE_MS,
   type WebchatCompletionDeliveryState,
 } from "./webchat-completion-delivery.js";
 
 type CompletionReply = { payload: ReplyPayload; kind: "block" | "final" };
 
-export async function deliverWebchatCompletionFallback(params: {
+export type WebchatCompletionFallbackParams = {
   cfg: OpenClawConfig;
   state: WebchatCompletionDeliveryState | undefined;
   startedAtMs: number;
@@ -25,7 +26,100 @@ export async function deliverWebchatCompletionFallback(params: {
   fallbackError?: string;
   nowMs?: number;
   log: { warn: (message: string) => void };
-}): Promise<"skipped" | "handled" | "failed"> {
+};
+
+type PendingWebchatCompletion = {
+  state: WebchatCompletionDeliveryState;
+  sessionKey: string;
+  ownerConnId?: string;
+  ownerDeviceId?: string;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+// Active chat registrations are removed immediately after the final UI broadcast.
+// Keep only the bounded delivery closure here so a reconnecting device can cancel its chase.
+const pendingWebchatCompletions = new Map<string, PendingWebchatCompletion>();
+
+export type MarkWebchatCompletionSeenResult = "seen" | "not-found" | "unauthorized";
+
+export function markWebchatCompletionSeen(params: {
+  runId?: string;
+  sessionKey: string;
+  requesterConnId?: string;
+  requesterDeviceId?: string;
+  nowMs?: number;
+}): MarkWebchatCompletionSeenResult {
+  const candidates = params.runId
+    ? [[params.runId, pendingWebchatCompletions.get(params.runId)] as const]
+    : [...pendingWebchatCompletions.entries()];
+  let marked = false;
+  for (const [runId, pending] of candidates) {
+    if (!pending) {
+      continue;
+    }
+    const sameOwner = pending.ownerDeviceId
+      ? params.requesterDeviceId === pending.ownerDeviceId
+      : Boolean(pending.ownerConnId && params.requesterConnId === pending.ownerConnId);
+    if (pending.sessionKey !== params.sessionKey || !sameOwner) {
+      if (params.runId) {
+        return "unauthorized";
+      }
+      continue;
+    }
+    pending.state.seenAtMs = params.nowMs ?? Date.now();
+    clearTimeout(pending.timer);
+    pendingWebchatCompletions.delete(runId);
+    marked = true;
+  }
+  return marked ? "seen" : "not-found";
+}
+
+export function scheduleWebchatCompletionFallback(
+  params: WebchatCompletionFallbackParams & {
+    sessionKey: string;
+    ownerConnId?: string;
+    ownerDeviceId?: string;
+    unreadGraceMs?: number;
+  },
+): "scheduled" | "skipped" {
+  const state = params.state;
+  if (
+    !state ||
+    state.seenAtMs !== undefined ||
+    state.attemptedAtMs !== undefined ||
+    pendingWebchatCompletions.has(params.runId)
+  ) {
+    return "skipped";
+  }
+  state.completedAtMs = params.nowMs ?? Date.now();
+  const unreadGraceMs = params.unreadGraceMs ?? WEBCHAT_COMPLETION_DELIVERY_UNREAD_GRACE_MS;
+  const timer = setTimeout(
+    () => {
+      pendingWebchatCompletions.delete(params.runId);
+      void deliverWebchatCompletionFallback({ ...params, nowMs: Date.now() }).catch(
+        (error: unknown) => {
+          params.log.warn(
+            `webchat completion delivery crashed run=${params.runId}: ${String(error)}`,
+          );
+        },
+      );
+    },
+    Math.max(0, unreadGraceMs),
+  );
+  timer.unref?.();
+  pendingWebchatCompletions.set(params.runId, {
+    state,
+    sessionKey: params.sessionKey,
+    ownerConnId: params.ownerConnId,
+    ownerDeviceId: params.ownerDeviceId,
+    timer,
+  });
+  return "scheduled";
+}
+
+export async function deliverWebchatCompletionFallback(
+  params: WebchatCompletionFallbackParams,
+): Promise<"skipped" | "handled" | "failed"> {
   const nowMs = params.nowMs ?? Date.now();
   const reason = resolveWebchatCompletionDeliveryReason({
     state: params.state,
@@ -57,10 +151,7 @@ export async function deliverWebchatCompletionFallback(params: {
     );
     return "skipped";
   }
-  const reasonText =
-    reason === "slow"
-      ? "Sent to Slack because the Fi reply took more than one minute"
-      : "Sent to Slack because you left the Fi chat before it finished";
+  const reasonText = "Sent to Slack because the Fi reply was not viewed within one minute";
   const payload: ReplyPayload = {
     text: `*Fi chat reply*\n\n${answer}\n\n_${reasonText} · Session ${params.sessionId}_`,
     ...(params.fallbackError ? { isError: true } : {}),

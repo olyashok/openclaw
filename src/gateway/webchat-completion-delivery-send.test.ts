@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { deliverInboundReplyWithMessageSendContext } = vi.hoisted(() => ({
   deliverInboundReplyWithMessageSendContext: vi.fn(),
@@ -7,10 +7,17 @@ vi.mock("../channels/turn/durable-delivery.js", () => ({
   deliverInboundReplyWithMessageSendContext,
 }));
 
-import { deliverWebchatCompletionFallback } from "./webchat-completion-delivery-send.js";
-import { WEBCHAT_COMPLETION_DELIVERY_SLOW_MS } from "./webchat-completion-delivery.js";
+import {
+  deliverWebchatCompletionFallback,
+  markWebchatCompletionSeen,
+  scheduleWebchatCompletionFallback,
+} from "./webchat-completion-delivery-send.js";
+import {
+  WEBCHAT_COMPLETION_DELIVERY_SLOW_MS,
+  type WebchatCompletionDeliveryState,
+} from "./webchat-completion-delivery.js";
 
-function state() {
+function state(): WebchatCompletionDeliveryState {
   return {
     route: { channel: "slack", to: "user:U123", accountId: "fi-admin" },
   };
@@ -41,9 +48,13 @@ describe("deliverWebchatCompletionFallback", () => {
     });
   });
 
-  it("does not deliver a quick reply while WebChat remains present", async () => {
-    expect(await deliverWebchatCompletionFallback(baseParams())).toBe("skipped");
-    expect(deliverInboundReplyWithMessageSendContext).not.toHaveBeenCalled();
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("delivers an unread quick reply once its grace period has elapsed", async () => {
+    expect(await deliverWebchatCompletionFallback(baseParams())).toBe("handled");
+    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -84,6 +95,53 @@ describe("deliverWebchatCompletionFallback", () => {
         payload: expect.objectContaining({
           isError: true,
           text: expect.stringContaining("agent failed"),
+        }),
+      }),
+    );
+  });
+
+  it("cancels a scheduled chase when the same device sees the Fi answer", async () => {
+    vi.useFakeTimers();
+    const deliveryState = state();
+    expect(
+      scheduleWebchatCompletionFallback({
+        ...baseParams({ state: deliveryState }),
+        sessionKey: "agent:cellect-fi-admin:device:abc",
+        ownerDeviceId: "device-abc",
+        unreadGraceMs: 100,
+      }),
+    ).toBe("scheduled");
+    expect(
+      markWebchatCompletionSeen({
+        runId: "run-1",
+        sessionKey: "agent:cellect-fi-admin:device:abc",
+        requesterDeviceId: "device-abc",
+      }),
+    ).toBe("seen");
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(deliverInboundReplyWithMessageSendContext).not.toHaveBeenCalled();
+    expect(deliveryState.seenAtMs).toEqual(expect.any(Number));
+  });
+
+  it("sends the scheduled chase when no read receipt arrives", async () => {
+    vi.useFakeTimers();
+    expect(
+      scheduleWebchatCompletionFallback({
+        ...baseParams({ runId: "run-unread" }),
+        runId: "run-unread",
+        sessionKey: "agent:cellect-fi-admin:device:abc",
+        ownerDeviceId: "device-abc",
+        unreadGraceMs: 100,
+      }),
+    ).toBe("scheduled");
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledTimes(1);
+    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          text: expect.stringContaining("was not viewed within one minute"),
         }),
       }),
     );

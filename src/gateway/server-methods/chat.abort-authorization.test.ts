@@ -333,6 +333,67 @@ describe("chat.handoff.arm authorization", () => {
   });
 });
 
+describe("chat.handoff.seen authorization", () => {
+  async function seen(params: {
+    context: ReturnType<typeof createChatAbortContext>;
+    connId: string;
+    deviceId: string;
+  }) {
+    const respond = vi.fn();
+    await chatHandlers["chat.handoff.seen"]({
+      params: { runId: "run-1", sessionKey: "main" },
+      respond,
+      context: params.context,
+      client: {
+        connId: params.connId,
+        connect: {
+          client: { id: "openclaw-control-ui", version: "1", platform: "web", mode: "webchat" },
+          device: { id: params.deviceId },
+          scopes: ["operator.write"],
+        },
+      },
+    } as unknown as GatewayRequestHandlerOptions);
+    return respond;
+  }
+
+  it("records visibility for the same paired device", async () => {
+    const active = createActiveRun("main", {
+      owner: { connId: "conn-old", deviceId: "dev-owner" },
+      webchatCompletionDelivery: {
+        route: { channel: "slack", to: "user:U123", accountId: "fi-admin" },
+      },
+    });
+    const context = createChatAbortContext({
+      chatAbortControllers: new Map([["run-1", active]]),
+    });
+
+    const respond = await seen({ context, connId: "conn-new", deviceId: "dev-owner" });
+
+    expect(respond).toHaveBeenLastCalledWith(true, { ok: true, seen: true });
+    expect(active.webchatCompletionDelivery?.seenAtMs).toEqual(expect.any(Number));
+  });
+
+  it("rejects a visibility receipt from another device", async () => {
+    const active = createActiveRun("main", {
+      owner: { connId: "conn-owner", deviceId: "dev-owner" },
+      webchatCompletionDelivery: {
+        route: { channel: "slack", to: "user:U123", accountId: "fi-admin" },
+      },
+    });
+    const context = createChatAbortContext({
+      chatAbortControllers: new Map([["run-1", active]]),
+    });
+
+    const respond = await seen({ context, connId: "conn-other", deviceId: "dev-other" });
+
+    const [ok, payload, error] = respond.mock.calls.at(-1) ?? [];
+    expect(ok).toBe(false);
+    expect(payload).toBeUndefined();
+    expect(error?.message).toBe("unauthorized");
+    expect(active.webchatCompletionDelivery?.seenAtMs).toBeUndefined();
+  });
+});
+
 describe("chat.abort queued-turn contract", () => {
   it("aborts a queued turn by runId after active registration is gone", async () => {
     const controller = new AbortController();

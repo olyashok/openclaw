@@ -9,6 +9,7 @@ const MAX_CLOCK_SKEW_SECONDS = 30;
 
 export const WEBCHAT_COMPLETION_DELIVERY_SECRET_ENV = "OPENCLAW_WEBCHAT_COMPLETION_DELIVERY_SECRET";
 export const WEBCHAT_COMPLETION_DELIVERY_SLOW_MS = 60_000;
+export const WEBCHAT_COMPLETION_DELIVERY_UNREAD_GRACE_MS = 60_000;
 
 export type WebchatCompletionDeliveryRoute = {
   channel: string;
@@ -19,6 +20,8 @@ export type WebchatCompletionDeliveryRoute = {
 export type WebchatCompletionDeliveryState = {
   route: WebchatCompletionDeliveryRoute;
   armedAtMs?: number;
+  completedAtMs?: number;
+  seenAtMs?: number;
   attemptedAtMs?: number;
 };
 
@@ -30,7 +33,7 @@ type WebchatCompletionDeliveryClaimPayload = {
   route: WebchatCompletionDeliveryRoute;
 };
 
-export type WebchatCompletionDeliveryReason = "client-left" | "slow";
+export type WebchatCompletionDeliveryReason = "client-left" | "slow" | "unread";
 
 function signature(secret: string, payload: string): string {
   return createHmac("sha256", secret)
@@ -157,12 +160,16 @@ export function resolveWebchatCompletionDeliveryReason(params: {
   startedAtMs: number;
   nowMs?: number;
 }): WebchatCompletionDeliveryReason | undefined {
-  if (!params.state || params.state.attemptedAtMs !== undefined) {
+  if (
+    !params.state ||
+    params.state.seenAtMs !== undefined ||
+    params.state.attemptedAtMs !== undefined
+  ) {
     return undefined;
   }
   if (params.state.armedAtMs !== undefined) {
     return "client-left";
   }
   const nowMs = params.nowMs ?? Date.now();
-  return nowMs - params.startedAtMs >= WEBCHAT_COMPLETION_DELIVERY_SLOW_MS ? "slow" : undefined;
+  return nowMs - params.startedAtMs >= WEBCHAT_COMPLETION_DELIVERY_SLOW_MS ? "slow" : "unread";
 }
