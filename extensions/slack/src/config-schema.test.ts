@@ -33,6 +33,15 @@ function expectSlackConfigKeyRejected(config: unknown, key: string) {
 }
 
 describe("slack config schema", () => {
+  it("accepts channel request-user allowlists, including an explicit empty list", () => {
+    expectSlackConfigValid({
+      channels: {
+        C123: { users: ["U_OWNER", "U_CONTEXT"], requestUsers: ["U_OWNER"] },
+        C456: { users: ["U_CONTEXT"], requestUsers: [] },
+      },
+    });
+  });
+
   it("accepts compact progress style", () => {
     expectSlackConfigValid({
       streaming: {
