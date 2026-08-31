@@ -1402,6 +1402,7 @@ Use an entry's `identifier` directly as the `react` emoji; surrounding colons ar
     - `ignoreOtherMentions`
     - `replyToMode` (`off|first|all|batched`; overrides account/chat-type reply mode for this channel)
     - `users` (allowlist)
+    - `requestUsers` (optional requester allowlist within admitted `users`)
     - `allowBots`
     - `skills`
     - `systemPrompt`
@@ -1410,6 +1411,8 @@ Use an entry's `identifier` directly as the `react` emoji; surrounding colons ar
       (legacy unprefixed keys still map to `id:` only)
 
     `ignoreOtherMentions` (default `false`) drops channel messages that mention another user or user group but not this bot. DMs and group DMs (MPIMs) are unaffected. The filter requires a resolved bot user ID from `auth.test`; if that identity is unavailable (for example a user-token-only identity), the gate fails open and messages pass through unchanged.
+
+    `requestUsers` separates collaboration from request authority. When omitted, admitted channel users keep normal behavior. When configured, only listed stable Slack user IDs (or `"*"`) may create user requests, run slash commands, or use interactive action surfaces. Other users still admitted by `users` contribute `room_event` context, even when they mention the bot or send control/abort text. An empty list makes every admitted user context-only. This setting is restrictive only: it never admits a sender excluded by `users` or the surrounding channel policy.
 
     `allowBots` is conservative for channels and private channels: bot-authored room messages are accepted only when the sending bot is explicitly listed in that room's `users` allowlist, or when at least one explicit Slack owner ID from `channels.slack.allowFrom` is currently a room member. Wildcards and display-name owner entries do not satisfy owner presence. Owner presence uses Slack `conversations.members`; make sure the app has the matching read scope for the room type (`channels:read` for public channels, `groups:read` for private channels). If the member lookup fails, OpenClaw drops the bot-authored room message.
 
@@ -2003,7 +2006,7 @@ Primary reference: [Configuration reference - Slack](/gateway/config-channels#sl
 - mode/auth: `postAs`, `mode`, `botToken`, `appToken`, `userToken`, `signingSecret`, `webhookPath`, `accounts.*`
 - DM access: `dm.enabled`, `dmPolicy`, `allowFrom` (legacy: `dm.policy`, `dm.allowFrom`), `dm.groupEnabled`, `dm.groupChannels`
 - compatibility toggle: `dangerouslyAllowNameMatching` (break-glass; keep off unless needed)
-- channel access: `groupPolicy`, `channels.*`, `channels.*.users`, `channels.*.requireMention`, `implicitMentions.*`
+- channel access: `groupPolicy`, `channels.*`, `channels.*.users`, `channels.*.requestUsers`, `channels.*.requireMention`, `implicitMentions.*`
 - group introductions: `joinIntro`, `accounts.*.joinIntro` (default: `true`)
 - threading/history: `replyToMode`, `replyToModeByChatType`, `thread.*`, `historyLimit`, `dmHistoryLimit`, `dms.*.historyLimit`
 - presence wakes: `presenceEvents.mode`, `presenceEvents.prompt`, `channels.*.presenceEvents.*` (`off|auto|on`; default `off`)

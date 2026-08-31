@@ -74,6 +74,7 @@ import { authorizeSlackDirectMessage } from "../dm-auth.js";
 import type { SlackEventScope } from "../event-scope.js";
 import type { SlackMediaResult } from "../media-types.js";
 import { escapeSlackMrkdwn } from "../mrkdwn.js";
+import { resolveSlackRequestUserAllowed } from "../request-users.js";
 import { resolveSlackRoomContextHints } from "../room-context.js";
 import { sendMessageSlack } from "../send.runtime.js";
 import { resolveSlackThreadStarter, type SlackThreadStarter } from "../thread.js";
@@ -1173,6 +1174,13 @@ export async function prepareSlackMessage(params: {
     logVerbose(`Blocked unauthorized slack sender ${senderId} (not in sender allowlist)`);
     return null;
   }
+  const requestUserAllowed =
+    !isRoom ||
+    resolveSlackRequestUserAllowed({
+      requestUsers: channelConfig?.requestUsers,
+      teamId: opts.eventScope?.teamId ?? ctx.teamId,
+      userId: senderId,
+    });
   if (
     isRoom &&
     isBotMessage &&
@@ -1214,9 +1222,9 @@ export async function prepareSlackMessage(params: {
     id: isDirectMessage ? senderId : message.channel,
     explicitKind: true,
   });
-  const commandAuthorized = messageIngress.commandAccess.authorized;
+  const commandAuthorized = requestUserAllowed && messageIngress.commandAccess.authorized;
 
-  if (isRoomish && messageIngress.commandAccess.shouldBlockControlCommand) {
+  if (isRoomish && requestUserAllowed && messageIngress.commandAccess.shouldBlockControlCommand) {
     logInboundDrop({
       log: logVerbose,
       channel: "slack",
@@ -1398,7 +1406,7 @@ export async function prepareSlackMessage(params: {
   }
 
   const chatType = resolveSlackChatType(conversation.resolvedChannelType);
-  const inboundEventKind = classifyChannelInboundEvent({
+  const classifiedInboundEventKind = classifyChannelInboundEvent({
     conversation: { kind: chatType },
     unmentionedGroupPolicy: resolveUnmentionedGroupInboundPolicy({
       cfg,
@@ -1408,6 +1416,8 @@ export async function prepareSlackMessage(params: {
     hasControlCommand: hasControlCommandInMessage,
     hasAbortRequest,
   });
+  const inboundEventKind =
+    isRoom && !requestUserAllowed ? "room_event" : classifiedInboundEventKind;
   const threadStarter = await getThreadStarter();
   const resolvedMessageContent = await getMessageContent();
   if (!resolvedMessageContent) {

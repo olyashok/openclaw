@@ -1930,6 +1930,87 @@ describe("slack prepareSlackMessage inbound contract", () => {
     expect(prepared.ctxPayload.CommandBody).toBe("please stop");
   });
 
+  it.each([
+    ["an explicit bot mention", "<@B1> please summarize"],
+    ["a control command", "<@B1> /new"],
+    ["an abort request", "<@B1> please stop"],
+  ])("keeps a context-only collaborator's %s as a room event", async (_label, text) => {
+    const channelConfig = {
+      enabled: true,
+      requireMention: false,
+      users: ["U_OWNER", "U_CONTEXT"],
+      requestUsers: ["U_OWNER"],
+    };
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        messages: { groupChat: { unmentionedInbound: "room_event" } },
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "allowlist",
+            channels: { C123: channelConfig },
+          },
+        },
+      } as OpenClawConfig,
+      channelsConfig: { C123: channelConfig },
+      defaultRequireMention: false,
+      groupPolicy: "allowlist",
+    });
+    slackCtx.allowFrom = ["U_OWNER"];
+    slackCtx.resolveUserName = async () => ({ name: "Nicholas" });
+    slackCtx.resolveChannelName = async () => ({ name: "shape-tech", type: "channel" });
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "C123",
+      channel_type: "channel",
+      user: "U_CONTEXT",
+      text,
+      ts: "1.000",
+    } as SlackMessageEvent);
+
+    assertPrepared(prepared);
+    expect(prepared.ctxPayload.InboundEventKind).toBe("room_event");
+    expect(prepared.ctxPayload.CommandAuthorized).toBe(false);
+  });
+
+  it("keeps an authorized requester's mention as a user request", async () => {
+    const channelConfig = {
+      enabled: true,
+      requireMention: false,
+      users: ["U_OWNER", "U_CONTEXT"],
+      requestUsers: ["U_OWNER"],
+    };
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "allowlist",
+            channels: { C123: channelConfig },
+          },
+        },
+      } as OpenClawConfig,
+      channelsConfig: { C123: channelConfig },
+      defaultRequireMention: false,
+      groupPolicy: "allowlist",
+    });
+    slackCtx.allowFrom = ["U_OWNER"];
+    slackCtx.resolveUserName = async () => ({ name: "Alex" });
+    slackCtx.resolveChannelName = async () => ({ name: "shape-tech", type: "channel" });
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "C123",
+      channel_type: "channel",
+      user: "U_OWNER",
+      text: "<@B1> please summarize",
+      ts: "1.000",
+    } as SlackMessageEvent);
+
+    assertPrepared(prepared);
+    expect(prepared.ctxPayload.InboundEventKind).toBe("user_request");
+    expect(prepared.ctxPayload.CommandAuthorized).toBe(true);
+  });
+
   it("includes forwarded shared attachment text in raw body", async () => {
     const prepared = await prepareWithDefaultCtx(
       createSlackMessage({

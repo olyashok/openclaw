@@ -125,6 +125,10 @@ export const slackChannelConfigUiHints = {
     label: "Slack Channel Presence Event Prompt",
     help: "Override the account-level presence-event prompt for one Slack channel. Maximum: 20,000 characters.",
   },
+  "channels.*.requestUsers": {
+    label: "Slack Channel Request Users",
+    help: "Optional stable Slack user IDs allowed to create agent requests or use interactive command surfaces in this channel. Other users admitted by channels.*.users remain context-only. Omit to preserve normal behavior; use [] to make every admitted user context-only.",
+  },
   "execApprovals.enabled": {
     label: "Slack Exec Approvals Enabled",
     help: 'Controls Slack native exec approvals for this account: "auto" or true enables DM-first native approvals when approvers can be resolved; unset or false disables them.',

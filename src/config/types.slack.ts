@@ -47,6 +47,12 @@ export type SlackChannelConfig = {
   botLoopProtection?: ChannelBotLoopProtectionConfig;
   /** Allowlist of users that can invoke the bot in this channel. */
   users?: Array<string | number>;
+  /**
+   * Restrict which admitted channel users may create agent requests or use
+   * interactive command surfaces. Omit to preserve normal behavior; an empty
+   * list makes every admitted sender context-only.
+   */
+  requestUsers?: Array<string | number>;
   /** Optional skill filter for this channel. */
   skills?: string[];
   /** Optional system prompt for this channel. */

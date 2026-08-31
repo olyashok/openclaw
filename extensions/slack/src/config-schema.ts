@@ -55,6 +55,7 @@ const SlackChannelSchema = buildGroupEntrySchema(
     allowBots: buildChannelAllowBotsSchema({ allowMentions: true }),
     botLoopProtection: ChannelBotLoopProtectionSchema.optional(),
     users: z.array(z.union([z.string(), z.number()])).optional(),
+    requestUsers: z.array(z.union([z.string(), z.number()])).optional(),
     presenceEvents: SlackPresenceEventsSchema.optional(),
   },
   { omit: ["allowFrom"] },

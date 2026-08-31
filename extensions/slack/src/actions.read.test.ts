@@ -259,6 +259,7 @@ describe("Slack read actions", () => {
     });
 
     expect(result.messages.map((message) => message.text)).toEqual([
+      "parent",
       "Thread data\nName\nExample A",
     ]);
   });
