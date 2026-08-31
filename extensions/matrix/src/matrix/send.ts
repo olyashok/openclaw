@@ -40,6 +40,7 @@ import { createMatrixSendReceipt, type MatrixReceiptEvent } from "./send/receipt
 import { normalizeThreadId, resolveMatrixRoomId } from "./send/targets.js";
 import {
   EventType,
+  MATRIX_OPENCLAW_STREAM_PHASE_KEY,
   MSC4357_LIVE_KEY,
   MsgType,
   RelationType,
@@ -47,6 +48,7 @@ import {
   type MatrixOutboundContent,
   type MatrixSendOpts,
   type MatrixSendResult,
+  type MatrixStreamPhase,
   type MatrixTextMsgType,
 } from "./send/types.js";
 
@@ -458,6 +460,8 @@ export async function sendSingleTextMessageMatrix(
     extraContent?: MatrixExtraContentFields;
     /** When true, marks the message as a live/streaming update (MSC4357). */
     live?: boolean;
+    /** Whether this draft is technical progress or user-facing answer text. */
+    streamPhase?: MatrixStreamPhase;
   },
 ): Promise<MatrixSendResult> {
   const {
@@ -510,6 +514,9 @@ export async function sendSingleTextMessageMatrix(
       if (opts.live) {
         (content as Record<string, unknown>)[MSC4357_LIVE_KEY] = {};
       }
+      if (opts.streamPhase) {
+        (content as Record<string, unknown>)[MATRIX_OPENCLAW_STREAM_PHASE_KEY] = opts.streamPhase;
+      }
       const eventId = await client.sendMessage(resolvedRoom, content);
       const replyToId = resolveMatrixReplyToEventId(content);
       return {
@@ -544,6 +551,8 @@ export async function editMessageMatrix(
     extraContent?: MatrixExtraContentFields;
     /** When true, marks the edit as a live/streaming update (MSC4357). */
     live?: boolean;
+    /** Whether this edit is technical progress or user-facing answer text. */
+    streamPhase?: MatrixStreamPhase;
   },
 ): Promise<string> {
   return await withResolvedMatrixSendClient(
@@ -626,6 +635,11 @@ export async function editMessageMatrix(
       if (opts.live) {
         content[MSC4357_LIVE_KEY] = {};
         (content["m.new_content"] as Record<string, unknown>)[MSC4357_LIVE_KEY] = {};
+      }
+      if (opts.streamPhase) {
+        content[MATRIX_OPENCLAW_STREAM_PHASE_KEY] = opts.streamPhase;
+        (content["m.new_content"] as Record<string, unknown>)[MATRIX_OPENCLAW_STREAM_PHASE_KEY] =
+          opts.streamPhase;
       }
 
       const eventId = await client.sendMessage(resolvedRoom, content);

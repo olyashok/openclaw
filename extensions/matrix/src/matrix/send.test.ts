@@ -35,7 +35,10 @@ import {
   makeClient,
   makeEncryptedMediaClient,
 } from "./send.test-support.js";
-import { MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY } from "./send/types.js";
+import {
+  MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY,
+  MATRIX_OPENCLAW_STREAM_PHASE_KEY,
+} from "./send/types.js";
 
 const loadOutboundMediaFromUrlMock = vi.hoisted(() => vi.fn());
 const loadWebMediaMock = vi.fn().mockResolvedValue({
@@ -1381,6 +1384,22 @@ describe("sendMessageMatrix threads", () => {
 });
 
 describe("sendSingleTextMessageMatrix", () => {
+  it("labels draft sends with their stream phase", async () => {
+    const { client, sendMessage } = makeClient();
+
+    await sendSingleTextMessageMatrix("room:!room:example", "Working...", {
+      client,
+      cfg: {} as never,
+      includeMentions: false,
+      live: true,
+      streamPhase: "progress",
+    });
+
+    const content = sentContent(sendMessage);
+    expect(content["org.matrix.msc4357.live"]).toEqual({});
+    expect(content[MATRIX_OPENCLAW_STREAM_PHASE_KEY]).toBe("progress");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     resetMatrixSendRuntimeMocks();
@@ -1618,6 +1637,21 @@ describe("sendSingleTextMessageMatrix", () => {
 });
 
 describe("editMessageMatrix mentions", () => {
+  it("places the stream phase on both halves of an edit", async () => {
+    const { client, sendMessage } = makeClient();
+
+    await editMessageMatrix("room:!room:example", "$original", "Reading", {
+      client,
+      cfg: {} as never,
+      live: true,
+      streamPhase: "progress",
+    });
+
+    const content = sentContent(sendMessage);
+    expect(content[MATRIX_OPENCLAW_STREAM_PHASE_KEY]).toBe("progress");
+    expect(newContent(content)[MATRIX_OPENCLAW_STREAM_PHASE_KEY]).toBe("progress");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     resetMatrixSendRuntimeMocks();

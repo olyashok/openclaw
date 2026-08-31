@@ -200,6 +200,7 @@ export function createMatrixReplyDispatcher(config: {
                       threadId: threadTarget,
                       accountId,
                       ...(Object.keys(extraContent).length > 0 ? { extraContent } : {}),
+                      streamPhase: "answer",
                     });
                   }
                   return createDraftDeliveryResult(
