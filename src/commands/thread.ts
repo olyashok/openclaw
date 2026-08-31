@@ -259,7 +259,7 @@ export async function threadResumeCommand(
     "Original task:",
     latestTask.task,
   ].join("\n\n");
-  const response = await callGateway<Record<string, unknown>>({
+  const response = await callGateway({
     method: "agent",
     params: {
       message,
