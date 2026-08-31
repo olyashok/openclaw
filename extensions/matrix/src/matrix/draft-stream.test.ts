@@ -41,6 +41,7 @@ const sendModuleMocks = vi.hoisted(() => {
         msgtype?: string;
         includeMentions?: boolean;
         live?: boolean;
+        streamPhase?: "progress" | "answer";
       } = {},
     ) => {
       const prepared = prepareMatrixSingleText(text, {
@@ -59,6 +60,9 @@ const sendModuleMocks = vi.hoisted(() => {
       };
       if (opts.live) {
         content["org.matrix.msc4357.live"] = {};
+      }
+      if (opts.streamPhase) {
+        content["com.openclaw.stream_phase"] = opts.streamPhase;
       }
       const eventId = await opts.client?.sendMessage(roomId, content);
       return {
@@ -85,6 +89,7 @@ const sendModuleMocks = vi.hoisted(() => {
         };
         msgtype?: string;
         live?: boolean;
+        streamPhase?: "progress" | "answer";
       } = {},
     ) => {
       const convertedText = convertMarkdownTablesMock(newText);
@@ -94,6 +99,9 @@ const sendModuleMocks = vi.hoisted(() => {
       };
       if (opts.live) {
         newContent["org.matrix.msc4357.live"] = {};
+      }
+      if (opts.streamPhase) {
+        newContent["com.openclaw.stream_phase"] = opts.streamPhase;
       }
       const content: Record<string, unknown> = {
         ...newContent,
@@ -106,6 +114,9 @@ const sendModuleMocks = vi.hoisted(() => {
       };
       if (opts.live) {
         content["org.matrix.msc4357.live"] = {};
+      }
+      if (opts.streamPhase) {
+        content["com.openclaw.stream_phase"] = opts.streamPhase;
       }
       return (await opts.client?.sendMessage(roomId, content)) ?? "";
     },
@@ -217,7 +228,7 @@ describe("createMatrixDraftStream", () => {
       cfg: {} as import("../types.js").CoreConfig,
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.flush();
 
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -226,6 +237,7 @@ describe("createMatrixDraftStream", () => {
       includeMentions: false,
       live: true,
       msgtype: "m.text",
+      streamPhase: "answer",
     });
     expect(stream.eventId()).toBe("$evt1");
   });
@@ -238,7 +250,7 @@ describe("createMatrixDraftStream", () => {
       mode: "quiet",
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "progress");
     await stream.flush();
 
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -254,14 +266,14 @@ describe("createMatrixDraftStream", () => {
       mode: "quiet",
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "progress");
     await stream.flush();
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
 
     // Advance past throttle window so the next update fires immediately.
     vi.advanceTimersByTime(1000);
 
-    stream.update("Hello world");
+    stream.update("Hello world", "progress");
     await stream.flush();
 
     // First call = initial send, second call = edit (both go through sendMessage)
@@ -270,7 +282,30 @@ describe("createMatrixDraftStream", () => {
     expect(sentContentAt(1)["m.new_content"]).toEqual({
       msgtype: "m.notice",
       body: "Hello world",
+      "com.openclaw.stream_phase": "progress",
     });
+  });
+
+  it("labels progress and answer frames independently of the live marker", async () => {
+    const stream = createMatrixDraftStream({
+      roomId: "!room:test",
+      client,
+      cfg: {} as import("../types.js").CoreConfig,
+    });
+
+    stream.update("Reading the ledger", "progress");
+    await stream.flush();
+    vi.advanceTimersByTime(1000);
+    stream.update("The loan covers approved soft costs", "answer");
+    await stream.flush();
+    await stream.stop();
+    await stream.finalizeLive();
+
+    expect(sentContentAt(0)["com.openclaw.stream_phase"]).toBe("progress");
+    expect(sentContentAt(1)["com.openclaw.stream_phase"]).toBe("answer");
+    expect(sentContentAt(1)["org.matrix.msc4357.live"]).toEqual({});
+    expect(sentContentAt(2)["com.openclaw.stream_phase"]).toBe("answer");
+    expect(sentContentAt(2)).not.toHaveProperty("org.matrix.msc4357.live");
   });
 
   it("coalesces rapid quiet updates within throttle window", async () => {
@@ -281,9 +316,9 @@ describe("createMatrixDraftStream", () => {
       mode: "quiet",
     });
 
-    stream.update("A");
-    stream.update("AB");
-    stream.update("ABC");
+    stream.update("A", "progress");
+    stream.update("AB", "progress");
+    stream.update("ABC", "progress");
     await stream.flush();
 
     // First update fires immediately (fresh throttle window), then AB/ABC
@@ -294,7 +329,11 @@ describe("createMatrixDraftStream", () => {
     expect(sentContentAt(1).body).toBe("* ABC");
     expect(sentContentAt(0).msgtype).toBe("m.notice");
     expect(sentContentAt(1).msgtype).toBe("m.notice");
-    expect(sentContentAt(1)["m.new_content"]).toEqual({ msgtype: "m.notice", body: "ABC" });
+    expect(sentContentAt(1)["m.new_content"]).toEqual({
+      msgtype: "m.notice",
+      body: "ABC",
+      "com.openclaw.stream_phase": "progress",
+    });
   });
 
   it("skips no-op updates", async () => {
@@ -304,14 +343,14 @@ describe("createMatrixDraftStream", () => {
       cfg: {} as import("../types.js").CoreConfig,
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.flush();
     const callCount = sendMessageMock.mock.calls.length;
 
     vi.advanceTimersByTime(1000);
 
     // Same text again — should not send
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.flush();
     expect(sendMessageMock).toHaveBeenCalledTimes(callCount);
   });
@@ -323,11 +362,11 @@ describe("createMatrixDraftStream", () => {
       cfg: {} as import("../types.js").CoreConfig,
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.stop();
     const callCount = sendMessageMock.mock.calls.length;
 
-    stream.update("Ignored");
+    stream.update("Ignored", "answer");
     await stream.flush();
     expect(sendMessageMock).toHaveBeenCalledTimes(callCount);
   });
@@ -339,7 +378,7 @@ describe("createMatrixDraftStream", () => {
       cfg: {} as import("../types.js").CoreConfig,
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     const eventId = await stream.stop();
     expect(eventId).toBe("$evt1");
   });
@@ -352,7 +391,7 @@ describe("createMatrixDraftStream", () => {
       mode: "partial",
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.stop();
 
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -367,7 +406,7 @@ describe("createMatrixDraftStream", () => {
       mode: "partial",
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.stop();
 
     await stream.finalizeLive();
@@ -387,7 +426,7 @@ describe("createMatrixDraftStream", () => {
       mode: "partial",
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.stop();
 
     await expect(stream.finalizeLive()).resolves.toBe(false);
@@ -404,14 +443,14 @@ describe("createMatrixDraftStream", () => {
       mode: "quiet",
     });
 
-    stream.update("Block 1");
+    stream.update("Block 1", "answer");
     await stream.stop();
     expect(stream.eventId()).toBe("$first");
 
     stream.reset();
     expect(stream.eventId()).toBeUndefined();
 
-    stream.update("Block 2");
+    stream.update("Block 2", "answer");
     await stream.stop();
     expect(stream.eventId()).toBe("$second");
   });
@@ -427,7 +466,7 @@ describe("createMatrixDraftStream", () => {
       log,
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.flush();
 
     // Should have logged the failure
@@ -436,7 +475,7 @@ describe("createMatrixDraftStream", () => {
     vi.advanceTimersByTime(1000);
 
     // Further updates should not attempt sends (stream is stopped)
-    stream.update("More text");
+    stream.update("More text", "answer");
     await stream.flush();
 
     // Only the initial failed attempt
@@ -451,7 +490,7 @@ describe("createMatrixDraftStream", () => {
       cfg: {} as import("../types.js").CoreConfig,
     });
 
-    stream.update("   ");
+    stream.update("   ", "answer");
     await stream.flush();
 
     expect(sendMessageMock).not.toHaveBeenCalled();
@@ -470,20 +509,20 @@ describe("createMatrixDraftStream", () => {
       log,
     });
 
-    stream.update("Hello");
+    stream.update("Hello", "answer");
     await stream.flush();
     expect(stream.eventId()).toBe("$evt1");
 
     vi.advanceTimersByTime(1000);
 
-    stream.update("Hello world");
+    stream.update("Hello world", "answer");
     await stream.flush();
     expectLogContaining(log, "send/edit failed");
 
     vi.advanceTimersByTime(1000);
 
     // Stream should be stopped — further updates are ignored
-    stream.update("More text");
+    stream.update("More text", "answer");
     await stream.flush();
     expect(sendMessageMock).toHaveBeenCalledTimes(2);
   });
@@ -498,7 +537,7 @@ describe("createMatrixDraftStream", () => {
       cfg: {} as import("../types.js").CoreConfig,
     });
 
-    stream.update("line 1\nline 2");
+    stream.update("line 1\nline 2", "answer");
     await stream.flush();
 
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -515,7 +554,7 @@ describe("createMatrixDraftStream", () => {
       log,
     });
 
-    stream.update("123456");
+    stream.update("123456", "answer");
     await stream.flush();
 
     expect(sendMessageMock).not.toHaveBeenCalled();
@@ -530,9 +569,9 @@ describe("createMatrixDraftStream", () => {
       cfg: {} as import("../types.js").CoreConfig,
     });
 
-    stream.update("First draft");
+    stream.update("First draft", "answer");
     await stream.flush();
-    stream.update("Pending draft");
+    stream.update("Pending draft", "answer");
     await stream.discardPending();
     await stream.flush();
 
@@ -552,7 +591,7 @@ describe("createMatrixDraftStream", () => {
       log,
     });
 
-    stream.update("1234");
+    stream.update("1234", "answer");
     await stream.flush();
 
     expect(sendMessageMock).not.toHaveBeenCalled();

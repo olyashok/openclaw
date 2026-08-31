@@ -10,7 +10,10 @@ import {
   sendSingleTextMessageMatrix,
   sendTypingMatrix,
 } from "./send.js";
-import { MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY } from "./send/types.js";
+import {
+  MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY,
+  MATRIX_OPENCLAW_STREAM_PHASE_KEY,
+} from "./send/types.js";
 
 const loadOutboundMediaFromUrlMock = vi.hoisted(() => vi.fn());
 const loadWebMediaMock = vi.fn().mockResolvedValue({
@@ -777,6 +780,7 @@ describe("sendSingleTextMessageMatrix", () => {
         cfg: {} as never,
         includeMentions: false,
         live: true,
+        streamPhase: "progress",
       },
     );
 
@@ -784,6 +788,7 @@ describe("sendSingleTextMessageMatrix", () => {
     expect(content.msgtype).toBe("m.text");
     expect(content).not.toHaveProperty("m.mentions");
     expect(content["org.matrix.msc4357.live"]).toEqual({});
+    expect(content[MATRIX_OPENCLAW_STREAM_PHASE_KEY]).toBe("progress");
     expect((content as { formatted_body?: string }).formatted_body).toContain(
       "<code>read matrix-progress-@room-@alice:example.org-!room:example.org.txt failed</code>",
     );
@@ -961,6 +966,21 @@ describe("editMessageMatrix mentions", () => {
     const content = sentContent(sendMessage);
     expect(content[MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY]).toBe(true);
     expect(newContent(content)[MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY]).toBe(true);
+  });
+
+  it("places the stream phase on both halves of an edit", async () => {
+    const { client, sendMessage } = makeClient();
+
+    await editMessageMatrix("room:!room:example", "$original", "Reading", {
+      client,
+      cfg: {} as never,
+      live: true,
+      streamPhase: "progress",
+    });
+
+    const content = sentContent(sendMessage);
+    expect(content[MATRIX_OPENCLAW_STREAM_PHASE_KEY]).toBe("progress");
+    expect(newContent(content)[MATRIX_OPENCLAW_STREAM_PHASE_KEY]).toBe("progress");
   });
 
   it("edits threaded originals with a pure replace relation", async () => {

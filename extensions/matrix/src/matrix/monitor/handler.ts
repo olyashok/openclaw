@@ -154,7 +154,7 @@ const MAX_TRACKED_PAIRING_REPLY_SENDERS = 512;
 const MAX_TRACKED_SHARED_DM_CONTEXT_NOTICES = 512;
 type MatrixAllowBotsMode = "off" | "mentions" | "all";
 type MatrixDraftStreamHandle = {
-  update: (text: string) => void;
+  update: (text: string, phase: "progress" | "answer") => void;
   stop: () => Promise<string | undefined>;
   discardPending: () => Promise<void>;
   eventId: () => string | undefined;
@@ -1805,7 +1805,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         if (!previewText) {
           return;
         }
-        draftStream.update(previewText);
+        draftStream.update(previewText, "progress");
       };
       const progressDraftGate = createChannelProgressDraftGate({
         onStart: renderProgressDraft,
@@ -1845,6 +1845,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
               formatLine: formatMatrixToolProgressMarkdownCode,
               bullet: "-",
             }),
+            "progress",
           );
           return;
         }
@@ -2005,7 +2006,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       const updateDraftFromLatestFullText = () => {
         const blockText = getDisplayableDraftText();
         if (blockText) {
-          draftStream?.update(blockText);
+          draftStream?.update(blockText, "answer");
         }
       };
 
@@ -2164,6 +2165,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                         threadId: threadTarget,
                         accountId: _route.accountId,
                         extraContent: edit.extraContent,
+                        streamPhase: "answer",
                       });
                     },
                     createPreviewReceipt: (id): MessageReceipt =>
@@ -2223,6 +2225,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                     extraContent: quietDraftStreaming
                       ? buildMatrixFinalizedPreviewContent()
                       : undefined,
+                    streamPhase: "answer",
                   }).then(
                     () => true,
                     () => false,
