@@ -31,6 +31,7 @@ import {
   interruptSessionWorkAdmissions,
   isCompetingSessionWorkAdmissionActive,
 } from "../../sessions/session-lifecycle-admission.js";
+import { isWebchatClient } from "../../utils/message-channel.js";
 import { captureAgentJobSession, setGatewayDedupeEntry } from "../agent-turn/agent-job.js";
 import {
   isChatAbortControllerEntryAbortable,
@@ -41,6 +42,13 @@ import { ExpectedProfileMismatchError } from "../expected-profile.js";
 import { retainGatewayOperatorRun } from "../operator-run-cancellation.js";
 import { PENDING_CHAT_SEND_DEDUPE_PREFIX, type DedupeEntry } from "../server-shared.js";
 import { loadSessionEntry } from "../session-utils.js";
+import {
+  armWebchatCompletionDelivery,
+  verifyWebchatCompletionDeliveryClaim,
+  WEBCHAT_COMPLETION_DELIVERY_SECRET_ENV,
+  type WebchatCompletionDeliveryState,
+} from "../webchat-completion-delivery.js";
+import { formatForLog } from "../ws-log.js";
 import {
   buildAbortedChatSendPayload,
   readPreRegisteredRun,
@@ -119,6 +127,38 @@ export async function admitChatSend(params: {
     hasExplicitOrigin: explicitOrigin !== undefined,
     hasConnectedClient: client?.connect !== undefined,
   };
+  let webchatCompletionDelivery: WebchatCompletionDeliveryState | undefined;
+  if (p.completionDeliveryClaim) {
+    if (!isWebchatClient(request.clientInfo)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "completion delivery claims are limited to WebChat clients",
+        ),
+      );
+      return { ok: false as const };
+    }
+    const route = verifyWebchatCompletionDeliveryClaim({
+      claim: p.completionDeliveryClaim,
+      secret: process.env[WEBCHAT_COMPLETION_DELIVERY_SECRET_ENV],
+      expectedAgentId: selectedAgent.agentId ?? agentId,
+    });
+    if (!route) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "invalid completion delivery claim"),
+      );
+      return { ok: false as const };
+    }
+    webchatCompletionDelivery = { route };
+    const ownerConnId = normalizeOptionalChatText(client?.connId);
+    if (ownerConnId && context.isConnectionActive?.(ownerConnId) === false) {
+      armWebchatCompletionDelivery(webchatCompletionDelivery);
+    }
+  }
   const originatingRoute = resolveChatSendOriginatingRoute({
     client: request.clientInfo,
     deliver: p.deliver,
@@ -389,6 +429,7 @@ export async function admitChatSend(params: {
       now,
       ownerConnId: normalizeOptionalChatText(client?.connId),
       ownerDeviceId: normalizeOptionalChatText(client?.connect?.device?.id),
+      webchatCompletionDelivery,
       providerId: resolvedSessionModel.provider,
       authProviderId: resolvedSessionAuthProvider,
       isAbortable: (active) => isReplyRunAbortableForSignal(active.controller.signal),
