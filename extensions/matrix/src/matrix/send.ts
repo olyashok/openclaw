@@ -40,10 +40,10 @@ import {
   resolveMediaDurationMs,
   uploadMediaWithEncryption,
 } from "./send/media.js";
+import { applyMatrixStreamPhase } from "./send/stream-phase.js";
 import { normalizeThreadId, resolveMatrixRoomId } from "./send/targets.js";
 import {
   EventType,
-  MATRIX_OPENCLAW_STREAM_PHASE_KEY,
   MSC4357_LIVE_KEY,
   MsgType,
   RelationType,
@@ -580,9 +580,7 @@ export async function sendSingleTextMessageMatrix(
       if (opts.live) {
         (content as Record<string, unknown>)[MSC4357_LIVE_KEY] = {};
       }
-      if (opts.streamPhase) {
-        (content as Record<string, unknown>)[MATRIX_OPENCLAW_STREAM_PHASE_KEY] = opts.streamPhase;
-      }
+      applyMatrixStreamPhase(content as Record<string, unknown>, opts.streamPhase);
       const eventId = await client.sendMessage(resolvedRoom, content);
       const replyToId = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
       return {
@@ -714,11 +712,7 @@ export async function editMessageMatrix(
         content[MSC4357_LIVE_KEY] = {};
         (content["m.new_content"] as Record<string, unknown>)[MSC4357_LIVE_KEY] = {};
       }
-      if (opts.streamPhase) {
-        content[MATRIX_OPENCLAW_STREAM_PHASE_KEY] = opts.streamPhase;
-        (content["m.new_content"] as Record<string, unknown>)[MATRIX_OPENCLAW_STREAM_PHASE_KEY] =
-          opts.streamPhase;
-      }
+      applyMatrixStreamPhase(content, opts.streamPhase, true);
 
       const eventId = await client.sendMessage(resolvedRoom, content);
       return eventId ?? "";

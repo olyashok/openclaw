@@ -3,7 +3,7 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import { isReplyPayloadStatusNotice, type ReplyPayload } from "../auto-reply/reply-payload.js";
 import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import type { MsgContext } from "../auto-reply/templating.js";
-import { deliverInboundReplyWithMessageSendContext } from "../channels/turn/durable-delivery.js";
+import { deliverInboundReplyWithMessageSendContextCore } from "../channels/turn/durable-delivery.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isSuppressedControlReplyText } from "./control-reply-text.js";
 import {
@@ -157,7 +157,7 @@ export async function deliverWebchatCompletionFallback(
     ...(params.fallbackError ? { isError: true } : {}),
   };
   const route = state.route;
-  const result = await deliverInboundReplyWithMessageSendContext({
+  const result = await deliverInboundReplyWithMessageSendContextCore({
     cfg: params.cfg,
     channel: route.channel,
     accountId: route.accountId,

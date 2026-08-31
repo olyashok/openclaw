@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { deliverInboundReplyWithMessageSendContext } = vi.hoisted(() => ({
-  deliverInboundReplyWithMessageSendContext: vi.fn(),
+const { deliverInboundReplyWithMessageSendContextCore } = vi.hoisted(() => ({
+  deliverInboundReplyWithMessageSendContextCore: vi.fn(),
 }));
 vi.mock("../channels/turn/durable-delivery.js", () => ({
-  deliverInboundReplyWithMessageSendContext,
+  deliverInboundReplyWithMessageSendContextCore,
 }));
 
 import {
@@ -42,7 +42,7 @@ function baseParams(overrides: Record<string, unknown> = {}) {
 describe("deliverWebchatCompletionFallback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    deliverInboundReplyWithMessageSendContext.mockResolvedValue({
+    deliverInboundReplyWithMessageSendContextCore.mockResolvedValue({
       status: "handled_visible",
       delivery: { visibleReplySent: true },
     });
@@ -54,7 +54,7 @@ describe("deliverWebchatCompletionFallback", () => {
 
   it("delivers an unread quick reply once its grace period has elapsed", async () => {
     expect(await deliverWebchatCompletionFallback(baseParams())).toBe("handled");
-    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledTimes(1);
+    expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -67,8 +67,8 @@ describe("deliverWebchatCompletionFallback", () => {
     expect(await deliverWebchatCompletionFallback(params)).toBe("handled");
     expect(await deliverWebchatCompletionFallback(params)).toBe("skipped");
 
-    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledTimes(1);
-    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledWith(
+    expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledTimes(1);
+    expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "slack",
         accountId: "fi-admin",
@@ -90,7 +90,7 @@ describe("deliverWebchatCompletionFallback", () => {
       ),
     ).toBe("handled");
 
-    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledWith(
+    expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({
           isError: true,
@@ -120,7 +120,7 @@ describe("deliverWebchatCompletionFallback", () => {
     ).toBe("seen");
 
     await vi.advanceTimersByTimeAsync(100);
-    expect(deliverInboundReplyWithMessageSendContext).not.toHaveBeenCalled();
+    expect(deliverInboundReplyWithMessageSendContextCore).not.toHaveBeenCalled();
     expect(deliveryState.seenAtMs).toEqual(expect.any(Number));
   });
 
@@ -137,8 +137,8 @@ describe("deliverWebchatCompletionFallback", () => {
     ).toBe("scheduled");
 
     await vi.advanceTimersByTimeAsync(100);
-    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledTimes(1);
-    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledWith(
+    expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledTimes(1);
+    expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({
           text: expect.stringContaining("was not viewed within one minute"),
