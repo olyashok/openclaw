@@ -5,14 +5,10 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { getRuntimeConfig } from "../config/config.js";
-import {
-  loadSessionStore,
-  resolveAllAgentSessionStoreTargetsSync,
-  resolveSessionFilePath,
-  type SessionEntry,
-} from "../config/sessions.js";
+import { resolveAllAgentSessionStoreTargetsSync, type SessionEntry } from "../config/sessions.js";
 import { streamSessionTranscriptLinesReverse } from "../config/sessions/transcript-stream.js";
 import { callGateway } from "../gateway/call.js";
+import { loadSessionStore, resolveSessionFilePath } from "../plugin-sdk/session-store-runtime.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { reconcileInspectableTasks } from "../tasks/task-registry.reconcile.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
