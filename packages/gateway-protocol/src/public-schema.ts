@@ -658,6 +658,8 @@ export {
   ChatHistoryParamsSchema,
   ChatMetadataParamsSchema,
   ChatSendParamsSchema,
+  ChatHandoffArmParamsSchema,
+  ChatHandoffSeenParamsSchema,
   ChatInjectParamsSchema,
   ChatToolTitlesParamsSchema,
   ChatToolTitlesResultSchema,

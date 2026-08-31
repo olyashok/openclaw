@@ -34,6 +34,7 @@ import {
   GATEWAY_STALE_INSTALL_CLOSE_REASON,
 } from "../stale-install.js";
 import { cleanupTalkConnection } from "../talk-session-registry.js";
+import { armWebchatCompletionDeliveriesForConnection } from "../webchat-completion-delivery.js";
 import { startWebSocketKeepalive } from "../websocket-keepalive.js";
 import { formatForLog, logWs } from "../ws-log.js";
 import { refreshClientPresence } from "./client-presence.js";
@@ -506,6 +507,12 @@ export function attachGatewayWsConnectionHandler(params: AttachGatewayWsConnecti
       }
       if (connectionKind === "gateway") {
         const context = buildRequestContext();
+        if (client && isWebchatClient(client.connect.client)) {
+          armWebchatCompletionDeliveriesForConnection({
+            chatAbortControllers: context.chatAbortControllers,
+            connId,
+          });
+        }
         cleanupTalkConnection(connId, logGateway);
         context.unsubscribeAllSessionEvents(connId);
         // Detach or kill owned PTY shells; detached sessions remain reattachable until reaped.

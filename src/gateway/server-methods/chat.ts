@@ -23,6 +23,7 @@ import {
   resolveGlobalAwareNodeChatDeliveryKeys,
   sendGlobalAwareNodeChatPayload,
 } from "./chat-broadcast.js";
+import { handleChatHandoffArm, handleChatHandoffSeen } from "./chat-handoff-handler.js";
 import { chatHistoryHandlers } from "./chat-history-handler.js";
 import { chatMessageGetHandlers } from "./chat-message-get-handler.js";
 import { resolveRequestedChatAgentId, validateChatSelectedAgent } from "./chat-origin-routing.js";
@@ -97,6 +98,8 @@ export const chatHandlers: GatewayRequestHandlers = {
     respond(true, { titles });
   },
   "chat.send": handleDirectExternalChatSend,
+  "chat.handoff.arm": handleChatHandoffArm,
+  "chat.handoff.seen": handleChatHandoffSeen,
   "chat.inject": async ({ params, respond, context }) => {
     if (!assertValidParams(params, validateChatInjectParams, "chat.inject", respond)) {
       return;

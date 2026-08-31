@@ -20,6 +20,7 @@ import { discardPreparedInboundMedia } from "../chat-attachments.js";
 import { chatRunBelongsToSelectedAgent } from "../chat-run-owner.js";
 import type { ChatRunTiming } from "../server-chat-state.js";
 import { tryResolveSessionCompatibilityOwnerAgentId } from "../session-request-agent.js";
+import { scheduleWebchatCompletionFallback } from "../webchat-completion-delivery-send.js";
 import { buildAbortedChatSendPayload } from "./chat-abort-authorization.js";
 import { broadcastChatError, broadcastChatFinal } from "./chat-broadcast.js";
 import type { RestartSafeChatTerminalState } from "./chat-restart-recovery.js";
@@ -148,6 +149,31 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
     injection;
   let { messageInjectionAttempt } = injection;
   const { chatSendAckedAtMs, chatSendTiming } = timing;
+
+  const scheduleCompletionFallback = (fallbackError?: string) => {
+    if (context.chatRunState.hasAbortMarker(clientRunId)) {
+      return;
+    }
+    scheduleWebchatCompletionFallback({
+      cfg,
+      state: activeRunAbort.entry?.webchatCompletionDelivery,
+      startedAtMs: activeRunAbort.entry?.startedAtMs ?? admissionStartedAt,
+      runId: clientRunId,
+      sessionId: admittedSessionId,
+      sessionKey,
+      agentId,
+      ctx,
+      replies: replyDispatch.deliveredReplies,
+      fallbackError,
+      ...(activeRunAbort.entry?.ownerConnId
+        ? { ownerConnId: activeRunAbort.entry.ownerConnId }
+        : {}),
+      ...(activeRunAbort.entry?.ownerDeviceId
+        ? { ownerDeviceId: activeRunAbort.entry.ownerDeviceId }
+        : {}),
+      log: context.logGateway,
+    });
+  };
 
   let agentRunStarted = false;
   let replyDispatchRun: ReplyDispatchRun | undefined;
@@ -554,6 +580,9 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
               },
             });
           }
+          scheduleCompletionFallback(
+            shouldBroadcastAgentError ? returnedAgentErrorMessage : undefined,
+          );
         },
         {
           phase: "agent-turn",
@@ -579,7 +608,10 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
         });
       }
     })
-    .catch(dispatchErrorLifecycle.handleError);
+    .catch(async (error: unknown) => {
+      scheduleCompletionFallback(String(error));
+      await dispatchErrorLifecycle.handleError(error);
+    });
   void (async () => {
     try {
       await dispatch;

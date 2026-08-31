@@ -205,7 +205,19 @@ export const ChatSendParamsSchema = closedObject({
   // the Gateway steers the session's direct run or starts a turn when idle.
   expectedLeafEntryId: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
   expectedSessionRoutingContract: Type.Optional(NonEmptyString),
+  completionDeliveryClaim: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
   idempotencyKey: NonEmptyString,
+});
+
+/** Arms an already-authorized completion route when the initiating WebChat is no longer visible. */
+export const ChatHandoffArmParamsSchema = closedObject({
+  runId: NonEmptyString,
+});
+
+/** Marks a completed WebChat answer visible on the initiating device. */
+export const ChatHandoffSeenParamsSchema = closedObject({
+  runId: Type.Optional(NonEmptyString),
+  sessionKey: NonEmptyString,
 });
 
 /** Cancels the active or named run for a chat session. */
