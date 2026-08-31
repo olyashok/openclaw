@@ -265,6 +265,7 @@ export function createMatrixReplyDispatcher(config: {
                   threadId: threadTarget,
                   accountId,
                   extraContent: edit.extraContent,
+                  streamPhase: "answer",
                 });
                 finalizedDraftContent = prepareMatrixSingleText(edit.text, {
                   cfg,
@@ -344,6 +345,7 @@ export function createMatrixReplyDispatcher(config: {
               threadId: threadTarget,
               accountId,
               extraContent: quietDraftStreaming ? buildMatrixFinalizedPreviewContent() : undefined,
+              streamPhase: "answer",
             }).then(
               () => {
                 finalizedDraftContent = prepareMatrixSingleText(payloadText, {

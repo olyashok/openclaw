@@ -109,7 +109,7 @@ export async function createMatrixDraftController(params: {
       if (!draftStream) {
         return false;
       }
-      draftStream.update(previewText);
+      draftStream.update(previewText, "progress");
       if (options?.flush) {
         await draftStream.flush();
       }
@@ -161,7 +161,7 @@ export async function createMatrixDraftController(params: {
         previewPlanExplanation = payload.explanation?.replace(/\s+/g, " ").trim() || undefined;
         const text = renderPreviewPlan();
         if (text) {
-          draftStream.update(text);
+          draftStream.update(text, "progress");
         }
         return false;
       },
@@ -190,7 +190,7 @@ export async function createMatrixDraftController(params: {
   const updateDraftFromLatestFullText = () => {
     const blockText = getDisplayableDraftText();
     if (blockText) {
-      draftStream?.update(blockText);
+      draftStream?.update(blockText, "answer");
     }
   };
 

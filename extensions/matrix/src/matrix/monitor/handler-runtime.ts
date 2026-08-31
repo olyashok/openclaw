@@ -1,9 +1,12 @@
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import type { MatrixClient } from "../sdk.js";
-import { MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY } from "../send/types.js";
+import {
+  MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY,
+  type MatrixStreamPhase,
+} from "../send/types.js";
 
 export type MatrixDraftStreamHandle = {
-  update: (text: string) => void;
+  update: (text: string, phase?: MatrixStreamPhase) => void;
   flush: () => Promise<void>;
   stop: () => Promise<string | undefined>;
   discardPending: () => Promise<void>;

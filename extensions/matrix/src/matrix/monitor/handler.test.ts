@@ -3400,6 +3400,9 @@ describe("matrix monitor handler draft streaming", () => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
     expect(singleTextMessageBody()).toMatch(/\n`🧩 Read File`$/);
+    expect(callArg(sendSingleTextMessageMatrixMock, 0, 2, "draft options")).toMatchObject({
+      streamPhase: "progress",
+    });
 
     await deliver({ text: "Done" }, { kind: "final" });
 
@@ -3781,6 +3784,7 @@ describe("matrix monitor handler draft streaming", () => {
     );
     expect(draftOptions.msgtype).not.toBe("m.notice");
     expect(draftOptions.includeMentions).toBe(false);
+    expect(draftOptions.streamPhase).toBe("answer");
 
     await deliver(payload, { kind: "final" });
 

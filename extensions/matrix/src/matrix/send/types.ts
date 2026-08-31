@@ -38,6 +38,10 @@ export const EventType = {
 } as const;
 
 export const MATRIX_OPENCLAW_FINALIZED_PREVIEW_KEY = "com.openclaw.finalized_preview" as const;
+export const MATRIX_OPENCLAW_STREAM_PHASE_KEY = "com.openclaw.stream_phase" as const;
+
+/** Semantic phase of a Matrix draft, independent of whether it is still live. */
+export type MatrixStreamPhase = "progress" | "answer";
 
 export type MatrixDirectAccountData = Record<string, string[]>;
 
