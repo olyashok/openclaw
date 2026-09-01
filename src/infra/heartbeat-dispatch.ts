@@ -239,6 +239,7 @@ async function prepareHeartbeatDispatchReply(
     },
     hasRelayableExecCompletion: prepared.hasRelayableExecCompletion,
     suppressUnmarkedSourceReplies:
+      prepared.usesHeartbeatResponseTool ||
       resolveSourceReplyDeliveryMode({
         cfg,
         ctx: { ChatType: delivery.chatType, Provider: delivery.channel },
