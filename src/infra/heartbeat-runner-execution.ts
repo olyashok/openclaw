@@ -109,6 +109,19 @@ export type HeartbeatDeps = OutboundSendDeps &
     nowMs?: () => number;
   };
 
+export function createHeartbeatReplyPrefixContext(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  channel?: string;
+  accountId?: string;
+}) {
+  const replyPrefix = createReplyPrefixContext(params);
+  // Internal wakes have no inbound requester. Resolve dynamic requester prefixes
+  // to empty instead of leaking the template token into an outbound alert.
+  replyPrefix.prefixContext.senderMention = "";
+  return replyPrefix;
+}
+
 const loadHeartbeatRunnerRuntime = createLazyRuntimeModule(
   () => import("./heartbeat-runner.runtime.js"),
 );
@@ -471,7 +484,7 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
         })
       : { showOk: false, showAlerts: true, useIndicator: true };
   const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
-  const replyPrefix = createReplyPrefixContext({
+  const replyPrefix = createHeartbeatReplyPrefixContext({
     cfg,
     agentId,
     channel: delivery.channel !== "none" ? delivery.channel : undefined,

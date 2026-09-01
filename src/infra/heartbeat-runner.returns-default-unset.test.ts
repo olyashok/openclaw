@@ -1172,6 +1172,39 @@ describe("runHeartbeatOnce", () => {
     });
   });
 
+  it("does not prepend the heartbeat explainer to an exec completion", async () => {
+    const tmpDir = await createCaseDir("hb-exec-no-preamble");
+    const storePath = path.join(tmpDir, "sessions.json");
+    const cfg: OpenClawConfig = {
+      agents: { defaults: { workspace: tmpDir, heartbeat: { every: "5m" } } },
+      commands: { ownerAllowFrom: ["+15555550166"] },
+      channels: { whatsapp: { allowFrom: ["+15555550166"] } },
+      session: { store: storePath },
+    };
+    const sessionKey = resolveMainSessionKey(cfg);
+    await seedWhatsAppSession(storePath, sessionKey);
+    enqueueSystemEvent("exec finished: verification completed", {
+      sessionKey,
+      contextKey: "exec:verification",
+    });
+    const replySpy = vi.fn().mockResolvedValue({ text: "Final verification completed" });
+    const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
+
+    await runHeartbeatOnce({
+      cfg,
+      source: "exec-event",
+      intent: "event",
+      reason: "exec-event",
+      sessionKey,
+      deps: createHeartbeatDeps(sendWhatsApp, { getReplyFromConfig: replySpy }),
+    });
+
+    expectWhatsAppSendCall(sendWhatsApp, 0, {
+      to: "+15555550166",
+      text: "Final verification completed",
+    });
+  });
+
   it("uses per-agent heartbeat overrides and session keys", async () => {
     const tmpDir = await createCaseDir("hb-agent-overrides");
     const storePath = path.join(tmpDir, "sessions.json");

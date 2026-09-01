@@ -464,7 +464,9 @@ export async function finalizeHeartbeatOutcome(params: {
   }
 
   const deliveryText =
-    delivery.implicitDefaultRoute && prevHeartbeatAt === undefined
+    delivery.implicitDefaultRoute &&
+    prevHeartbeatAt === undefined &&
+    (wakeSource === undefined || wakeSource === "interval")
       ? `${FIRST_HEARTBEAT_ALERT_PREAMBLE}\n${normalized.text}`
       : normalized.text;
   const previewText = deliveryText;
