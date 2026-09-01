@@ -1935,6 +1935,7 @@ describe("slack prepareSlackMessage inbound contract", () => {
     ["a control command", "<@B1> /new"],
     ["an abort request", "<@B1> please stop"],
   ])("keeps a context-only collaborator's %s as a room event", async (_label, text) => {
+    const reactionAdd = vi.fn().mockResolvedValue({ ok: true });
     const channelConfig = {
       enabled: true,
       requireMention: false,
@@ -1955,6 +1956,7 @@ describe("slack prepareSlackMessage inbound contract", () => {
       channelsConfig: { C123: channelConfig },
       defaultRequireMention: false,
       groupPolicy: "allowlist",
+      appClient: { reactions: { add: reactionAdd } } as unknown as App["client"],
     });
     slackCtx.allowFrom = ["U_OWNER"];
     slackCtx.resolveUserName = async () => ({ name: "Nicholas" });
@@ -1971,6 +1973,60 @@ describe("slack prepareSlackMessage inbound contract", () => {
     assertPrepared(prepared);
     expect(prepared.ctxPayload.InboundEventKind).toBe("room_event");
     expect(prepared.ctxPayload.CommandAuthorized).toBe(false);
+    expect(prepared.ackReactionValue).toBe("blue_book");
+    expect(await prepared.ackReactionPromise).toBe(true);
+    expect(reactionAdd).toHaveBeenCalledWith({
+      channel: "C123",
+      name: "blue_book",
+      timestamp: "1.000",
+    });
+  });
+
+  it("admits and acknowledges an unmentioned context-only reply in a joined thread", async () => {
+    const threadTs = "1788215309.876779";
+    const reactionAdd = vi.fn().mockResolvedValue({ ok: true });
+    const channelConfig = {
+      enabled: true,
+      requireMention: true,
+      users: ["U_OWNER", "U_CONTEXT"],
+      requestUsers: ["U_OWNER"],
+    };
+    recordSlackThreadParticipation("default", "C123", threadTs);
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        messages: { groupChat: { unmentionedInbound: "room_event" } },
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "allowlist",
+            channels: { C123: channelConfig },
+          },
+        },
+      } as OpenClawConfig,
+      channelsConfig: { C123: channelConfig },
+      defaultRequireMention: true,
+      groupPolicy: "allowlist",
+      appClient: { reactions: { add: reactionAdd } } as unknown as App["client"],
+    });
+    slackCtx.allowFrom = ["U_OWNER"];
+    slackCtx.resolveUserName = async () => ({ name: "Nicholas" });
+    slackCtx.resolveChannelName = async () => ({ name: "shape-tech", type: "channel" });
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "C123",
+      channel_type: "channel",
+      user: "U_CONTEXT",
+      text: "7 is accounted for",
+      ts: "1788224029.666049",
+      thread_ts: threadTs,
+    } as SlackMessageEvent);
+
+    assertPrepared(prepared);
+    expect(prepared.ctxPayload.MentionSource).toBe("implicit_thread");
+    expect(prepared.ctxPayload.InboundEventKind).toBe("room_event");
+    expect(prepared.ctxPayload.CommandAuthorized).toBe(false);
+    expect(prepared.ackReactionValue).toBe("blue_book");
+    expect(await prepared.ackReactionPromise).toBe(true);
   });
 
   it("keeps an authorized requester's mention as a user request", async () => {
@@ -2009,6 +2065,7 @@ describe("slack prepareSlackMessage inbound contract", () => {
     assertPrepared(prepared);
     expect(prepared.ctxPayload.InboundEventKind).toBe("user_request");
     expect(prepared.ctxPayload.CommandAuthorized).toBe(true);
+    expect(prepared.ackReactionValue).not.toBe("blue_book");
   });
 
   it("includes forwarded shared attachment text in raw body", async () => {

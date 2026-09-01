@@ -103,6 +103,7 @@ const SLACK_HISTORY_MEDIA_MAX_ATTACHMENTS = 4;
 const SLACK_HISTORY_MEDIA_MAX_BYTES = 10 * 1024 * 1024;
 const SLACK_HISTORY_MEDIA_IDLE_TIMEOUT_MS = 1_000;
 const SLACK_HISTORY_MEDIA_TOTAL_TIMEOUT_MS = 3_000;
+const SLACK_CONTEXT_ONLY_ACK_REACTION = "blue_book";
 const SLACK_CHANNEL_ACCESS_DOCS_URL =
   "https://docs.openclaw.ai/channels/slack#access-control-and-routing";
 
@@ -1181,6 +1182,7 @@ export async function prepareSlackMessage(params: {
       teamId: opts.eventScope?.teamId ?? ctx.teamId,
       userId: senderId,
     });
+  const isContextOnlyUser = isRoom && !requestUserAllowed;
   if (
     isRoom &&
     isBotMessage &&
@@ -1416,8 +1418,7 @@ export async function prepareSlackMessage(params: {
     hasControlCommand: hasControlCommandInMessage,
     hasAbortRequest,
   });
-  const inboundEventKind =
-    isRoom && !requestUserAllowed ? "room_event" : classifiedInboundEventKind;
+  const inboundEventKind = isContextOnlyUser ? "room_event" : classifiedInboundEventKind;
   const threadStarter = await getThreadStarter();
   const resolvedMessageContent = await getMessageContent();
   if (!resolvedMessageContent) {
@@ -1434,7 +1435,9 @@ export async function prepareSlackMessage(params: {
     channel: "slack",
     accountId: account.accountId,
   });
-  const ackReactionValue = ackReaction ?? "";
+  const ackReactionValue = isContextOnlyUser
+    ? SLACK_CONTEXT_ONLY_ACK_REACTION
+    : (ackReaction ?? "");
   const sourceRepliesAreToolOnly =
     resolveChannelMessageSourceReplyDeliveryMode({
       cfg,
@@ -1462,8 +1465,9 @@ export async function prepareSlackMessage(params: {
     statusReactionsExplicitlyEnabled && (effectiveWasMentioned || shouldBypassMention);
   const shouldSendConfiguredAck = shouldAckReaction();
   const shouldSendAckReaction =
-    shouldSendConfiguredAck &&
-    (!sourceRepliesAreToolOnly || allowToolOnlyStatusReaction || isRoomEvent);
+    isContextOnlyUser ||
+    (shouldSendConfiguredAck &&
+      (!sourceRepliesAreToolOnly || allowToolOnlyStatusReaction || isRoomEvent));
   const statusReactionsWillHandle =
     Boolean(ackReactionMessageTs) &&
     !isRoomEvent &&
