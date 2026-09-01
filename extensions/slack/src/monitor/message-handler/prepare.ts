@@ -101,6 +101,7 @@ const SLACK_ANY_MENTION_RE = /<@[^>]+>|<!subteam\^[^>]+>/;
 const SLACK_USER_MENTION_RE = /<@([^>|]+)(?:\|[^>]+)?>/g;
 const SLACK_SUBTEAM_MENTION_RE = /<!subteam\^([^>|]+)(?:\|[^>]+)?>/g;
 const SLACK_SUBTEAM_MENTION_MARKER = "<!subteam^";
+const SLACK_CONTEXT_ONLY_ACK_REACTION = "blue_book";
 const SLACK_CHANNEL_ACCESS_DOCS_URL =
   "https://docs.openclaw.ai/channels/slack#access-control-and-routing";
 
@@ -1005,6 +1006,7 @@ export async function prepareSlackMessage(params: {
       teamId: opts.eventScope?.teamId ?? ctx.teamId,
       userId: senderId,
     });
+  const isContextOnlyUser = isRoom && !requestUserAllowed;
   if (
     isRoom &&
     isBotMessage &&
@@ -1223,8 +1225,7 @@ export async function prepareSlackMessage(params: {
     hasControlCommand: hasControlCommandInMessage,
     hasAbortRequest,
   });
-  const inboundEventKind =
-    isRoom && !requestUserAllowed ? "room_event" : classifiedInboundEventKind;
+  const inboundEventKind = isContextOnlyUser ? "room_event" : classifiedInboundEventKind;
   const threadStarter = await getThreadStarter();
   const resolvedMessageContent = await getMessageContent();
   if (!resolvedMessageContent) {
@@ -1242,7 +1243,9 @@ export async function prepareSlackMessage(params: {
     channel: "slack",
     accountId: account.accountId,
   });
-  const ackReactionValue = ackReaction ?? "";
+  const ackReactionValue = isContextOnlyUser
+    ? SLACK_CONTEXT_ONLY_ACK_REACTION
+    : (ackReaction ?? "");
   const sourceRepliesAreToolOnly =
     resolveChannelMessageSourceReplyDeliveryMode({
       cfg,
@@ -1267,8 +1270,9 @@ export async function prepareSlackMessage(params: {
 
   const ackReactionMessageTs = message.ts;
   const shouldSendAckReaction =
-    shouldAckReaction() &&
-    (!sourceRepliesAreToolOnly || effectiveWasMentioned || shouldBypassMention || isRoomEvent);
+    isContextOnlyUser ||
+    (shouldAckReaction() &&
+      (!sourceRepliesAreToolOnly || effectiveWasMentioned || shouldBypassMention || isRoomEvent));
   const statusReactionsWillHandle =
     Boolean(ackReactionMessageTs) &&
     !isRoomEvent &&
