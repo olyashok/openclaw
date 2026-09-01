@@ -157,6 +157,7 @@ export async function runHeartbeatOnce(opts: HeartbeatRunOptions): Promise<Heart
       agentRun,
       hasRelayableExecCompletion,
       suppressUnmarkedSourceReplies:
+        prepared.usesHeartbeatResponseTool ||
         resolveSourceReplyDeliveryMode({
           cfg,
           ctx: { ChatType: delivery.chatType, Provider: delivery.channel },

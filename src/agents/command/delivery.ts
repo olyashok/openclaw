@@ -533,9 +533,7 @@ function normalizeAgentCommandReplyPayloads(params: {
     responsePrefixContext,
   );
   const responsePrefix =
-    params.includeRunModelContext === false &&
-    resolvedResponsePrefix &&
-    UNRESOLVED_RESPONSE_PREFIX_VAR_PATTERN.test(resolvedResponsePrefix)
+    resolvedResponsePrefix && UNRESOLVED_RESPONSE_PREFIX_VAR_PATTERN.test(resolvedResponsePrefix)
       ? undefined
       : replyPrefix.responsePrefix;
   const deliveryMessaging = deliveryPlugin?.messaging;
