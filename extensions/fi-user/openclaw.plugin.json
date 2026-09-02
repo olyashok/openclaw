@@ -1,0 +1,18 @@
+{
+  "id": "fi-user",
+  "activation": { "onStartup": true },
+  "enabledByDefault": false,
+  "name": "Fi User Delegation",
+  "description": "Requester-bound Gmail and Fi data-room tools for the Cellect Fi agent.",
+  "contracts": { "tools": ["fi_user_gmail", "fi_user_dataroom"] },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": { "type": "string", "minLength": 1 },
+      "brokerTokenEnv": { "type": "string", "minLength": 1 },
+      "gamBinary": { "type": "string", "minLength": 1 },
+      "gamConfigDir": { "type": "string", "minLength": 1 }
+    }
+  }
+}
