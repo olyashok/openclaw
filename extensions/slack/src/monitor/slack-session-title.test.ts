@@ -81,12 +81,17 @@ describe("Slack session titles", () => {
     expect(patchSessionEntry).toHaveBeenCalledWith(
       expect.objectContaining({ preserveActivity: true, readConsistency: "latest" }),
     );
-    expect(await patchSessionEntry.mock.calls[0][0].update(initial)).toEqual({
+    const patchCall = patchSessionEntry.mock.calls.at(0);
+    expect(patchCall).toBeDefined();
+    if (!patchCall) {
+      throw new Error("expected a session patch call");
+    }
+    expect(await patchCall[0].update(initial)).toEqual({
       displayName: "Nicholas RFI Filing",
     });
 
     const concurrentRename = { ...initial, label: "Manual name" };
-    expect(await patchSessionEntry.mock.calls[0][0].update(concurrentRename)).toBeNull();
+    expect(await patchCall[0].update(concurrentRename)).toBeNull();
   });
 
   it("does not generate for an explicitly named session", async () => {
