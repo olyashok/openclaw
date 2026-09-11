@@ -5141,6 +5141,7 @@ Second paragraph should still reach the agent after Slack's preview cutoff.`;
       expect(prepared.ctxPayload.SessionKey).toBe(
         "agent:main:slack:channel:c0ahzfcas1k:thread:1777244692.409919",
       );
+      expect(prepared.ctxPayload.IsFirstThreadTurn).toBe(true);
       expect(prepared.ctxPayload.MessageThreadId).toBeUndefined();
       expect(prepared.ctxPayload.ReplyToId).toBeUndefined();
     }
