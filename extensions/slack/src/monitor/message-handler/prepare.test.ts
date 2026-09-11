@@ -2067,6 +2067,160 @@ describe("slack prepareSlackMessage inbound contract", () => {
     expect(await prepared.ackReactionPromise).toBe(true);
   });
 
+  it("dispatches a context-only participant in a thread started by a request user", async () => {
+    const threadTs = "1789141187.426359";
+    const replies = vi.fn().mockResolvedValue({
+      messages: [
+        { user: "U_OWNER", text: "Please find the title documents", ts: threadTs },
+        { user: "U_CONTEXT", text: "Please upload them to the project", ts: "1789143892.594259" },
+      ],
+    });
+    const channelConfig = {
+      enabled: true,
+      requireMention: true,
+      users: ["U_OWNER", "U_CONTEXT"],
+      requestUsers: ["U_OWNER"],
+    };
+    recordSlackThreadParticipation("default", "C123", threadTs);
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        messages: { groupChat: { unmentionedInbound: "room_event" } },
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "allowlist",
+            channels: { C123: channelConfig },
+          },
+        },
+      } as OpenClawConfig,
+      channelsConfig: { C123: channelConfig },
+      defaultRequireMention: true,
+      groupPolicy: "allowlist",
+      appClient: { conversations: { replies } } as unknown as App["client"],
+    });
+    slackCtx.allowFrom = ["U_OWNER"];
+    slackCtx.resolveUserName = async (userId) => ({
+      name: userId === "U_OWNER" ? "Alex" : "Nicholas",
+    });
+    slackCtx.resolveChannelName = async () => ({ name: "shape-tech", type: "channel" });
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "C123",
+      channel_type: "channel",
+      user: "U_CONTEXT",
+      text: "Please upload them to the project",
+      ts: "1789143892.594259",
+      thread_ts: threadTs,
+    } as SlackMessageEvent);
+
+    assertPrepared(prepared);
+    expect(prepared.ctxPayload.InboundEventKind).toBe("user_request");
+    expect(prepared.ctxPayload.CommandAuthorized).toBe(false);
+    expect(prepared.ctxPayload.GroupSystemPrompt).toContain("delegated thread scope");
+    expect(prepared.ackReactionValue).not.toBe("blue_book");
+  });
+
+  it("dispatches a context-only participant after a request user joins a bot-started thread", async () => {
+    const threadTs = "1789142253.692359";
+    const replies = vi.fn().mockResolvedValue({
+      messages: [
+        { user: "B1", bot_id: "B1", text: "Please clarify the recipients", ts: threadTs },
+        { user: "U_OWNER", text: "Send it to the listed recipients", ts: "1789142388.168949" },
+        { user: "U_CONTEXT", text: "Use tomorrow's date", ts: "1789142536.963139" },
+      ],
+    });
+    const channelConfig = {
+      enabled: true,
+      requireMention: true,
+      users: ["U_OWNER", "U_CONTEXT"],
+      requestUsers: ["U_OWNER"],
+    };
+    recordSlackThreadParticipation("default", "C123", threadTs);
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        messages: { groupChat: { unmentionedInbound: "room_event" } },
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "allowlist",
+            channels: { C123: channelConfig },
+          },
+        },
+      } as OpenClawConfig,
+      channelsConfig: { C123: channelConfig },
+      defaultRequireMention: true,
+      groupPolicy: "allowlist",
+      appClient: { conversations: { replies } } as unknown as App["client"],
+    });
+    slackCtx.allowFrom = ["U_OWNER"];
+    slackCtx.resolveUserName = async (userId) => ({
+      name: userId === "U_OWNER" ? "Alex" : "Zahra",
+    });
+    slackCtx.resolveChannelName = async () => ({ name: "esign", type: "channel" });
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "C123",
+      channel_type: "channel",
+      user: "U_CONTEXT",
+      text: "Use tomorrow's date",
+      ts: "1789142536.963139",
+      thread_ts: threadTs,
+    } as SlackMessageEvent);
+
+    assertPrepared(prepared);
+    expect(prepared.ctxPayload.InboundEventKind).toBe("user_request");
+    expect(prepared.ctxPayload.CommandAuthorized).toBe(false);
+    expect(prepared.ctxPayload.GroupSystemPrompt).toContain("outside the delegated thread scope");
+  });
+
+  it("dispatches delegated control text for a visible refusal without interpreting it", async () => {
+    const threadTs = "1789142253.692359";
+    const replies = vi.fn().mockResolvedValue({
+      messages: [{ user: "U_OWNER", text: "Review this package", ts: threadTs }],
+    });
+    const channelConfig = {
+      enabled: true,
+      requireMention: false,
+      users: ["U_OWNER", "U_CONTEXT"],
+      requestUsers: ["U_OWNER"],
+    };
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        messages: { groupChat: { unmentionedInbound: "room_event" } },
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "allowlist",
+            channels: { C123: channelConfig },
+          },
+        },
+      } as OpenClawConfig,
+      channelsConfig: { C123: channelConfig },
+      defaultRequireMention: false,
+      groupPolicy: "allowlist",
+      appClient: { conversations: { replies } } as unknown as App["client"],
+    });
+    slackCtx.allowFrom = ["U_OWNER"];
+    slackCtx.resolveUserName = async () => ({ name: "Nicholas" });
+    slackCtx.resolveChannelName = async () => ({ name: "shape-tech", type: "channel" });
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "C123",
+      channel_type: "channel",
+      user: "U_CONTEXT",
+      text: "/new",
+      ts: "1789142536.963139",
+      thread_ts: threadTs,
+    } as SlackMessageEvent);
+
+    assertPrepared(prepared);
+    expect(prepared.ctxPayload.InboundEventKind).toBe("user_request");
+    expect(prepared.ctxPayload.CommandAuthorized).toBe(false);
+    expect(prepared.ctxPayload.CommandInterpretationSuppressed).toBe(true);
+    expect(prepared.ctxPayload.GroupSystemPrompt).toContain("never accept session-control");
+    expect(prepared.ackReactionValue).not.toBe("blue_book");
+  });
+
   it("keeps an authorized requester's mention as a user request", async () => {
     const channelConfig = {
       enabled: true,
