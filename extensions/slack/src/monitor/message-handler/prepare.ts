@@ -1795,10 +1795,9 @@ export async function prepareSlackMessage(params: {
       SlackAssistantThreadContextEnterpriseId: assistantThreadContext?.enterpriseId ?? undefined,
       Transcript: preflightAudioTranscript,
       IsFirstThreadTurn:
-        isThreadReply &&
-        threadTs &&
         !directThreadRoutedToDmSession &&
-        shouldSeedInitialThreadContext
+        (shouldSeedInitialThreadContext ||
+          (!isThreadReply && sessionKey !== route.sessionKey && previousTimestamp === undefined))
           ? true
           : undefined,
       ...buildSlackMentionContextPayload({

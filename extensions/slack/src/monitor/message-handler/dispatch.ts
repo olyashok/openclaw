@@ -39,6 +39,7 @@ import {
   type SlackStreamSession,
 } from "../../streaming.js";
 import { countSlackTextUtf8Bytes } from "../../truncate.js";
+import { scheduleSlackSessionTitleAfterMeta } from "../slack-session-title.js";
 import { resolveSlackBotLoopProtection } from "./dispatch-helpers.js";
 import { createSlackProgressRuntime } from "./dispatch-progress.js";
 import { createSlackDispatchSetup } from "./dispatch-setup.js";
@@ -390,6 +391,8 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
   let agentRunFailed = false;
   let settledDispatchResult: Parameters<typeof hasVisibleInboundReplyDispatch>[0];
   try {
+    const inboundRecord = prepared.turn.record as InboundReplyRecordOptions;
+    const sessionKey = prepared.ctxPayload.SessionKey ?? route.sessionKey;
     const turnResult = await dispatchChannelInboundTurn({
       cfg,
       channel: "slack",
@@ -416,7 +419,20 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
         deliver: deliverSlackPayload,
         onError: onSlackDeliveryError,
       },
-      record: prepared.turn.record as InboundReplyRecordOptions,
+      record: {
+        ...inboundRecord,
+        trackSessionMetaTask: (metaTask) => {
+          inboundRecord.trackSessionMetaTask?.(metaTask);
+          scheduleSlackSessionTitleAfterMeta({
+            metaTask,
+            cfg,
+            agentId: route.agentId,
+            sessionKey,
+            storePath: prepared.turn.storePath,
+            ctx: prepared.ctxPayload,
+          });
+        },
+      },
       history: prepared.turn.history,
       botLoopProtection: resolveSlackBotLoopProtection(prepared),
       replyOptions: {
