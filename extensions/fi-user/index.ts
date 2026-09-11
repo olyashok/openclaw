@@ -9,13 +9,16 @@ import type {
   OpenClawPluginApi,
   OpenClawPluginToolContext,
 } from "openclaw/plugin-sdk/core";
+import { extractDocumentContent } from "openclaw/plugin-sdk/document-extractor";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { jsonResult } from "openclaw/plugin-sdk/tool-results";
+import { jsonResult, type AgentToolResult } from "openclaw/plugin-sdk/tool-results";
 import { Type } from "typebox";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 512 * 1024;
 const COMMAND_TIMEOUT_MS = 60_000;
+const MAX_DRIVE_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_DRIVE_TEXT_CHARS = 200_000;
 
 type PluginConfig = {
   baseUrl?: string;
@@ -58,7 +61,9 @@ async function exchange(
     throw new Error("This operation requires a verified Slack requester on Cellect Fi");
   }
   const brokerToken = process.env[config.brokerTokenEnv]?.trim();
-  if (!brokerToken) throw new Error("Fi user delegation broker is not configured");
+  if (!brokerToken) {
+    throw new Error("Fi user delegation broker is not configured");
+  }
 
   const response = await fetch(`${config.baseUrl}/api/openclaw-user-delegation`, {
     method: "POST",
@@ -91,9 +96,9 @@ async function runGam(
   return [stdout, stderr].filter(Boolean).join("\n").trim();
 }
 
-function requireMailbox(delegation: Delegation): string {
+function requireMailbox(delegation: Delegation, service = "Gmail"): string {
   if (!delegation.gmail.enabled || !delegation.gmail.mailbox) {
-    throw new Error(`Gmail is not available for ${delegation.user.email}`);
+    throw new Error(`${service} is not available for ${delegation.user.email}`);
   }
   return delegation.gmail.mailbox;
 }
@@ -106,8 +111,12 @@ function mailArgs(input: {
   body: string;
 }): string[] {
   const args = ["to", input.to.join(","), "subject", input.subject, "textmessage", input.body];
-  if (input.cc?.length) args.push("cc", input.cc.join(","));
-  if (input.bcc?.length) args.push("bcc", input.bcc.join(","));
+  if (input.cc?.length) {
+    args.push("cc", input.cc.join(","));
+  }
+  if (input.bcc?.length) {
+    args.push("bcc", input.bcc.join(","));
+  }
   return args;
 }
 
@@ -151,7 +160,9 @@ function createGmailTool(api: OpenClawPluginApi, context: OpenClawPluginToolCont
       const mailbox = requireMailbox(delegation);
 
       if (input.action === "search") {
-        if (!input.query?.trim()) throw new Error("query is required for search");
+        if (!input.query?.trim()) {
+          throw new Error("query is required for search");
+        }
         const output = await runGam(config, mailbox, [
           "print",
           "messages",
@@ -163,7 +174,9 @@ function createGmailTool(api: OpenClawPluginApi, context: OpenClawPluginToolCont
         return jsonResult({ mailbox, output });
       }
       if (input.action === "read") {
-        if (!input.messageId) throw new Error("messageId is required for read");
+        if (!input.messageId) {
+          throw new Error("messageId is required for read");
+        }
         const output = await runGam(config, mailbox, [
           "show",
           "messages",
@@ -201,6 +214,216 @@ function createGmailTool(api: OpenClawPluginApi, context: OpenClawPluginToolCont
             ])
           : await runGam(config, mailbox, ["sendemail", ...args]);
       return jsonResult({ mailbox, action: input.action, output });
+    },
+  };
+}
+
+const GDriveSchema = Type.Object(
+  {
+    action: stringEnum(["search", "read"] as const),
+    query: Type.Optional(Type.String({ maxLength: 1_000 })),
+    maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+    fileId: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9_-]+$" })),
+    maxPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+    password: Type.Optional(Type.String({ maxLength: 500 })),
+  },
+  { additionalProperties: false },
+);
+
+type DriveFileMetadata = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+};
+
+function driveExportArgs(mimeType: string): string[] {
+  if (mimeType === "application/vnd.google-apps.document") {
+    return ["format", "txt"];
+  }
+  if (mimeType === "application/vnd.google-apps.presentation") {
+    return ["format", "pdf"];
+  }
+  return [];
+}
+
+function isTextFile(metadata: DriveFileMetadata, filePath: string): boolean {
+  return (
+    metadata.mimeType.startsWith("text/") ||
+    [".csv", ".html", ".json", ".md", ".txt", ".xml"].includes(path.extname(filePath).toLowerCase())
+  );
+}
+
+async function driveFileMetadata(
+  config: Required<PluginConfig>,
+  mailbox: string,
+  fileId: string,
+): Promise<DriveFileMetadata> {
+  const output = await runGam(config, mailbox, [
+    "info",
+    "drivefile",
+    `id:${fileId}`,
+    "fields",
+    "id,name,mimetype,size",
+    "formatjson",
+  ]);
+  const line = output
+    .split("\n")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith("{"));
+  if (!line) {
+    throw new Error("Google Drive returned invalid file metadata");
+  }
+  const metadata = JSON.parse(line) as Partial<DriveFileMetadata>;
+  if (!metadata.id || !metadata.name || !metadata.mimeType) {
+    throw new Error("Google Drive returned incomplete file metadata");
+  }
+  return metadata as DriveFileMetadata;
+}
+
+async function readDriveFile(params: {
+  config: Required<PluginConfig>;
+  mailbox: string;
+  fileId: string;
+  maxPages: number;
+  password?: string;
+}): Promise<AgentToolResult<Record<string, unknown>>> {
+  const metadata = await driveFileMetadata(params.config, params.mailbox, params.fileId);
+  if (metadata.mimeType === "application/vnd.google-apps.folder") {
+    throw new Error("Folders cannot be read; search within the folder for files instead");
+  }
+  const declaredSize = metadata.size ? Number(metadata.size) : 0;
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_DRIVE_FILE_BYTES) {
+    throw new Error(`Google Drive file exceeds the ${MAX_DRIVE_FILE_BYTES / 1024 / 1024} MB limit`);
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-fi-user-drive-"));
+  try {
+    await runGam(params.config, params.mailbox, [
+      "get",
+      "drivefile",
+      `id:${params.fileId}`,
+      ...driveExportArgs(metadata.mimeType),
+      "targetfolder",
+      tempDir,
+      "overwrite",
+      "true",
+      "showprogress",
+      "false",
+    ]);
+    const files = await downloadedFiles(tempDir);
+    if (files.length !== 1) {
+      throw new Error(`Expected one downloaded Drive file but found ${files.length}`);
+    }
+    const filePath = files[0];
+    const bytes = await fs.readFile(filePath);
+    if (bytes.byteLength > MAX_DRIVE_FILE_BYTES) {
+      throw new Error(
+        `Google Drive file exceeds the ${MAX_DRIVE_FILE_BYTES / 1024 / 1024} MB limit`,
+      );
+    }
+
+    if (
+      metadata.mimeType === "application/pdf" ||
+      path.extname(filePath).toLowerCase() === ".pdf"
+    ) {
+      const extracted = await extractDocumentContent({
+        buffer: bytes,
+        mimeType: "application/pdf",
+        maxPages: params.maxPages,
+        maxPixels: 20_000_000,
+        minTextChars: 1,
+        ...(params.password ? { password: params.password } : {}),
+      });
+      if (!extracted) {
+        throw new Error("PDF extraction is unavailable");
+      }
+      const details = {
+        mailbox: params.mailbox,
+        file: metadata,
+        extractedTextChars: extracted.text.length,
+        extractedImageCount: extracted.images.length,
+        extractor: extracted.extractor,
+      };
+      const content: AgentToolResult<typeof details>["content"] = [
+        {
+          type: "text",
+          text: JSON.stringify(
+            { mailbox: params.mailbox, file: metadata, text: extracted.text },
+            null,
+            2,
+          ),
+        },
+        ...extracted.images,
+      ];
+      return { content, details };
+    }
+
+    if (
+      metadata.mimeType === "application/vnd.google-apps.document" ||
+      isTextFile(metadata, filePath)
+    ) {
+      const text = bytes.toString("utf8").slice(0, MAX_DRIVE_TEXT_CHARS);
+      return jsonResult({ mailbox: params.mailbox, file: metadata, text });
+    }
+    throw new Error(
+      `Reading ${metadata.mimeType} is not supported yet; use a PDF, Google Doc, or text file`,
+    );
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function createGDriveTool(
+  api: OpenClawPluginApi,
+  context: OpenClawPluginToolContext,
+): AnyAgentTool {
+  return {
+    name: "fi_user_gdrive",
+    label: "My Google Drive",
+    description:
+      "Search and read files only from the current verified Cellect Fi requester's Google Drive. The Drive identity is fixed by Fi membership and cannot be selected by the model. Search uses Google Drive query syntax and includes files shared with the requester.",
+    parameters: GDriveSchema,
+    async execute(_toolCallId, raw) {
+      const input = raw as {
+        action: "search" | "read";
+        query?: string;
+        maxResults?: number;
+        fileId?: string;
+        maxPages?: number;
+        password?: string;
+      };
+      const { delegation, config } = await exchange(api, context);
+      const mailbox = requireMailbox(delegation, "Google Drive");
+      if (input.action === "search") {
+        if (!input.query?.trim()) {
+          throw new Error("query is required for Drive search");
+        }
+        const output = await runGam(config, mailbox, [
+          "print",
+          "filelist",
+          "anyowner",
+          "query",
+          input.query.trim(),
+          "excludetrashed",
+          "maxfiles",
+          String(input.maxResults ?? 10),
+          "fields",
+          "id,name,mimetype,size,modifiedtime,parents",
+          "filepath",
+        ]);
+        return jsonResult({ mailbox, output });
+      }
+      if (!input.fileId) {
+        throw new Error("fileId is required for Drive read");
+      }
+      return readDriveFile({
+        config,
+        mailbox,
+        fileId: input.fileId,
+        maxPages: input.maxPages ?? 30,
+        ...(input.password ? { password: input.password } : {}),
+      });
     },
   };
 }
@@ -292,8 +515,9 @@ function createDataRoomTool(
         const result = contentType.includes("application/json")
           ? await response.json()
           : await response.text();
-        if (!response.ok)
+        if (!response.ok) {
           throw new Error(`Fi data-room request failed (${response.status}): ${String(result)}`);
+        }
         return jsonResult({ status: response.status, result });
       }
 
@@ -331,8 +555,12 @@ function createDataRoomTool(
         const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         const form = new FormData();
         form.set("file", new Blob([body]), path.basename(selected));
-        if (input.displayName) form.set("displayName", input.displayName);
-        if (input.acknowledgeRestricted) form.set("acknowledgeRestricted", "true");
+        if (input.displayName) {
+          form.set("displayName", input.displayName);
+        }
+        if (input.acknowledgeRestricted) {
+          form.set("acknowledgeRestricted", "true");
+        }
         const pathname = `/api/${delegation.user.orgSlug}/datarooms/${encodeURIComponent(input.roomId)}/documents/upload`;
         const response = await delegatedFetch(config, delegation, pathname, {
           method: "POST",
@@ -345,10 +573,11 @@ function createDataRoomTool(
         } catch {
           result = { error: responseText };
         }
-        if (!response.ok)
+        if (!response.ok) {
           throw new Error(
             `Fi data-room upload failed (${response.status}): ${JSON.stringify(result)}`,
           );
+        }
         return jsonResult({ mailbox, attachment: path.basename(selected), result });
       } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
@@ -360,7 +589,7 @@ function createDataRoomTool(
 export default definePluginEntry({
   id: "fi-user",
   name: "Fi User Delegation",
-  description: "Requester-bound Gmail and Fi data-room operations",
+  description: "Requester-bound Gmail, Google Drive, and Fi data-room operations",
   register(api) {
     api.registerTool((context: OpenClawPluginToolContext) => {
       if (
@@ -370,7 +599,11 @@ export default definePluginEntry({
       ) {
         return null;
       }
-      return [createGmailTool(api, context), createDataRoomTool(api, context)];
+      return [
+        createGmailTool(api, context),
+        createGDriveTool(api, context),
+        createDataRoomTool(api, context),
+      ];
     });
   },
 });

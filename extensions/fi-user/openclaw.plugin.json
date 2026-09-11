@@ -3,8 +3,8 @@
   "activation": { "onStartup": true },
   "enabledByDefault": false,
   "name": "Fi User Delegation",
-  "description": "Requester-bound Gmail and Fi data-room tools for the Cellect Fi agent.",
-  "contracts": { "tools": ["fi_user_gmail", "fi_user_dataroom"] },
+  "description": "Requester-bound Gmail, Google Drive, and Fi data-room tools for the Cellect Fi agent.",
+  "contracts": { "tools": ["fi_user_gmail", "fi_user_gdrive", "fi_user_dataroom"] },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
