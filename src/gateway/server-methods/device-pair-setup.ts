@@ -23,6 +23,7 @@ import {
   NODE_PAIRING_SETUP_BOOTSTRAP_PROFILE,
   PAIRING_SETUP_BOOTSTRAP_PROFILE,
   VOICE_NODE_PAIRING_SETUP_BOOTSTRAP_PROFILE,
+  WEBCHAT_PAIRING_SETUP_BOOTSTRAP_PROFILE,
 } from "../../shared/device-bootstrap-profile.js";
 import { isLoopbackHost } from "../net.js";
 import { respondUnavailableOnThrow } from "./response.js";
@@ -97,7 +98,9 @@ export const devicePairSetupHandlers: GatewayRequestHandlers = {
                   ? NODE_PAIRING_SETUP_BOOTSTRAP_PROFILE
                   : params.bootstrapProfile === "voice-node"
                     ? VOICE_NODE_PAIRING_SETUP_BOOTSTRAP_PROFILE
-                    : PAIRING_SETUP_BOOTSTRAP_PROFILE,
+                    : params.bootstrapProfile === "webchat"
+                      ? WEBCHAT_PAIRING_SETUP_BOOTSTRAP_PROFILE
+                      : PAIRING_SETUP_BOOTSTRAP_PROFILE,
             }
           : {}),
         // Lets Tailscale serve/funnel URLs resolve, mirroring the `openclaw qr` CLI.

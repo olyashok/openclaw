@@ -179,6 +179,7 @@ export async function handleChatHistoryRequest({
     isUnauthorizedRawMatrixBrowserSession({
       cfg,
       clientInfo: client?.connect?.client,
+      pairedClientId: client?.pairedClientId,
       sessionKey: canonicalKey,
       authorizedByBinding: false,
     })

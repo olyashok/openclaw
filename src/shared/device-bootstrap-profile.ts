@@ -69,6 +69,13 @@ export const PAIRING_SETUP_BOOTSTRAP_PROFILE: DeviceBootstrapProfile = {
   scopes: [...BOOTSTRAP_HANDOFF_OPERATOR_SCOPES],
 };
 
+/** Embedded webchat bootstrap: conversation access and Talk, without gateway administration. */
+export const WEBCHAT_PAIRING_SETUP_BOOTSTRAP_PROFILE: DeviceBootstrapProfile = {
+  roles: ["operator"],
+  scopes: ["operator.read", "operator.talk", "operator.write"],
+  purpose: "control-ui",
+};
+
 /** Full browser-owner profile issued only by dashboard and graphical onboarding. */
 export const CONTROL_UI_OWNER_BOOTSTRAP_PROFILE: DeviceBootstrapProfile = {
   roles: ["operator"],

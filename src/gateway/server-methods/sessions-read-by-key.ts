@@ -53,6 +53,7 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
             isUnauthorizedRawMatrixBrowserSession({
               cfg: read.state.cfg,
               clientInfo: client?.connect?.client,
+              pairedClientId: client?.pairedClientId,
               sessionKey: query.key,
               authorizedByBinding: false,
             })
@@ -122,6 +123,7 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: target.canonicalKey,
         authorizedByBinding: false,
       })
@@ -177,6 +179,7 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
       isUnauthorizedRawMatrixBrowserSession({
         cfg: currentCfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: current.target.canonicalKey,
         authorizedByBinding: false,
       })

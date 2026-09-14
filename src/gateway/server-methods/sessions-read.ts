@@ -105,6 +105,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           isUnauthorizedRawMatrixBrowserSession({
             cfg,
             clientInfo: client?.connect?.client,
+            pairedClientId: client?.pairedClientId,
             sessionKey,
             authorizedByBinding: false,
           })
@@ -353,6 +354,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
             !isUnauthorizedRawMatrixBrowserSession({
               cfg,
               clientInfo: client?.connect?.client,
+              pairedClientId: client?.pairedClientId,
               sessionKey: current.key,
               authorizedByBinding: false,
             }) &&

@@ -62,6 +62,7 @@ export function resolveChatMetadataReadParams(
       isUnauthorizedRawMatrixBrowserSession({
         cfg: session.cfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: session.canonicalKey,
         authorizedByBinding: false,
       })

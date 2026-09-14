@@ -12,13 +12,17 @@ import { isBrowserOperatorUiClient, isWebchatClient } from "../utils/message-cha
 export function isUnauthorizedRawMatrixBrowserSession(params: {
   cfg: OpenClawConfig;
   clientInfo?: GatewayClientInfo | null;
+  pairedClientId?: string;
   sessionKey: string;
   authorizedByBinding: boolean;
 }): boolean {
   if (params.authorizedByBinding) {
     return false;
   }
-  if (!isWebchatClient(params.clientInfo) && !isBrowserOperatorUiClient(params.clientInfo)) {
+  const approvedClientInfo = params.pairedClientId
+    ? { ...params.clientInfo, id: params.pairedClientId }
+    : params.clientInfo;
+  if (!isWebchatClient(approvedClientInfo) && !isBrowserOperatorUiClient(approvedClientInfo)) {
     return false;
   }
   const channel =

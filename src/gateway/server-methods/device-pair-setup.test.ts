@@ -349,6 +349,28 @@ describe("device.pair.setupCode", () => {
     },
   );
 
+  it("requests a non-admin webchat bootstrap profile for embedding apps", async () => {
+    mocks.resolvePairingSetupFromConfig.mockResolvedValue(okResolution);
+    mocks.encodePairingSetupCode.mockReturnValue("SETUP-CODE-XYZ");
+
+    const { options } = createOptions({ includeQr: false, bootstrapProfile: "webchat" });
+    await expectDefined(
+      devicePairSetupHandlers["device.pair.setupCode"],
+      'devicePairSetupHandlers["device.pair.setupCode"] test invariant',
+    )(options);
+
+    expect(mocks.resolvePairingSetupFromConfig).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        bootstrapProfile: {
+          roles: ["operator"],
+          scopes: ["operator.read", "operator.talk", "operator.write"],
+          purpose: "control-ui",
+        },
+      }),
+    );
+  });
+
   it("omits an oversized QR but still returns the setup code", async () => {
     mocks.resolvePairingSetupFromConfig.mockResolvedValue(okResolution);
     mocks.encodePairingSetupCode.mockReturnValue("SETUP-CODE-XYZ");

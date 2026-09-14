@@ -369,6 +369,7 @@ export function prepareProjectedSessionList(params: {
         !isUnauthorizedRawMatrixBrowserSession({
           cfg: prepared.cfg,
           clientInfo: client?.connect?.client,
+          pairedClientId: client?.pairedClientId,
           sessionKey: row.key,
           authorizedByBinding: false,
         }) &&

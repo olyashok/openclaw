@@ -43,6 +43,18 @@ describe("raw Matrix browser session authorization", () => {
     ).toBe(false);
   });
 
+  it("uses the approved device client id instead of a spoofed reconnect label", () => {
+    expect(
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg,
+        clientInfo: { id: "cli", version: "test", platform: "linux", mode: "cli" },
+        pairedClientId: "openclaw-control-ui",
+        sessionKey: "agent:admin:matrix:channel:!secret:example.org:thread:$root",
+        authorizedByBinding: false,
+      }),
+    ).toBe(true);
+  });
+
   it("retains Matrix ownership when mutable latest delivery points to Slack", () => {
     extractDeliveryInfo.mockReturnValue({ deliveryContext: { channel: "slack", to: "user:U123" } });
     expect(

@@ -17,7 +17,12 @@ import { resolveLocalNodeId } from "../../../node-host/local-id.js";
 import { intersectOperatorScopes } from "../../../shared/operator-scope-compat.js";
 import { recordRemoteNodeInfo, refreshRemoteNodeBins } from "../../../skills/runtime/remote.js";
 import { classifyTailscaleLogin } from "../../../state/user-profiles-tailscale-login.js";
-import { adoptTailscaleProfileAvatar } from "../../../state/user-profiles.js";
+import {
+  adoptTailscaleProfileAvatar,
+  ensureProfileForEmail,
+  ensureProfileForTailscaleIdentity,
+  getUserProfileDisplay,
+} from "../../../state/user-profiles.js";
 import {
   isBrowserCopilotClient,
   isEphemeralGatewayClient,
@@ -126,6 +131,7 @@ export async function attachAuthenticatedGatewayConnect(
     pairingLocality,
     sessionUsesSharedGatewayAuth,
     sessionSharedGatewaySessionGeneration,
+    pairedClientId,
   } = state;
   if (!(await prepareGatewayNodeConnect(context, state))) {
     return;
@@ -399,9 +405,7 @@ export async function attachAuthenticatedGatewayConnect(
     connectionKind: "gateway",
     ...(!usesLegacyNodeProtocol && pluginSurfaceBaseUrl ? { pluginSurfaceBaseUrl } : {}),
     isDeviceTokenAuth: authMethod === "device-token",
-    pairedClientId: isBrowserCopilotClient(connectParams.client)
-      ? connectParams.client.id
-      : undefined,
+    pairedClientId,
     usesSharedGatewayAuth: sessionUsesSharedGatewayAuth,
     sharedGatewaySessionGeneration: sessionSharedGatewaySessionGeneration,
     authPolicyGeneration: resolveGatewayAuthPolicyGeneration(context.configSnapshot),

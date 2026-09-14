@@ -176,6 +176,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
       isUnauthorizedRawMatrixBrowserSession({
         cfg: runtimeConfig,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: rawMatrixSessionKey,
         authorizedByBinding: false,
       })

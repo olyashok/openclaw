@@ -313,6 +313,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           isUnauthorizedRawMatrixBrowserSession({
             cfg: runtimeConfig,
             clientInfo: client?.connect?.client,
+            pairedClientId: client?.pairedClientId,
             sessionKey: target.canonicalKey,
             authorizedByBinding: Boolean(bound),
           })
