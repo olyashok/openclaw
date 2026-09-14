@@ -41,6 +41,7 @@ import {
   createTalkClientGatewayControlOwner,
   resolveTalkAgentConsultAuthority,
 } from "../client-gateway-control.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import {
   buildRealtimeInstructions,
   buildRealtimeVoiceLaunchOptions,
@@ -169,6 +170,21 @@ export const createTalkClient: GatewayRequestHandler = async ({
     replacement?.assertCurrent(target);
     const { agentId, sessionKey } = target;
     const sessionTarget = { agentId, sessionKey: target.canonicalKey, storePath: target.storePath };
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg: runtimeConfig,
+        clientInfo: client?.connect,
+        sessionKey: params.sessionKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      rejectTalkClientRequest(
+        respond,
+        ErrorCodes.INVALID_REQUEST,
+        "Matrix Talk sessions require an authorized binding",
+      );
+      return;
+    }
     assertSecretOwnerAvailable("capability", "talk:realtime");
     const resolution = resolveConfiguredRealtimeVoiceProvider({
       configuredProviderId: realtimeConfig.provider,

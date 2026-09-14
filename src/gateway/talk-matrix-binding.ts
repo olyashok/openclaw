@@ -18,7 +18,7 @@ export async function resolveMatrixTalkBinding(params: {
   // Account credentials may come from the Matrix credential store rather than
   // openclaw.json, so account identity must be resolved by the owning plugin.
   const { listMatrixAccountIds, resolveMatrixAccount } =
-    await import("../../extensions/matrix/src/matrix/accounts.js");
+    await import("../../extensions/matrix/account-resolver-api.js");
   const matches = listMatrixAccountIds(params.cfg).filter(
     (accountId) => resolveMatrixAccount({ cfg: params.cfg, accountId }).userId === agentMxid,
   );

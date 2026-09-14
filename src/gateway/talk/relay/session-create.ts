@@ -635,6 +635,8 @@ export function createTalkRealtimeRelaySession(
     capabilities: params.capabilities,
     outputOwnership,
     sessionTarget: params.sessionTarget,
+    ...(params.speakerMxid ? { speakerMxid: params.speakerMxid } : {}),
+    ...(params.matrixRoute ? { matrixRoute: params.matrixRoute } : {}),
     expiresAtMs,
     cleanupTimer: setTimeout(() => {
       const active = relaySessions.get(relaySessionId);

@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   resolveRoute: vi.fn(async () => ({ sessionKey: "agent:admin:matrix:room:thread:root" })),
 }));
 
-vi.mock("../../extensions/matrix/src/matrix/accounts.js", () => ({
+vi.mock("../../extensions/matrix/account-resolver-api.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../extensions/matrix/account-resolver-api.js")>()),
   listMatrixAccountIds: mocks.listAccountIds,
   resolveMatrixAccount: mocks.resolveAccount,
 }));

@@ -22,7 +22,16 @@ async function projectRelayTranscriptToOwningMatrix(params: {
   text: string;
 }): Promise<void> {
   const cfg = params.session.voiceConfig ?? params.session.context.getRuntimeConfig();
-  const { deliveryContext, threadId } = extractDeliveryInfo(params.sessionKey, { cfg });
+  const stored = extractDeliveryInfo(params.sessionKey, { cfg });
+  const deliveryContext = params.session.matrixRoute
+    ? {
+        channel: "matrix",
+        to: `room:${params.session.matrixRoute.roomId}`,
+        accountId: params.session.matrixRoute.accountId,
+        threadId: params.session.matrixRoute.threadRootEventId,
+      }
+    : stored.deliveryContext;
+  const threadId = params.session.matrixRoute?.threadRootEventId ?? stored.threadId;
   if (deliveryContext?.channel?.toLowerCase() !== "matrix" || !deliveryContext.to) return;
   const projectionId = `voice:${params.session.id}:${params.entryId}`;
   await deliverOutboundPayloads({
@@ -42,6 +51,9 @@ async function projectRelayTranscriptToOwningMatrix(params: {
                 type: "voice.transcript",
                 role: params.role,
                 id: projectionId,
+                ...(params.role === "user" && params.session.speakerMxid
+                  ? { speakerMxid: params.session.speakerMxid }
+                  : {}),
               },
             },
           },

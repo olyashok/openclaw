@@ -139,7 +139,8 @@ export function closeRelaySession(
   session.closing = closing;
   const disposition =
     options?.disposition ??
-    (isTalkVoiceSessionReplacing(session.id, session.connId, session.sessionTarget.agentId)
+    (session.speakerMxid ||
+    isTalkVoiceSessionReplacing(session.id, session.connId, session.sessionTarget.agentId)
       ? "detach"
       : "abort");
   unregisterTalkVoiceSession(session.id, session.connId, session.sessionTarget.agentId);

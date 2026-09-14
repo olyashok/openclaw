@@ -76,10 +76,16 @@ describe("realtime relay voice transcript persistence", () => {
 
   it("projects a final once through the session-owned Matrix bot route", async () => {
     projectionMocks.extractDeliveryInfo.mockReturnValue({
-      deliveryContext: { channel: "matrix", to: "room:!owned:example.org", accountId: "shape" },
-      threadId: "$root",
+      deliveryContext: { channel: "slack", to: "channel:C123", accountId: "shape" },
+      threadId: "123.456",
     });
     const { session } = createRelaySession();
+    session.matrixRoute = {
+      channel: "matrix",
+      roomId: "!owned:example.org",
+      accountId: "shape",
+      threadRootEventId: "$root",
+    };
     expect(enqueueRelayVoiceTranscript(session, "user", "Run the report")).toBe(true);
     await session.voiceTranscriptQueue.flush();
 

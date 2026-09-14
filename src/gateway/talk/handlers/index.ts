@@ -85,6 +85,7 @@ import {
   listTalkTranscriptionProviders,
   resolveConfiguredRealtimeTranscriptionProvider,
 } from "../session-config.js";
+import { mintTalkBindingCapability } from "../talk-binding-capability.js";
 import { talkClientHandlers } from "./client.js";
 import { talkSessionHandlers } from "./session.js";
 import { talkVoiceHandlers } from "./voice.js";
@@ -859,7 +860,20 @@ export const talkHandlers: GatewayRequestHandlers = {
         threadRootEventId: String(params.threadRootEventId ?? ""),
         agentMxid: String(params.agentMxid ?? ""),
       });
-      respond(true, { binding: resolved.sessionKey }, undefined);
+      const speakerMxid = normalizeOptionalString(params.speakerMxid);
+      if (!speakerMxid?.startsWith("@")) throw new Error("Matrix Talk speaker is required");
+      respond(
+        true,
+        {
+          binding: mintTalkBindingCapability({
+            ...resolved,
+            roomId: String(params.roomId),
+            threadRootEventId: String(params.threadRootEventId),
+            speakerMxid,
+          }),
+        },
+        undefined,
+      );
     } catch (error) {
       respond(
         false,
