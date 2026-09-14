@@ -659,6 +659,7 @@ export {
   ChatMetadataParamsSchema,
   ChatSendParamsSchema,
   ChatHandoffArmParamsSchema,
+  ConversationContinueParamsSchema,
   ChatHandoffSeenParamsSchema,
   ChatInjectParamsSchema,
   ChatToolTitlesParamsSchema,

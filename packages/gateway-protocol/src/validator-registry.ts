@@ -482,6 +482,7 @@ export const validateChatToolTitlesParams = compile(S.ChatToolTitlesParamsSchema
 export const validateChatSendParams = compile(S.ChatSendParamsSchema);
 export const validateChatHandoffArmParams = compile(S.ChatHandoffArmParamsSchema);
 export const validateChatHandoffSeenParams = compile(S.ChatHandoffSeenParamsSchema);
+export const validateConversationContinueParams = compile(S.ConversationContinueParamsSchema);
 export const validateChatAbortParams = compile(S.ChatAbortParamsSchema);
 export const validateChatInjectParams = compile(S.ChatInjectParamsSchema);
 export const validateUpdateStatusParams = compile(S.UpdateStatusParamsSchema);
