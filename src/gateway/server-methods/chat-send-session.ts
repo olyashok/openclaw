@@ -11,6 +11,7 @@ import { measureDiagnosticsTimelineSpanSync } from "../../infra/diagnostics-time
 import { isIncognitoSessionKey } from "../../routing/session-key.js";
 import { resolveMissingAgentHarnessSessionError } from "../../sessions/agent-harness-session-key.js";
 import { isBrowserOperatorUiClient } from "../../utils/message-channel.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { authorizeGatewaySessionCreation } from "../operator-role-policy.js";
 import { pendingChatSendDedupeKey } from "../server-shared.js";
 import {
@@ -120,6 +121,19 @@ export function prepareChatSendSession(params: {
   const { request, client } = params;
   const { p, explicitOrigin, normalizedAttachments, turnKind, rawMessage } = request;
   const { cfg, sessionKey, entry, legacyKey, rawSessionKey, agentIdOverride } = loadedValue;
+  if (
+    isUnauthorizedRawMatrixBrowserSession({
+      cfg,
+      clientInfo: request.clientInfo,
+      sessionKey,
+      authorizedByBinding: false,
+    })
+  ) {
+    return {
+      ok: false as const,
+      error: "Matrix conversations require an authorized conversation binding",
+    };
+  }
   if (isIncognitoSessionKey(sessionKey) && !entry) {
     return { ok: false as const, error: `Incognito session "${sessionKey}" was not found.` };
   }
