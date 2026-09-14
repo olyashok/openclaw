@@ -1,6 +1,6 @@
 // Gateway Talk realtime agent-consult bridge.
 // Starts chat.send runs that answer realtime Talk tool calls.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   ErrorCodes,
   errorShape,
@@ -89,13 +89,15 @@ export async function startTalkRealtimeAgentConsult(params: {
   } catch (err) {
     return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)) };
   }
-  const idempotencyKey = `talk-${createHash("sha256")
-    .update(params.sessionKey)
-    .update("\0")
-    .update(params.relaySessionId ?? "")
-    .update("\0")
-    .update(params.callId)
-    .digest("hex")}`;
+  const idempotencyKey = params.matrixRoute
+    ? `talk-${createHash("sha256")
+        .update(params.sessionKey)
+        .update("\0")
+        .update(params.relaySessionId ?? "")
+        .update("\0")
+        .update(params.callId)
+        .digest("hex")}`
+    : `talk-${params.callId}-${randomUUID()}`;
   const normalizedTalk = normalizeTalkSection(params.context.getRuntimeConfig().talk);
   const authority = resolveTalkAgentConsultAuthority(params.client?.connect?.scopes);
   let acknowledgedRunId: string | undefined;
