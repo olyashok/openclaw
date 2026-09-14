@@ -1,4 +1,6 @@
+import { extractDeliveryInfo } from "../../../config/sessions/delivery-info.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
+import { deliverOutboundPayloads } from "../../../infra/outbound/deliver.js";
 import {
   appendRelayVoiceTranscript,
   closeRelayVoiceSessionRecord,
@@ -11,6 +13,45 @@ import {
 import { drainingRelaySessions, type RelaySession } from "./state.js";
 
 const RELAY_TRANSCRIPT_RETRY_DELAYS_MS = [0, 500, 2_000] as const;
+
+async function projectRelayTranscriptToOwningMatrix(params: {
+  session: RelaySession;
+  sessionKey: string;
+  entryId: string;
+  role: "user" | "assistant";
+  text: string;
+}): Promise<void> {
+  const cfg = params.session.voiceConfig ?? params.session.context.getRuntimeConfig();
+  const { deliveryContext, threadId } = extractDeliveryInfo(params.sessionKey, { cfg });
+  if (deliveryContext?.channel?.toLowerCase() !== "matrix" || !deliveryContext.to) return;
+  const projectionId = `voice:${params.session.id}:${params.entryId}`;
+  await deliverOutboundPayloads({
+    cfg,
+    channel: "matrix",
+    to: deliveryContext.to,
+    accountId: deliveryContext.accountId,
+    threadId: deliveryContext.threadId ?? threadId,
+    payloads: [
+      {
+        text: params.text,
+        channelData: {
+          matrix: {
+            extraContent: {
+              "com.openclaw.voice_transcript": {
+                version: 1,
+                type: "voice.transcript",
+                role: params.role,
+                id: projectionId,
+              },
+            },
+          },
+        },
+      },
+    ],
+    deliveryIntentId: projectionId,
+    queuePolicy: "required",
+  });
+}
 
 function logRelayVoiceFailure(session: RelaySession, message: string, error: unknown): void {
   session.context.logGateway?.warn(`${message}: ${formatErrorMessage(error)}`);
@@ -77,6 +118,13 @@ export function enqueueRelayVoiceTranscript(
             text: normalizedText,
             confirmation: observed?.confirmation ?? null,
             ...(session.voiceConfig ? { config: session.voiceConfig } : {}),
+          });
+          await projectRelayTranscriptToOwningMatrix({
+            session,
+            sessionKey,
+            entryId,
+            role,
+            text: normalizedText,
           });
           return;
         } catch (error) {

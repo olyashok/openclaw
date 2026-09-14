@@ -23,6 +23,7 @@ import type { MatrixExtraContentFields } from "./matrix/send/types.js";
 
 const MATRIX_OPENCLAW_PRESENTATION_KEY = "com.openclaw.presentation" as const;
 const MATRIX_OPENCLAW_PRESENTATION_TYPE = "message.presentation" as const;
+const MATRIX_OPENCLAW_VOICE_TRANSCRIPT_KEY = "com.openclaw.voice_transcript" as const;
 const MATRIX_EMPTY_PRESENTATION_FALLBACK_TEXT = "---";
 
 const MATRIX_PRESENTATION_CAPABILITIES = {
@@ -125,7 +126,20 @@ export function resolveMatrixExtraContent(
   payload: ReplyPayload,
 ): MatrixExtraContentFields | undefined {
   const presentation = resolveMatrixPresentationContent(payload);
-  return presentation ? { [MATRIX_OPENCLAW_PRESENTATION_KEY]: presentation } : undefined;
+  const raw = asOptionalRecord(resolveMatrixChannelData(payload).extraContent);
+  const voice = asOptionalRecord(raw?.[MATRIX_OPENCLAW_VOICE_TRANSCRIPT_KEY]);
+  const trustedVoice =
+    voice?.version === 1 &&
+    voice.type === "voice.transcript" &&
+    (voice.role === "user" || voice.role === "assistant") &&
+    typeof voice.id === "string"
+      ? voice
+      : undefined;
+  if (!presentation && !trustedVoice) return undefined;
+  return {
+    ...(presentation ? { [MATRIX_OPENCLAW_PRESENTATION_KEY]: presentation } : {}),
+    ...(trustedVoice ? { [MATRIX_OPENCLAW_VOICE_TRANSCRIPT_KEY]: trustedVoice } : {}),
+  };
 }
 
 function resolveMatrixDeliveryProgress(
