@@ -15,7 +15,9 @@ export function isUnauthorizedRawMatrixBrowserSession(params: {
   sessionKey: string;
   authorizedByBinding: boolean;
 }): boolean {
-  if (params.authorizedByBinding) return false;
+  if (params.authorizedByBinding) {
+    return false;
+  }
   if (!isWebchatClient(params.clientInfo) && !isBrowserOperatorUiClient(params.clientInfo)) {
     return false;
   }

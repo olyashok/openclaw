@@ -16,8 +16,14 @@ const records = new Map<string, TalkBindingCapability>();
 
 export function mintTalkBindingCapability(input: Omit<TalkBindingCapability, "expiresAt">): string {
   const now = Date.now();
-  for (const [key, value] of records) if (value.expiresAt <= now) records.delete(key);
-  if (records.size >= MAX) throw new Error("Matrix Talk binding capacity exceeded");
+  for (const [key, value] of records) {
+    if (value.expiresAt <= now) {
+      records.delete(key);
+    }
+  }
+  if (records.size >= MAX) {
+    throw new Error("Matrix Talk binding capacity exceeded");
+  }
   const token = randomBytes(32).toString("base64url");
   records.set(token, { ...input, expiresAt: now + TTL_MS });
   return token;
@@ -25,7 +31,9 @@ export function mintTalkBindingCapability(input: Omit<TalkBindingCapability, "ex
 
 export function consumeTalkBindingCapability(token: string): TalkBindingCapability | undefined {
   const record = records.get(token);
-  if (!record) return undefined;
+  if (!record) {
+    return undefined;
+  }
   records.delete(token);
   return record.expiresAt > Date.now() ? record : undefined;
 }
