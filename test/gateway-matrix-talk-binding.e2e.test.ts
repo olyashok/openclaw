@@ -16,7 +16,9 @@ const BOT_MXID = "@voicebot:matrix.test";
 const SPEAKER_MXID = "@alice:matrix.test";
 
 async function listen(server: Server): Promise<number> {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
   return (server.address() as { port: number }).port;
 }
 
@@ -66,10 +68,20 @@ describe("Matrix-bound Talk over a real isolated Gateway socket", () => {
   let homeserver: Server | undefined;
 
   afterAll(async () => {
-    for (const client of clients) client.stop();
-    for (const instance of instances) await instance.cleanup();
-    for (const dir of fixtureDirs) await rm(dir, { recursive: true, force: true });
-    if (homeserver) await new Promise<void>((resolve) => homeserver!.close(() => resolve()));
+    for (const client of clients) {
+      client.stop();
+    }
+    for (const instance of instances) {
+      await instance.cleanup();
+    }
+    for (const dir of fixtureDirs) {
+      await rm(dir, { recursive: true, force: true });
+    }
+    if (homeserver) {
+      await new Promise<void>((resolve) => {
+        homeserver!.close(() => resolve());
+      });
+    }
   });
 
   it(
@@ -84,21 +96,22 @@ describe("Matrix-bound Talk over a real isolated Gateway socket", () => {
         req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
         req.on("end", () => {
           const raw = Buffer.concat(chunks).toString("utf8");
-          if (req.url?.includes("/send/"))
+          if (req.url?.includes("/send/")) {
             sent.push({ path: req.url, body: raw ? JSON.parse(raw) : {} });
+          }
           res.setHeader("content-type", "application/json");
-          if (req.url?.includes("/_matrix/client/versions"))
+          if (req.url?.includes("/_matrix/client/versions")) {
             res.end(JSON.stringify({ versions: ["v1.11"] }));
-          else if (req.url?.includes("/sync"))
+          } else if (req.url?.includes("/sync")) {
             setTimeout(
               () => res.end(JSON.stringify({ next_batch: "e2e", rooms: { join: {} } })),
               100,
             );
-          else if (req.url?.includes("/account/whoami"))
+          } else if (req.url?.includes("/account/whoami")) {
             res.end(JSON.stringify({ user_id: BOT_MXID }));
-          else if (req.url?.includes("/joined_rooms"))
+          } else if (req.url?.includes("/joined_rooms")) {
             res.end(JSON.stringify({ joined_rooms: [ROOM_ID] }));
-          else if (req.url?.includes("/joined_members"))
+          } else if (req.url?.includes("/joined_members")) {
             res.end(
               JSON.stringify({
                 joined: {
@@ -107,10 +120,12 @@ describe("Matrix-bound Talk over a real isolated Gateway socket", () => {
                 },
               }),
             );
-          else if (req.url?.includes("/state/m.room.encryption/")) {
+          } else if (req.url?.includes("/state/m.room.encryption/")) {
             res.statusCode = 404;
             res.end(JSON.stringify({ errcode: "M_NOT_FOUND", error: "not encrypted" }));
-          } else res.end(JSON.stringify({ event_id: `$event-${sent.length}` }));
+          } else {
+            res.end(JSON.stringify({ event_id: `$event-${sent.length}` }));
+          }
         });
       });
       const matrixPort = await listen(homeserver);
@@ -186,6 +201,7 @@ describe("Matrix-bound Talk over a real isolated Gateway socket", () => {
       } catch (error) {
         throw new Error(
           `${String(error)}\nmatrixRequests=${JSON.stringify(matrixRequests)}\nrelayEvents=${JSON.stringify(relayEvents)}\n${instance.logs()}`,
+          { cause: error },
         );
       }
       await expect(
@@ -205,6 +221,7 @@ describe("Matrix-bound Talk over a real isolated Gateway socket", () => {
       } catch (error) {
         throw new Error(
           `${String(error)}\nmatrixRequests=${JSON.stringify(matrixRequests)}\nrelayEvents=${JSON.stringify(relayEvents)}\n${instance.logs()}`,
+          { cause: error },
         );
       }
       expect(
