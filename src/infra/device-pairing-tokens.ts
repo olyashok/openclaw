@@ -1,4 +1,5 @@
 // Device token issuance, verification, rotation, and revocation for paired devices.
+import { normalizeSortedUniqueTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import { normalizeDeviceAuthScopes } from "../shared/device-auth.js";
 import { resolveMissingRequestedScope, roleScopesAllow } from "../shared/operator-scope-compat.js";
 import {
@@ -229,12 +230,16 @@ export async function ensureDeviceToken(params: {
   deviceId: string;
   role: string;
   scopes: string[];
+  allowedAgentIds?: string[];
   issuer?: DeviceAuthToken["issuer"];
   baseDir?: string;
 }): Promise<DeviceAuthToken | null> {
   return await withDevicePairingLock(async () => {
     const state = await loadDevicePairingState(params.baseDir);
     const requestedScopes = normalizeDeviceAuthScopes(params.scopes);
+    const requestedAllowedAgentIds = params.allowedAgentIds
+      ? normalizeSortedUniqueTrimmedStringList(params.allowedAgentIds)
+      : undefined;
     const context = resolveDeviceTokenUpdateContext({
       state,
       deviceId: params.deviceId,
@@ -262,9 +267,14 @@ export async function ensureDeviceToken(params: {
         approvedScopes,
       });
       const issuerAllowsReuse = deviceTokenIssuerMatches(existing, params.issuer);
+      const agentCeilingAllowsReuse =
+        requestedAllowedAgentIds === undefined ||
+        JSON.stringify(normalizeSortedUniqueTrimmedStringList(existing.allowedAgentIds ?? [])) ===
+          JSON.stringify(requestedAllowedAgentIds);
       if (
         existingWithinApproved &&
         issuerAllowsReuse &&
+        agentCeilingAllowsReuse &&
         roleScopesAllow({ role, requestedScopes, allowedScopes: existing.scopes })
       ) {
         return existing;
@@ -274,6 +284,7 @@ export async function ensureDeviceToken(params: {
     const next = createDeviceAuthToken({
       role,
       scopes: requestedScopes,
+      ...(requestedAllowedAgentIds ? { allowedAgentIds: requestedAllowedAgentIds } : {}),
       issuer: params.issuer,
       existing,
       now,

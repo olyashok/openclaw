@@ -38,6 +38,9 @@ export async function issueGatewayConnectDeviceTokens(params: {
           deviceId: device.id,
           role,
           scopes,
+          ...(role === "operator" && handoffBootstrapProfile?.allowedAgentIds
+            ? { allowedAgentIds: handoffBootstrapProfile.allowedAgentIds }
+            : {}),
           issuer: sharedGatewayAuthIssuer,
         })
       : null;
@@ -70,6 +73,9 @@ export async function issueGatewayConnectDeviceTokens(params: {
         deviceId: device.id,
         role: bootstrapRole,
         scopes: bootstrapRoleScopes,
+        ...(bootstrapRole === "operator" && handoffBootstrapProfile.allowedAgentIds
+          ? { allowedAgentIds: handoffBootstrapProfile.allowedAgentIds }
+          : {}),
       });
       if (!extraToken) {
         continue;
