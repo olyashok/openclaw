@@ -4,7 +4,7 @@ import {
   errorShape,
   validateConversationContinueParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { resolveOutboundSessionRoute } from "../../infra/outbound/outbound-session.js";
+import { resolveMatrixTalkBinding } from "../talk-matrix-binding.js";
 import { deliverWebchatCompletionFallback } from "../webchat-completion-delivery-send.js";
 import {
   verifyWebchatCompletionDeliveryClaim,
@@ -12,11 +12,6 @@ import {
 } from "../webchat-completion-delivery.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 import { assertValidParams } from "./validation.js";
-
-function agentIdFromMxid(mxid: string): string | undefined {
-  const match = /^@([^:]+):.+$/.exec(mxid.trim());
-  return match?.[1]?.trim().toLowerCase() || undefined;
-}
 
 export async function handleConversationContinue({
   params,
@@ -34,11 +29,19 @@ export async function handleConversationContinue({
     threadRootEventId: string;
     agentMxid: string;
   };
-  const agentId = agentIdFromMxid(source.agentMxid);
-  if (!agentId) {
-    respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid Matrix agent"));
+  const cfg = context.getRuntimeConfig();
+  let sourceBinding: Awaited<ReturnType<typeof resolveMatrixTalkBinding>>;
+  try {
+    sourceBinding = await resolveMatrixTalkBinding({ cfg, ...source });
+  } catch {
+    respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.INVALID_REQUEST, "Matrix conversation is not bound to an agent"),
+    );
     return;
   }
+  const { agentId } = sourceBinding;
   const route = verifyWebchatCompletionDeliveryClaim({
     claim: params.destinationClaim as string,
     secret: process.env[WEBCHAT_COMPLETION_DELIVERY_SECRET_ENV],
@@ -52,24 +55,8 @@ export async function handleConversationContinue({
     );
     return;
   }
-  const cfg = context.getRuntimeConfig();
-  const sourceRoute = await resolveOutboundSessionRoute({
-    cfg,
-    channel: "matrix",
-    agentId,
-    target: source.roomId,
-    threadId: source.threadRootEventId,
-  });
-  if (!sourceRoute?.recipientSessionExact || sourceRoute.peer.kind === "direct") {
-    respond(
-      false,
-      undefined,
-      errorShape(ErrorCodes.INVALID_REQUEST, "Matrix conversation is not bound to this agent"),
-    );
-    return;
-  }
   const intent = createHash("sha256")
-    .update(sourceRoute.sessionKey)
+    .update(sourceBinding.sessionKey)
     .update("\0")
     .update(route.channel)
     .update("\0")
@@ -84,9 +71,9 @@ export async function handleConversationContinue({
     nowMs: Date.now(),
     runId: `conversation-continue:${intent}`,
     sessionId: source.threadRootEventId,
-    sessionKey: sourceRoute.sessionKey,
+    sessionKey: sourceBinding.sessionKey,
     agentId,
-    ctx: { SessionKey: sourceRoute.sessionKey },
+    ctx: { SessionKey: sourceBinding.sessionKey },
     replies: [{ kind: "final", payload: { text: "This conversation is ready in Slack." } }],
     deliveryIntentId: `conversation-continue:${intent}`,
     continuationMarker: true,
