@@ -220,6 +220,16 @@ export const ChatHandoffSeenParamsSchema = closedObject({
   sessionKey: NonEmptyString,
 });
 
+export const ConversationContinueParamsSchema = closedObject({
+  source: closedObject({
+    channel: Type.Literal("matrix"),
+    roomId: NonEmptyString,
+    threadRootEventId: NonEmptyString,
+    agentMxid: NonEmptyString,
+  }),
+  destinationClaim: Type.String({ minLength: 1, maxLength: 4096 }),
+});
+
 /** Cancels the active or named run for a chat session. */
 export const ChatAbortParamsSchema = closedObject({
   sessionKey: NonEmptyString,
