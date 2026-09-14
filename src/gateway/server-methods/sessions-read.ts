@@ -28,12 +28,14 @@ import {
 import { formatErrorMessage } from "../../infra/errors.js";
 import { isIncognitoSessionKey, normalizeAgentId } from "../../routing/session-key.js";
 import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
+import { hasOperatorBoundary } from "../operator-role-policy.js";
 import {
   resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId,
   tryResolveSessionCompatibilityOwnerAgentId,
 } from "../session-request-agent.js";
 import {
   canAccessIncognitoSession,
+  createSessionListEntryFilter,
   isGatewayAdmin,
   prepareSessionSharing,
   resolveSessionSharingTarget,
