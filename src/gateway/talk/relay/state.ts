@@ -7,6 +7,7 @@ import type { createClientVoiceConfirmationReadiness } from "../../../talk/clien
 import type { InternalRealtimeVoiceProviderCapabilities } from "../../../talk/provider-internal.js";
 import type {
   RealtimeVoiceBrowserAudioContract,
+  RealtimeVoiceCloseDisposition,
   RealtimeVoiceAudioClearReason,
   RealtimeVoiceAgentConsultRunner,
   RealtimeVoiceProviderConfig,
@@ -261,6 +262,7 @@ export type RelaySession = {
   outputOwnership: TalkRealtimeRelayOutputOwnership;
   sessionTarget: PreparedTalkSessionTarget;
   speakerMxid?: string;
+  closeDisposition?: RealtimeVoiceCloseDisposition;
   matrixRoute?: { channel: "matrix"; roomId: string; threadRootEventId: string; accountId: string };
   expiresAtMs: number;
   cleanupTimer: ReturnType<typeof setTimeout>;

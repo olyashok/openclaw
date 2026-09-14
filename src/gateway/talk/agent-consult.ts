@@ -21,7 +21,7 @@ import type { GatewayRequestHandlerOptions } from "../server-methods/shared-type
 import { formatForLog } from "../ws-log.js";
 import { prepareTalkAgentConsultTranscript } from "./agent-consult-transcript.js";
 import { resolveTalkAgentConsultAuthority } from "./client-gateway-control.js";
-import { registerTalkRealtimeRelayAgentRun } from "./relay/index.js";
+import { prepareTalkRealtimeRelayAgentRunRegistration } from "./relay/index.js";
 import type { PreparedTalkSessionTarget } from "./session-target.types.js";
 
 type TalkChatSendAckStatus = "started" | "in_flight" | "ok" | "timeout" | "error";
@@ -99,6 +99,20 @@ export async function startTalkRealtimeAgentConsult(
     request.client?.connect?.scopes,
     request.client,
   );
+  let registerRelayRun: ((runId: string) => "registered" | "detached") | undefined;
+  try {
+    registerRelayRun =
+      params.relaySessionId && params.connId
+        ? prepareTalkRealtimeRelayAgentRunRegistration({
+            relaySessionId: params.relaySessionId,
+            connId: params.connId,
+            sessionKey: params.sessionTarget.canonicalKey,
+            callId: params.callId,
+          })
+        : undefined;
+  } catch (error) {
+    return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(error)) };
+  }
   let acknowledgedRunId: string | undefined;
   const chatResponse = await new Promise<
     { ok: true; result: unknown } | { ok: false; error: ErrorShape } | undefined
@@ -159,16 +173,18 @@ export async function startTalkRealtimeAgentConsult(
               : undefined;
           const runId = typeof candidateRunId === "string" ? candidateRunId : idempotencyKey;
           try {
-            if (params.relaySessionId && params.connId) {
-              registerTalkRealtimeRelayAgentRun({
-                relaySessionId: params.relaySessionId,
-                connId: params.connId,
-                sessionKey: params.sessionTarget.canonicalKey,
-                runId,
-                callId: params.callId,
-              });
+            if (registerRelayRun) {
+              const registration = registerRelayRun(runId);
+              if (registration === "detached") {
+                request.context.logGateway.info(
+                  `realtime Talk agent consult acknowledged after relay detached run=${runId}`,
+                );
+              } else {
+                params.onRunStarted?.(runId);
+              }
+            } else {
+              params.onRunStarted?.(runId);
             }
-            params.onRunStarted?.(runId);
             acknowledgedRunId = runId;
           } catch (registrationError) {
             abortChatRunById(request.context, {

@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   handleTrustedInternalChatSend: vi.fn(),
   resolveAuthority: vi.fn(() => ({ senderIsOwner: false, toolsAllow: ["read"] })),
+  prepareRelayRun: vi.fn(),
+  registerRelayRun: vi.fn(() => "registered" as const),
+  abortChatRunById: vi.fn(),
 }));
 
 vi.mock("./server-methods/chat-send-handler.js", () => ({
@@ -12,8 +15,9 @@ vi.mock("./talk/client-gateway-control.js", () => ({
   resolveTalkAgentConsultAuthority: mocks.resolveAuthority,
 }));
 vi.mock("./talk/relay/index.js", () => ({
-  registerTalkRealtimeRelayAgentRun: vi.fn(),
+  prepareTalkRealtimeRelayAgentRunRegistration: mocks.prepareRelayRun,
 }));
+vi.mock("./chat-abort.js", () => ({ abortChatRunById: mocks.abortChatRunById }));
 
 import { startTalkRealtimeAgentConsult } from "./talk/agent-consult.js";
 
@@ -22,7 +26,7 @@ function createParams() {
     request: {
       context: {
         getRuntimeConfig: () => ({}),
-        logGateway: { warn: vi.fn() },
+        logGateway: { info: vi.fn(), warn: vi.fn() },
       },
       client: { connect: { scopes: ["operator.write"] } },
       req: { id: "request-1" },
@@ -49,11 +53,35 @@ function createParams() {
 describe("Talk Matrix consult delivery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.prepareRelayRun.mockReturnValue(mocks.registerRelayRun);
     mocks.handleTrustedInternalChatSend.mockImplementation(
       async (options: { params: { idempotencyKey: string }; respond: Function }) => {
         options.respond(true, { status: "started", runId: options.params.idempotencyKey });
       },
     );
+  });
+
+  it("keeps an accepted Matrix consult alive when its delayed ACK follows relay detach", async () => {
+    let acknowledge!: () => void;
+    mocks.handleTrustedInternalChatSend.mockImplementationOnce(
+      async (options: { params: { idempotencyKey: string }; respond: Function }) => {
+        await new Promise<void>((resolve) => {
+          acknowledge = () => {
+            options.respond(true, { status: "started", runId: options.params.idempotencyKey });
+            resolve();
+          };
+        });
+      },
+    );
+    mocks.registerRelayRun.mockReturnValueOnce("detached");
+
+    const { request, params } = createParams();
+    const pending = startTalkRealtimeAgentConsult(request, params);
+    await vi.waitFor(() => expect(acknowledge).toBeTypeOf("function"));
+    acknowledge();
+
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(mocks.abortChatRunById).not.toHaveBeenCalled();
   });
 
   it("pins the authorized Matrix thread on the canonical durable chat final path", async () => {

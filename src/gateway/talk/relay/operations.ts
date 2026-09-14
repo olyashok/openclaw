@@ -143,6 +143,7 @@ export function closeRelaySession(
     isTalkVoiceSessionReplacing(session.id, session.connId, session.sessionTarget.agentId)
       ? "detach"
       : "abort");
+  session.closeDisposition = disposition;
   unregisterTalkVoiceSession(session.id, session.connId, session.sessionTarget.agentId);
   session.confirmationReadiness.close();
   session.harness.close();
@@ -383,45 +384,58 @@ export function submitTalkRealtimeRelayToolResult(params: {
 }
 
 /** Tracks the chat run started for a realtime agent-consult tool call. */
-export function registerTalkRealtimeRelayAgentRun(params: {
+export function prepareTalkRealtimeRelayAgentRunRegistration(params: {
   relaySessionId: string;
   connId: string;
   sessionKey: string;
-  runId: string;
   callId?: string;
-}): void {
+}): (runId: string) => "registered" | "detached" {
   const session = getRelaySession(params.relaySessionId, params.connId);
+  const sessionKey = session.sessionTarget.canonicalKey;
+  if (sessionKey !== params.sessionKey.trim()) {
+    throw new Error("Realtime relay session belongs to another agent session");
+  }
   const callId = params.callId?.trim();
-  if (
-    callId &&
-    (session.toolCalls.isAgentCompleted(callId) || session.toolCalls.hasCancelled(callId))
-  ) {
-    // Cancellation can win while chat.send or provider result acceptance is pending.
-    // Abort the late run before it can escape the relay's call-ownership tombstone.
-    abortChatRunById(session.context, {
-      runId: params.runId,
-      sessionKey: params.sessionKey,
-      stopReason: "realtime provider cancelled tool call",
+  return (runId) => {
+    if (
+      callId &&
+      (session.toolCalls.isAgentCompleted(callId) || session.toolCalls.hasCancelled(callId))
+    ) {
+      // Provider cancellation can win while chat.send is still acknowledging. Abort
+      // the late run before it can escape the relay's call-ownership tombstone.
+      abortChatRunById(session.context, {
+        runId,
+        sessionKey,
+        stopReason: "realtime provider cancelled tool call",
+      });
+      throw new Error("Realtime provider cancelled the tool call before run registration");
+    }
+    if (session.closeDisposition === "detach") return "detached";
+    if (relaySessions.get(session.id) !== session) {
+      throw new Error("Realtime relay session closed before run registration");
+    }
+    if (callId && !session.toolCalls.tryAdmit([callId])) {
+      throw new Error("Realtime relay tool-call session limit exceeded");
+    }
+    session.activeAgentRuns.set(runId, sessionKey);
+    if (callId) session.activeAgentToolCalls.set(callId, runId);
+    if (!ensureRelayVoiceSession(session)) {
+      throw new Error("Realtime relay voice session could not be created for agent consult");
+    }
+    registerClientVoiceConsultRun({
+      agentId: session.sessionTarget.agentId,
+      sessionKey: session.sessionTarget.sessionKey,
+      voiceSessionId: session.id,
+      runId,
     });
-    throw new Error("Realtime provider cancelled the tool call before run registration");
-  }
-  if (callId && !session.toolCalls.tryAdmit([callId])) {
-    throw new Error("Realtime relay tool-call session limit exceeded");
-  }
-  session.activeAgentRuns.set(params.runId, params.sessionKey);
-  if (callId) {
-    session.activeAgentToolCalls.set(callId, params.runId);
-  }
-  if (!ensureRelayVoiceSession(session)) {
-    throw new Error("Realtime relay voice session could not be created for agent consult");
-  }
-  const { agentId, sessionKey } = session.sessionTarget;
-  registerClientVoiceConsultRun({
-    agentId,
-    sessionKey,
-    voiceSessionId: session.id,
-    runId: params.runId,
-  });
+    return "registered";
+  };
+}
+
+export function registerTalkRealtimeRelayAgentRun(
+  params: Parameters<typeof prepareTalkRealtimeRelayAgentRunRegistration>[0] & { runId: string },
+): "registered" | "detached" {
+  return prepareTalkRealtimeRelayAgentRunRegistration(params)(params.runId);
 }
 
 /** Retires one provider-owned tool call and aborts its exact relay consult, if started. */
