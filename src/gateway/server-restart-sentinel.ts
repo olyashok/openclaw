@@ -6,6 +6,7 @@ import {
 import { REPLY_RUN_STILL_SHUTTING_DOWN_TEXT } from "../auto-reply/reply/get-reply-run-queue.js";
 import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import { dispatchReplyWithBufferedBlockDispatcherCore } from "../auto-reply/reply/provider-dispatcher.js";
+import { getChannelPlugin, normalizeChannelId } from "../channels/plugins/index.js";
 import { recordInboundSession } from "../channels/session.js";
 import { dispatchAssembledChannelTurn } from "../channels/turn/lifecycle.js";
 import type { CliDeps } from "../cli/deps.types.js";
@@ -72,6 +73,11 @@ import {
   deliverRestartSentinelNotice,
   enqueueRestartSentinelNotice,
 } from "./server-restart-sentinel-notice.js";
+import {
+  buildQueuedRestartContinuation,
+  resolveQueuedSessionDeliveryContext,
+  resolveRestartContinuationRoute,
+} from "./server-restart-sentinel-queue.js";
 import {
   readRestartSentinelStartupSnapshot,
   type PendingUpdateSentinelIdentity,
@@ -153,23 +159,6 @@ function resolveQueuedRestartContinuationMessageId(entry: QueuedAgentTurnSession
     return `${entry.messageId}:retry:${entry.retryCount}`;
   }
   return entry.messageId;
-}
-
-function resolveQueuedSessionDeliveryContext(
-  entry: QueuedSessionDelivery,
-): DeliveryContext | undefined {
-  if (entry.kind === "completionFallback") {
-    return undefined;
-  }
-  if (entry.kind === "agentTurn" && entry.route) {
-    return {
-      channel: entry.route.channel,
-      to: entry.route.to,
-      ...(entry.route.accountId ? { accountId: entry.route.accountId } : {}),
-      ...(entry.route.threadId ? { threadId: entry.route.threadId } : {}),
-    };
-  }
-  return entry.deliveryContext;
 }
 
 export async function deliverQueuedSessionDelivery(params: {
