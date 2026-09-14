@@ -5,6 +5,7 @@ import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import type { MsgContext } from "../auto-reply/templating.js";
 import { deliverInboundReplyWithMessageSendContextCore } from "../channels/turn/durable-delivery.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { isOutboundDeliveryError } from "../infra/outbound/deliver-types.js";
 import { loadCompletedDeliveryReceipt } from "../infra/outbound/delivery-queue-storage.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
 import { scheduleSessionDelivery } from "../infra/session-delivery-queue-runtime.js";
@@ -307,7 +308,19 @@ export async function deliverWebchatCompletionFallback(
           completionRetention: completionOutboundRetention,
         }
       : {}),
-  }).catch((error: unknown) => ({ status: "failed" as const, error }));
+  }).catch(
+    (
+      error: unknown,
+    ): {
+      status: "failed";
+      error: unknown;
+      sentBeforeError?: true;
+    } => ({
+      status: "failed",
+      error,
+      ...(isOutboundDeliveryError(error) && error.sentBeforeError ? { sentBeforeError: true } : {}),
+    }),
+  );
   if (result.status === "failed") {
     if (result.sentBeforeError) {
       params.log.warn(
