@@ -67,6 +67,7 @@ import {
 } from "../../tts/tts.js";
 import { getVoiceProviderConfig, providerMatchesId } from "../../tts/voice-models.js";
 import { ADMIN_SCOPE, READ_SCOPE, TALK_SECRETS_SCOPE } from "../operator-scopes.js";
+import { mintTalkBindingCapability } from "../talk-binding-capability.js";
 import { resolveMatrixTalkBinding } from "../talk-matrix-binding.js";
 import { formatForLog } from "../ws-log.js";
 import { inferSpeechMimeType } from "./speech-mime.js";
@@ -753,7 +754,20 @@ export const talkHandlers: GatewayRequestHandlers = {
         threadRootEventId: String(params.threadRootEventId ?? ""),
         agentMxid: String(params.agentMxid ?? ""),
       });
-      respond(true, { binding: resolved.sessionKey }, undefined);
+      const speakerMxid = normalizeOptionalString(params.speakerMxid);
+      if (!speakerMxid?.startsWith("@")) throw new Error("Matrix Talk speaker is required");
+      respond(
+        true,
+        {
+          binding: mintTalkBindingCapability({
+            ...resolved,
+            roomId: String(params.roomId),
+            threadRootEventId: String(params.threadRootEventId),
+            speakerMxid,
+          }),
+        },
+        undefined,
+      );
     } catch (error) {
       respond(
         false,
