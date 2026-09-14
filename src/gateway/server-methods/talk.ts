@@ -67,6 +67,7 @@ import {
 } from "../../tts/tts.js";
 import { getVoiceProviderConfig, providerMatchesId } from "../../tts/voice-models.js";
 import { ADMIN_SCOPE, READ_SCOPE, TALK_SECRETS_SCOPE } from "../operator-scopes.js";
+import { resolveMatrixTalkBinding } from "../talk-matrix-binding.js";
 import { formatForLog } from "../ws-log.js";
 import { inferSpeechMimeType } from "./speech-mime.js";
 import { talkClientHandlers } from "./talk-client.js";
@@ -744,6 +745,26 @@ function stripUnresolvedSecretApiKeyFromRecord(
 
 /** Gateway request handlers for Talk config, catalog, mode, sessions, and speech. */
 export const talkHandlers: GatewayRequestHandlers = {
+  "talk.binding.resolve": async ({ params, respond, context }) => {
+    try {
+      const resolved = await resolveMatrixTalkBinding({
+        cfg: context.getRuntimeConfig(),
+        roomId: String(params.roomId ?? ""),
+        threadRootEventId: String(params.threadRootEventId ?? ""),
+        agentMxid: String(params.agentMxid ?? ""),
+      });
+      respond(true, { binding: resolved.sessionKey }, undefined);
+    } catch (error) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          error instanceof Error ? error.message : "Matrix Talk binding failed",
+        ),
+      );
+    }
+  },
   ...talkSessionHandlers,
   ...talkClientHandlers,
   "talk.catalog": async ({ params, respond, context }) => {
