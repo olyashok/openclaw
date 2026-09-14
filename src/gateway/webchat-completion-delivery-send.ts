@@ -41,6 +41,7 @@ export type WebchatCompletionFallbackParams = {
   log: { warn: (message: string) => void };
   /** Stable outer-queue identity used to deduplicate the provider send after restart. */
   deliveryIntentId?: string;
+  continuationMarker?: boolean;
 };
 
 const COMPLETION_OUTBOUND_INTENT_PREFIX = "webchat-completion-outbound:v1:";
@@ -275,7 +276,9 @@ export async function deliverWebchatCompletionFallback(
   }
   const reasonText = "Sent to Slack because the Fi reply was not viewed within one minute";
   const payload: ReplyPayload = {
-    text: `*Fi chat reply*\n\n${answer}\n\n_${reasonText} · Session ${params.sessionId}_`,
+    text: params.continuationMarker
+      ? `*Continue in Slack*\n\n${answer}\n\n_Reply in this thread to continue the same conversation._`
+      : `*Fi chat reply*\n\n${answer}\n\n_${reasonText} · Session ${params.sessionId}_`,
     ...(params.fallbackError ? { isError: true } : {}),
   };
   const route = state.route;
