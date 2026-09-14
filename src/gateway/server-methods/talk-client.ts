@@ -82,7 +82,11 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     const connId = normalizeOptionalString(request.client?.connId);
     const providedSessionKey = normalizeOptionalString(params.sessionKey);
     const relay = relaySessionId ? relaySessions.get(relaySessionId) : undefined;
-    if (providedSessionKey && relay && relay.sessionKey !== providedSessionKey) {
+    if (
+      providedSessionKey &&
+      relay &&
+      (!connId || relay.connId !== connId || relay.sessionKey !== providedSessionKey)
+    ) {
       respond(
         false,
         undefined,
@@ -99,7 +103,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       return;
     }
     const sessionKey =
-      (!providedSessionKey && relay?.connId === connId ? relay.sessionKey : undefined) ??
+      (!providedSessionKey && relay && relay.connId === connId ? relay.sessionKey : undefined) ??
       providedSessionKey;
     if (!sessionKey) {
       respond(
@@ -113,10 +117,13 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     if (
       isUnauthorizedRawMatrixBrowserSession({
         cfg: config,
-        clientInfo: request.client?.connect,
+        clientInfo: request.client?.connect?.client,
         sessionKey,
         authorizedByBinding: Boolean(
-          relay?.matrixRoute && relay.connId === connId && relay.sessionKey === sessionKey,
+          connId &&
+          relay?.matrixRoute &&
+          relay.connId === connId &&
+          relay.sessionKey === sessionKey,
         ),
       })
     ) {
@@ -218,7 +225,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       args: params.args ?? {},
       relaySessionId: normalizeOptionalString(params.relaySessionId),
       connId,
-      matrixRoute: relay?.connId === connId ? relay.matrixRoute : undefined,
+      matrixRoute: connId && relay?.connId === connId ? relay.matrixRoute : undefined,
       onRunStarted: (runId) => {
         registerClientVoiceConsultRun({
           agentId,
@@ -261,7 +268,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       if (
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
-          clientInfo: client?.connect,
+          clientInfo: client?.connect?.client,
           sessionKey: params.sessionKey,
           authorizedByBinding: false,
         })
@@ -292,7 +299,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       if (
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
-          clientInfo: client?.connect,
+          clientInfo: client?.connect?.client,
           sessionKey: params.sessionKey,
           authorizedByBinding: false,
         })
