@@ -1,6 +1,6 @@
 // Gateway Talk realtime agent-consult bridge.
 // Starts chat.send runs that answer realtime Talk tool calls.
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   ErrorCodes,
   errorShape,
@@ -69,6 +69,13 @@ export async function startTalkRealtimeAgentConsult(
     args: unknown;
     relaySessionId?: string;
     connId?: string;
+    /** Server-authorized source route captured when the Matrix Talk capability is consumed. */
+    matrixRoute?: {
+      channel: "matrix";
+      roomId: string;
+      threadRootEventId: string;
+      accountId: string;
+    };
     onRunStarted?: (runId: string) => void;
   },
 ): Promise<{ ok: true; runId: string; idempotencyKey: string } | { ok: false; error: ErrorShape }> {
@@ -78,7 +85,13 @@ export async function startTalkRealtimeAgentConsult(
   } catch (err) {
     return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)) };
   }
-  const idempotencyKey = `talk-${params.callId}-${randomUUID()}`;
+  const idempotencyKey = `talk-${createHash("sha256")
+    .update(params.sessionTarget.canonicalKey)
+    .update("\0")
+    .update(params.relaySessionId ?? "")
+    .update("\0")
+    .update(params.callId)
+    .digest("hex")}`;
   const normalizedTalk = normalizeTalkSection(request.context.getRuntimeConfig().talk);
   const authority = resolveTalkAgentConsultAuthority(
     request.client?.connect?.scopes,
@@ -119,6 +132,15 @@ export async function startTalkRealtimeAgentConsult(
           kind: "internal_system",
           sourceTool: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
         },
+        ...(params.matrixRoute
+          ? {
+              deliver: true,
+              originatingChannel: params.matrixRoute.channel,
+              originatingTo: `room:${params.matrixRoute.roomId}`,
+              originatingAccountId: params.matrixRoute.accountId,
+              originatingThreadId: params.matrixRoute.threadRootEventId,
+            }
+          : {}),
         ...(normalizedTalk?.consultThinkingLevel
           ? { thinking: normalizedTalk.consultThinkingLevel }
           : {}),
