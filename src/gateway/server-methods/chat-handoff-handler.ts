@@ -65,7 +65,7 @@ export async function handleChatHandoffSeen({
   const requester = resolveChatAbortRequester(client);
   const runId = typeof params.runId === "string" ? params.runId : undefined;
   const sessionKey = params.sessionKey as string;
-  const pendingResult = markWebchatCompletionSeen({
+  const pendingResult = await markWebchatCompletionSeen({
     runId,
     sessionKey,
     requesterConnId: requester.connId,

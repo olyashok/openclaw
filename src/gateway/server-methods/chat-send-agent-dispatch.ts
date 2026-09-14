@@ -154,7 +154,7 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
     if (context.chatRunState.hasAbortMarker(clientRunId)) {
       return;
     }
-    scheduleWebchatCompletionFallback({
+    void scheduleWebchatCompletionFallback({
       cfg,
       state: activeRunAbort.entry?.webchatCompletionDelivery,
       startedAtMs: activeRunAbort.entry?.startedAtMs ?? admissionStartedAt,
@@ -172,6 +172,10 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
         ? { ownerDeviceId: activeRunAbort.entry.ownerDeviceId }
         : {}),
       log: context.logGateway,
+    }).catch((error: unknown) => {
+      context.logGateway.warn(
+        `webchat completion delivery scheduling failed run=${clientRunId}: ${String(error)}`,
+      );
     });
   };
 

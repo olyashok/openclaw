@@ -63,6 +63,7 @@ import {
 } from "./server-restart-sentinel-notice.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { runStartupTasks, type StartupTask } from "./startup-tasks.js";
+import { deliverQueuedWebchatCompletionFallback } from "./webchat-completion-delivery-send.js";
 
 const log = createSubsystemLogger("gateway/restart-sentinel");
 const RESTART_CONTINUATION_BUSY_RETRY_DELAY_MS = process.env.VITEST ? 1 : 6_000;
@@ -182,6 +183,9 @@ function resolveQueuedSessionDeliveryContext(entry: QueuedSessionDelivery):
       threadId?: string | number;
     }
   | undefined {
+  if (entry.kind === "completionFallback") {
+    return undefined;
+  }
   if (entry.kind === "agentTurn" && entry.route) {
     return {
       channel: entry.route.channel,
@@ -200,6 +204,14 @@ export async function deliverQueuedSessionDelivery(params: {
   resolveGatewayContext?: import("./server-methods/types.js").GatewayContextResolver;
 }) {
   const queuedEntry = resolveCorrelatedSubagentDelivery(params.entry);
+  if (queuedEntry.kind === "completionFallback") {
+    await deliverQueuedWebchatCompletionFallback({
+      cfg: getRuntimeConfig(),
+      entry: queuedEntry,
+      log,
+    });
+    return;
+  }
   const { cfg, agentId, entry, storePath, canonicalKey } = loadSessionEntry(queuedEntry.sessionKey);
   const deliveryContext = resolveQueuedSessionDeliveryContext(queuedEntry);
 
