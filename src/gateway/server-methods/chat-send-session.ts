@@ -19,6 +19,7 @@ import {
   resolveDeletedAgentIdFromSessionKey,
   resolveSessionModelRef,
 } from "../session-utils.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import {
   hasGatewayAdminScope,
   resolveChatSendActiveScopeKey,
@@ -122,6 +123,7 @@ export function prepareChatSendSession(params: {
   const { p, explicitOrigin, normalizedAttachments, turnKind, rawMessage } = request;
   const { cfg, sessionKey, entry, legacyKey, rawSessionKey, agentIdOverride } = loadedValue;
   if (
+    !isWebchatSessionAllowed({ cfg, client, sessionKey }) ||
     isUnauthorizedRawMatrixBrowserSession({
       cfg,
       clientInfo: request.clientInfo,

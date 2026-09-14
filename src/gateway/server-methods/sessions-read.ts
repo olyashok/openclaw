@@ -58,6 +58,7 @@ import {
   type SessionsPreviewResult,
 } from "../session-utils.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { gatewayClientSessionCreator } from "./gateway-client-identity.js";
 import { readPreparedServerMethodModelCatalog } from "./optional-model-catalog.js";
 import {
@@ -152,6 +153,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           const visibilityFilter = prepareSessionSharing({ client, cfg }).entryFilter;
           const entryFilter = (key: string, entry: SessionEntry) =>
             !options.excludedKeys?.has(key) &&
+            isWebchatSessionAllowed({ cfg, client, sessionKey: key }) &&
             !isUnauthorizedRawMatrixBrowserSession({
               cfg,
               clientInfo: client?.connect?.client,
@@ -465,6 +467,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           store,
         });
         if (
+          !isWebchatSessionAllowed({ cfg, client, sessionKey: target.canonicalKey }) ||
           isUnauthorizedRawMatrixBrowserSession({
             cfg,
             clientInfo: client?.connect?.client,
@@ -520,6 +523,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       ...(requestedAgent.agentId ? { agentId: requestedAgent.agentId } : {}),
     });
     if (
+      !isWebchatSessionAllowed({ cfg, client, sessionKey: target.canonicalKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,
@@ -602,6 +606,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       agentId: requestedAgent.agentId,
     });
     if (
+      !isWebchatSessionAllowed({ cfg, client, sessionKey: target.canonicalKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,

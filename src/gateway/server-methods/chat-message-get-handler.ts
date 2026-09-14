@@ -20,6 +20,7 @@ import { MAX_PAYLOAD_BYTES } from "../server-constants.js";
 import { readSessionMessagesAroundIdWithStatsAsync } from "../session-transcript-anchor-reader.js";
 import { readSessionMessageByIdAsync } from "../session-transcript-readers.js";
 import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { readChatHistoryMessageId } from "./chat-history-pages.js";
 import { resolveRequestedChatAgentId, validateChatSelectedAgent } from "./chat-origin-routing.js";
 import { projectPendingInputMessage } from "./chat-pending-inputs.js";
@@ -89,6 +90,7 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
       sessionLoadOptions,
     );
     if (
+      !isWebchatSessionAllowed({ cfg, client, sessionKey: canonicalKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,

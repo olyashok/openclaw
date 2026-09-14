@@ -43,6 +43,7 @@ import {
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
 } from "../talk-realtime-relay.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { formatForLog } from "../ws-log.js";
 import { createTalkClient } from "./talk-client-create.js";
 import {
@@ -115,6 +116,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     }
     const config = request.context.getRuntimeConfig();
     if (
+      !isWebchatSessionAllowed({ cfg: config, client: request.client, sessionKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg: config,
         clientInfo: request.client?.connect?.client,
@@ -267,6 +269,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     try {
       const config = context.getRuntimeConfig();
       if (
+        !isWebchatSessionAllowed({ cfg: config, client, sessionKey: params.sessionKey }) ||
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
           clientInfo: client?.connect?.client,
@@ -299,6 +302,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     try {
       const config = context.getRuntimeConfig();
       if (
+        !isWebchatSessionAllowed({ cfg: config, client, sessionKey: params.sessionKey }) ||
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
           clientInfo: client?.connect?.client,

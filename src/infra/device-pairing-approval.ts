@@ -477,6 +477,9 @@ export async function approveBootstrapDevicePairing(
       tokens[roleForToken] = createDeviceAuthToken({
         role: roleForToken,
         scopes: tokenScopes,
+        ...(roleForToken === OPERATOR_ROLE && bootstrapProfile.allowedAgentIds
+          ? { allowedAgentIds: bootstrapProfile.allowedAgentIds }
+          : {}),
         existing: existingToken,
         now,
         ...(existingToken ? { rotatedAtMs: now } : {}),

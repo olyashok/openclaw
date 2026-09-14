@@ -14,6 +14,7 @@ export type DeviceBootstrapProfile = {
   roles: string[];
   scopes: string[];
   purpose?: DeviceBootstrapPurpose;
+  allowedAgentIds?: string[];
 };
 
 /** Caller-provided bootstrap profile before role/scope normalization and bounding. */
@@ -21,6 +22,7 @@ export type DeviceBootstrapProfileInput = {
   roles?: readonly string[];
   scopes?: readonly string[];
   purpose?: DeviceBootstrapPurpose;
+  allowedAgentIds?: readonly string[];
 };
 
 export type PairingSetupAccess = "full" | "limited" | "node";
@@ -122,7 +124,9 @@ export function deviceBootstrapProfilesEqual(
     profile.roles.length === expected.roles.length &&
     profile.scopes.length === expected.scopes.length &&
     profile.roles.every((role, index) => role === expected.roles[index]) &&
-    profile.scopes.every((scope, index) => scope === expected.scopes[index])
+    profile.scopes.every((scope, index) => scope === expected.scopes[index]) &&
+    (profile.allowedAgentIds?.length ?? 0) === (expected.allowedAgentIds?.length ?? 0) &&
+    (profile.allowedAgentIds ?? []).every((id, index) => id === expected.allowedAgentIds?.[index])
   );
 }
 
@@ -241,6 +245,7 @@ export function normalizeDeviceBootstrapHandoffProfile(
     roles: profile.roles,
     scopes: resolveBootstrapProfileScopesForRoles(profile.roles, profile.scopes, profile.purpose),
     ...(profile.purpose ? { purpose: profile.purpose } : {}),
+    ...(profile.allowedAgentIds ? { allowedAgentIds: profile.allowedAgentIds } : {}),
   };
 }
 
@@ -274,5 +279,12 @@ export function normalizeDeviceBootstrapProfile(
     roles: normalizeBootstrapRoles(input?.roles),
     scopes: normalizeDeviceAuthScopes(input?.scopes ? [...input.scopes] : []),
     ...(purpose ? { purpose } : {}),
+    ...(input?.allowedAgentIds
+      ? {
+          allowedAgentIds: [
+            ...new Set(input.allowedAgentIds.map((id) => id.trim()).filter(Boolean)),
+          ].toSorted(),
+        }
+      : {}),
   };
 }
