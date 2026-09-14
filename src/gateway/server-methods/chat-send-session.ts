@@ -125,6 +125,7 @@ export function prepareChatSendSession(params: {
     isUnauthorizedRawMatrixBrowserSession({
       cfg,
       clientInfo: request.clientInfo,
+      pairedClientId: client?.pairedClientId,
       sessionKey,
       authorizedByBinding: false,
     })

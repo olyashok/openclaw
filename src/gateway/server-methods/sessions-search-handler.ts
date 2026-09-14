@@ -54,6 +54,7 @@ export const sessionsSearchHandler: GatewayRequestHandlers["sessions.search"] = 
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey,
         authorizedByBinding: false,
       })

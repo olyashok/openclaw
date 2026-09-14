@@ -155,6 +155,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
             !isUnauthorizedRawMatrixBrowserSession({
               cfg,
               clientInfo: client?.connect?.client,
+              pairedClientId: client?.pairedClientId,
               sessionKey: key,
               authorizedByBinding: false,
             }) &&
@@ -467,6 +468,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           isUnauthorizedRawMatrixBrowserSession({
             cfg,
             clientInfo: client?.connect?.client,
+            pairedClientId: client?.pairedClientId,
             sessionKey: target.canonicalKey,
             authorizedByBinding: false,
           })
@@ -521,6 +523,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: target.canonicalKey,
         authorizedByBinding: false,
       })
@@ -602,6 +605,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: target.canonicalKey,
         authorizedByBinding: false,
       })

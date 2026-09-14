@@ -138,6 +138,7 @@ async function handleChatMetadataRequest({
       isUnauthorizedRawMatrixBrowserSession({
         cfg: session.cfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: session.canonicalKey,
         authorizedByBinding: false,
       })
@@ -267,6 +268,7 @@ async function handleChatHistoryRequest({
     isUnauthorizedRawMatrixBrowserSession({
       cfg,
       clientInfo: client?.connect?.client,
+      pairedClientId: client?.pairedClientId,
       sessionKey: canonicalKey,
       authorizedByBinding: false,
     })

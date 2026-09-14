@@ -27,10 +27,7 @@ import {
   ensureProfileForTailscaleIdentity,
   getUserProfileDisplay,
 } from "../../../state/user-profiles.js";
-import {
-  isBrowserCopilotClient,
-  isEphemeralGatewayClient,
-} from "../../../utils/message-channel.js";
+import { isEphemeralGatewayClient } from "../../../utils/message-channel.js";
 import { resolveRuntimeServiceBuildId, resolveRuntimeServiceVersion } from "../../../version.js";
 import { verifyAgentRuntimeIdentityToken } from "../../agent-runtime-identity-token.js";
 import { buildAuthenticatedPresenceUser } from "../../authenticated-presence-user.js";
@@ -135,6 +132,7 @@ export async function attachAuthenticatedGatewayConnect(
     pairingLocality,
     sessionUsesSharedGatewayAuth,
     sessionSharedGatewaySessionGeneration,
+    pairedClientId,
   } = state;
   if (!(await prepareGatewayNodeConnect(context, state))) {
     return;
@@ -421,9 +419,7 @@ export async function attachAuthenticatedGatewayConnect(
     connId,
     connectionKind: "gateway",
     isDeviceTokenAuth: authMethod === "device-token",
-    pairedClientId: isBrowserCopilotClient(connectParams.client)
-      ? connectParams.client.id
-      : undefined,
+    pairedClientId,
     usesSharedGatewayAuth: sessionUsesSharedGatewayAuth,
     sharedGatewaySessionGeneration: sessionSharedGatewaySessionGeneration,
     presenceKey,

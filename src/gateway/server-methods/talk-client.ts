@@ -118,6 +118,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       isUnauthorizedRawMatrixBrowserSession({
         cfg: config,
         clientInfo: request.client?.connect?.client,
+        pairedClientId: request.client?.pairedClientId,
         sessionKey,
         authorizedByBinding: Boolean(
           connId &&
@@ -269,6 +270,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
           clientInfo: client?.connect?.client,
+          pairedClientId: client?.pairedClientId,
           sessionKey: params.sessionKey,
           authorizedByBinding: false,
         })
@@ -300,6 +302,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
           clientInfo: client?.connect?.client,
+          pairedClientId: client?.pairedClientId,
           sessionKey: params.sessionKey,
           authorizedByBinding: false,
         })

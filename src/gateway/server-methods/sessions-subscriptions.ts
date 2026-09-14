@@ -141,6 +141,7 @@ export const sessionSubscriptionHandlers: GatewayRequestHandlers = {
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,
+        pairedClientId: client?.pairedClientId,
         sessionKey: canonicalKey,
         authorizedByBinding: false,
       })

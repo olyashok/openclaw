@@ -517,6 +517,7 @@ export async function authorizeGatewayConnectDevice(
     ...state,
     scopes,
     handoffBootstrapProfile,
+    ...(pairedClientId ? { pairedClientId } : {}),
     deviceToken,
     bootstrapDeviceTokens,
   };
