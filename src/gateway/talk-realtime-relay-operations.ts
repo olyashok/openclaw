@@ -391,7 +391,9 @@ export function prepareTalkRealtimeRelayAgentRunRegistration(params: {
       });
       throw new Error("Realtime provider cancelled the tool call before run registration");
     }
-    if (session.closeDisposition === "detach") return "detached";
+    if (session.closeDisposition === "detach") {
+      return "detached";
+    }
     if (relaySessions.get(session.id) !== session) {
       throw new Error("Realtime relay session closed before run registration");
     }
@@ -399,7 +401,9 @@ export function prepareTalkRealtimeRelayAgentRunRegistration(params: {
       throw new Error("Realtime relay tool-call session limit exceeded");
     }
     session.activeAgentRuns.set(runId, sessionKey);
-    if (callId) session.activeAgentToolCalls.set(callId, runId);
+    if (callId) {
+      session.activeAgentToolCalls.set(callId, runId);
+    }
     if (!ensureRelayVoiceSession(session)) {
       throw new Error("Realtime relay voice session could not be created for agent consult");
     }

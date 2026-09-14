@@ -6,7 +6,6 @@ import {
 import { REPLY_RUN_STILL_SHUTTING_DOWN_TEXT } from "../auto-reply/reply/get-reply-run-queue.js";
 import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import { dispatchReplyWithBufferedBlockDispatcherCore } from "../auto-reply/reply/provider-dispatcher.js";
-import type { ChatType } from "../channels/chat-type.js";
 import { getChannelPlugin, normalizeChannelId } from "../channels/plugins/index.js";
 import { recordInboundSession } from "../channels/session.js";
 import { dispatchAssembledChannelTurn } from "../channels/turn/lifecycle.js";
@@ -22,7 +21,6 @@ import {
   finalizeUpdateRestartSentinelRunningVersion,
   formatRestartSentinelMessage,
   readRestartSentinel,
-  type RestartSentinelContinuation,
   type RestartSentinelPayload,
   summarizeRestartSentinel,
 } from "../infra/restart-sentinel.js";
@@ -39,7 +37,6 @@ import {
   SessionDeliveryDeadLetteredError,
   SessionDeliverySafeRetryError,
   type QueuedSessionDelivery,
-  type QueuedSessionDeliveryPayload,
   type SessionDeliveryRoute,
 } from "../infra/session-delivery-queue-storage.js";
 import { withSystemEventOwner } from "../infra/system-event-ownership.js";
@@ -61,6 +58,11 @@ import {
   deliverRestartSentinelNotice,
   enqueueRestartSentinelNotice,
 } from "./server-restart-sentinel-notice.js";
+import {
+  buildQueuedRestartContinuation,
+  resolveQueuedSessionDeliveryContext,
+  resolveRestartContinuationRoute,
+} from "./server-restart-sentinel-queue.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { runStartupTasks, type StartupTask } from "./startup-tasks.js";
 import { deliverQueuedWebchatCompletionFallback } from "./webchat-completion-delivery-send.js";
@@ -131,33 +133,6 @@ async function waitForRetry(delayMs: number) {
   });
 }
 
-const buildRestartContinuationMessageId = (params: {
-  sessionKey: string;
-  kind: RestartSentinelContinuation["kind"];
-  revision: number;
-}) => `restart-sentinel:${params.sessionKey}:${params.kind}:${params.revision}`;
-
-function resolveRestartContinuationRoute(params: {
-  channel?: string;
-  to?: string;
-  accountId?: string;
-  replyToId?: string;
-  threadId?: string;
-  chatType: ChatType;
-}): SessionDeliveryRoute | undefined {
-  if (!params.channel || !params.to) {
-    return undefined;
-  }
-  return {
-    channel: params.channel,
-    to: params.to,
-    ...(params.accountId ? { accountId: params.accountId } : {}),
-    ...(params.replyToId ? { replyToId: params.replyToId } : {}),
-    ...(params.threadId ? { threadId: params.threadId } : {}),
-    chatType: params.chatType,
-  };
-}
-
 function isRestartContinuationBusyPayload(payload: OutboundReplyPayload): boolean {
   return (
     typeof payload.text === "string" && payload.text.trim() === REPLY_RUN_STILL_SHUTTING_DOWN_TEXT
@@ -173,28 +148,6 @@ function resolveQueuedRestartContinuationMessageId(entry: QueuedAgentTurnSession
     return `${entry.messageId}:retry:${entry.retryCount}`;
   }
   return entry.messageId;
-}
-
-function resolveQueuedSessionDeliveryContext(entry: QueuedSessionDelivery):
-  | {
-      channel?: string;
-      to?: string;
-      accountId?: string;
-      threadId?: string | number;
-    }
-  | undefined {
-  if (entry.kind === "completionFallback") {
-    return undefined;
-  }
-  if (entry.kind === "agentTurn" && entry.route) {
-    return {
-      channel: entry.route.channel,
-      to: entry.route.to,
-      ...(entry.route.accountId ? { accountId: entry.route.accountId } : {}),
-      ...(entry.route.threadId ? { threadId: entry.route.threadId } : {}),
-    };
-  }
-  return entry.deliveryContext;
 }
 
 export async function deliverQueuedSessionDelivery(params: {
@@ -359,54 +312,6 @@ export async function deliverQueuedSessionDelivery(params: {
   if (dispatchError) {
     throw toErrorObject(dispatchError, "Non-Error thrown");
   }
-}
-
-function buildQueuedRestartContinuation(params: {
-  sessionKey: string;
-  agentId?: string;
-  continuation: RestartSentinelContinuation;
-  route?: SessionDeliveryRoute;
-  expectedSessionId?: string | undefined;
-  revision: number;
-  deliveryContext?: {
-    channel?: string;
-    to?: string;
-    accountId?: string;
-    threadId?: string | number;
-  };
-  idempotencyKey?: string;
-}): QueuedSessionDeliveryPayload {
-  const idempotencyKey =
-    params.idempotencyKey ??
-    buildRestartContinuationMessageId({
-      sessionKey: params.sessionKey,
-      kind: params.continuation.kind,
-      revision: params.revision,
-    });
-  if (params.continuation.kind === "systemEvent") {
-    return {
-      kind: "systemEvent",
-      sessionKey: params.sessionKey,
-      ...(params.agentId ? { agentId: params.agentId } : {}),
-      text: params.continuation.text,
-      ...(params.deliveryContext ? { deliveryContext: params.deliveryContext } : {}),
-      idempotencyKey,
-      maxRetries: RESTART_CONTINUATION_BUSY_MAX_ATTEMPTS,
-      completionRetention: "permanent",
-    };
-  }
-  return {
-    kind: "agentTurn",
-    sessionKey: params.sessionKey,
-    message: params.continuation.message,
-    messageId: idempotencyKey,
-    ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
-    maxRetries: RESTART_CONTINUATION_BUSY_MAX_ATTEMPTS,
-    completionRetention: "permanent",
-    ...(params.route ? { route: params.route } : {}),
-    ...(params.deliveryContext ? { deliveryContext: params.deliveryContext } : {}),
-    idempotencyKey,
-  };
 }
 
 async function drainRestartContinuationQueue(params: {
