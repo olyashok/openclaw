@@ -1,6 +1,7 @@
 import type { GatewayClientInfo } from "../../packages/gateway-protocol/src/client-info.js";
 import { extractDeliveryInfo } from "../config/sessions/delivery-info.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { parseSessionDeliveryRoute } from "../routing/session-key.js";
 import { isBrowserOperatorUiClient, isWebchatClient } from "../utils/message-channel.js";
 
 /**
@@ -18,7 +19,8 @@ export function isUnauthorizedRawMatrixBrowserSession(params: {
   if (!isWebchatClient(params.clientInfo) && !isBrowserOperatorUiClient(params.clientInfo)) {
     return false;
   }
-  const channel = extractDeliveryInfo(params.sessionKey, { cfg: params.cfg }).deliveryContext
-    ?.channel;
+  const channel =
+    parseSessionDeliveryRoute(params.sessionKey)?.channel ??
+    extractDeliveryInfo(params.sessionKey, { cfg: params.cfg }).deliveryContext?.channel;
   return channel?.trim().toLowerCase() === "matrix";
 }

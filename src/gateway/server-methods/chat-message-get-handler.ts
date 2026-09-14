@@ -15,6 +15,7 @@ import {
   projectChatDisplayMessage,
 } from "../chat-display-projection.js";
 import { resolveCurrentUserProfileDisplay } from "../current-user-profile-display.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { MAX_PAYLOAD_BYTES } from "../server-constants.js";
 import { readSessionMessagesAroundIdWithStatsAsync } from "../session-transcript-anchor-reader.js";
 import { readSessionMessageByIdAsync } from "../session-transcript-readers.js";
@@ -61,7 +62,7 @@ async function isChatMessageIdVisibleAfterHistoryFilters(params: {
 }
 
 export const chatMessageGetHandlers: GatewayRequestHandlers = {
-  "chat.message.get": async ({ params, respond, context }) => {
+  "chat.message.get": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateChatMessageGetParams, "chat.message.get", respond)) {
       return;
     }
@@ -87,6 +88,21 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
       sessionKey,
       sessionLoadOptions,
     );
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: canonicalKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.FORBIDDEN, "Matrix conversation access requires the owning app"),
+      );
+      return;
+    }
     const selectedAgent = validateChatSelectedAgent({
       cfg,
       requestedSessionKey: sessionKey,
