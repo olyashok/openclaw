@@ -43,6 +43,18 @@ describe("raw Matrix browser session authorization", () => {
     ).toBe(false);
   });
 
+  it("retains Matrix ownership when mutable latest delivery points to Slack", () => {
+    extractDeliveryInfo.mockReturnValue({ deliveryContext: { channel: "slack", to: "user:U123" } });
+    expect(
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg,
+        clientInfo: webchat,
+        sessionKey: "agent:admin:matrix:channel:!secret:example.org:thread:$root",
+        authorizedByBinding: false,
+      }),
+    ).toBe(true);
+  });
+
   it("preserves non-Matrix browser sessions and internal callers", () => {
     extractDeliveryInfo.mockReturnValueOnce({
       deliveryContext: { channel: "webchat", to: "device:one" },

@@ -29,6 +29,7 @@ import {
 } from "../chat-abort.js";
 import { resolveEffectiveChatHistoryMaxChars } from "../chat-display-projection.js";
 import { resolveClaudeCliBindingSessionId } from "../cli-session-history.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
 import { buildGatewaySessionSnapshot } from "../session-event-payload.js";
 import { resolveSessionHistoryUnavailableMessage } from "../session-history-error.js";
@@ -174,6 +175,21 @@ export async function handleChatHistoryRequest({
     canonicalKey,
     legacyKey,
   } = selectedSession;
+  if (
+    isUnauthorizedRawMatrixBrowserSession({
+      cfg,
+      clientInfo: client?.connect?.client,
+      sessionKey: canonicalKey,
+      authorizedByBinding: false,
+    })
+  ) {
+    respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.FORBIDDEN, "Matrix conversation access requires the owning app"),
+    );
+    return;
+  }
   const authorizeSharing = (current: typeof selectedSession) => {
     const sharing = prepareSessionSharing({ client, cfg: current.cfg });
     if (

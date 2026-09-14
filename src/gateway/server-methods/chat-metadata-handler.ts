@@ -8,6 +8,7 @@ import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { PreparedModelRuntimePublicationSupersededError } from "../../agents/prepared-model-runtime.errors.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { readGatewayAccessRevision } from "../gateway-access-revision.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { ModelAccountConnectAuthorityError } from "../model-account-connect.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { hiddenSessionNotFound } from "../session-sharing-policy.js";
@@ -57,6 +58,22 @@ export function resolveChatMetadataReadParams(
         throw new SessionMutationAuthorizationChangedError(hiddenSessionNotFound(sessionKey));
       }
     };
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg: session.cfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: session.canonicalKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      session.release();
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.FORBIDDEN, "Matrix conversation access requires the owning app"),
+      );
+      return undefined;
+    }
     const isCurrent = () =>
       !signal?.aborted &&
       readGatewayAccessRevision() === accessRevision &&

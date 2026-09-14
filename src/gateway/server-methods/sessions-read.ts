@@ -26,6 +26,7 @@ import {
   normalizeAgentId,
   parseAgentSessionKey,
 } from "../../routing/session-key.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { hasOperatorBoundary } from "../operator-role-policy.js";
 import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-request-agent.js";
 import type { SessionRowReadView } from "../session-row-prepared-read.js";
@@ -100,6 +101,16 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
         sessionKey: string,
         prepared?: ReturnType<typeof prepareSessionSharingTargets>[number],
       ) => {
+        if (
+          isUnauthorizedRawMatrixBrowserSession({
+            cfg,
+            clientInfo: client?.connect?.client,
+            sessionKey,
+            authorizedByBinding: false,
+          })
+        ) {
+          return false;
+        }
         if (
           isIncognitoSessionKey(sessionKey) &&
           !canAccessIncognitoSession({ cfg, client: client ?? null, sessionKey, agentId })
@@ -339,6 +350,12 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
             ? createSessionListEntryFilter({ client, cfg })
             : undefined;
           return current?.entry.sessionId &&
+            !isUnauthorizedRawMatrixBrowserSession({
+              cfg,
+              clientInfo: client?.connect?.client,
+              sessionKey: current.key,
+              authorizedByBinding: false,
+            }) &&
             visibilityFilter?.(current.key, current.entry) !== false
             ? current
             : undefined;

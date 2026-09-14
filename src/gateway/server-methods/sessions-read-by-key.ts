@@ -1,5 +1,6 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { validateSessionsDescribeParams } from "../../../packages/gateway-protocol/src/index.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { hasOperatorBoundary } from "../operator-role-policy.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { prepareProjectedSessionPresentation } from "../session-row-presentation.js";
@@ -48,6 +49,17 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
             return;
           }
           const query = { key, agentId: requestedAgent.agentId };
+          if (
+            isUnauthorizedRawMatrixBrowserSession({
+              cfg: read.state.cfg,
+              clientInfo: client?.connect?.client,
+              sessionKey: query.key,
+              authorizedByBinding: false,
+            })
+          ) {
+            respond(true, { session: null });
+            return;
+          }
           const presentation = prepareProjectedSessionPresentation(read, client);
           const denied = presentation.authorizeDescription(query);
           if (denied) {
@@ -106,6 +118,17 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
       cfg,
       agentId: requestedAgent.agentId,
     });
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: target.canonicalKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      respond(true, { messages: [] }, undefined);
+      return;
+    }
     const boundaryFilter = hasOperatorBoundary(client, cfg)
       ? createSessionListEntryFilter({ client, cfg })
       : undefined;
@@ -150,7 +173,13 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
       current.target.canonicalKey !== target.canonicalKey ||
       current.storePath !== storePath ||
       current.entry?.sessionId !== sessionId ||
-      currentBoundaryFilter?.(current.target.canonicalKey, current.entry) === false
+      currentBoundaryFilter?.(current.target.canonicalKey, current.entry) === false ||
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg: currentCfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: current.target.canonicalKey,
+        authorizedByBinding: false,
+      })
     ) {
       respond(true, { messages: [] }, undefined);
       return;

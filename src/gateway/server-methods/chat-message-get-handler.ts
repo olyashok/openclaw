@@ -14,6 +14,7 @@ import {
   projectChatDisplayMessage,
 } from "../chat-display-projection.js";
 import { resolveCurrentUserProfileDisplay } from "../current-user-profile-display.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { MAX_PAYLOAD_BYTES } from "../server-constants.js";
 import { readChatHistoryMessageId } from "../session-history-tail.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
@@ -100,6 +101,21 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
     const requestedAgentId = requestedAgent.agentId;
     const session = loadGatewaySessionEntryReadOnly(sessionKey, { agentId: requestedAgentId }, cfg);
     const { agentId: sessionAgentId, storePath, entry, canonicalKey } = session;
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: canonicalKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.FORBIDDEN, "Matrix conversation access requires the owning app"),
+      );
+      return;
+    }
     const sessionId = entry?.sessionId;
     if (!sessionId) {
       respond(true, { ok: false, unavailableReason: "not_found" });
