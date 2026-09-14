@@ -86,6 +86,14 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     const connId = normalizeOptionalString(request.client?.connId);
     const providedSessionKey = normalizeOptionalString(params.sessionKey);
     const relay = relaySessionId ? relaySessions.get(relaySessionId) : undefined;
+    if (providedSessionKey && relay && relay.sessionTarget.canonicalKey !== providedSessionKey) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "Talk relay belongs to another session"),
+      );
+      return;
+    }
     if (!providedSessionKey && relaySessionId && (!relay || relay.connId !== connId)) {
       respond(
         false,
@@ -95,8 +103,9 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       return;
     }
     const sessionKey =
-      (!providedSessionKey && relay?.connId === connId ? relay.sessionKey : undefined) ??
-      providedSessionKey;
+      (!providedSessionKey && relay?.connId === connId
+        ? relay.sessionTarget.canonicalKey
+        : undefined) ?? providedSessionKey;
     if (!sessionKey) {
       respond(
         false,
@@ -109,16 +118,15 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     const target = requirePreparedTalkSessionTarget(
       request.sessionMutationAuthorization?.talkSessionTarget,
     );
-    const { agentId } = target;
     request.sessionMutationAuthorization?.assertCurrent();
-    const relaySessionId = normalizeOptionalString(params.relaySessionId);
-    const connId = normalizeOptionalString(request.client?.connId);
     if (
       isUnauthorizedRawMatrixBrowserSession({
         cfg: config,
         clientInfo: request.client?.connect,
         sessionKey,
-        authorizedByBinding: Boolean(relay && relay.connId === connId),
+        authorizedByBinding: Boolean(
+          relay?.matrixRoute && relay.connId === connId && relay.sessionKey === sessionKey,
+        ),
       })
     ) {
       respond(
@@ -237,7 +245,13 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       undefined,
     );
   },
-  "talk.client.transcript": async ({ params, respond, context, sessionMutationAuthorization }) => {
+  "talk.client.transcript": async ({
+    params,
+    respond,
+    context,
+    client,
+    sessionMutationAuthorization,
+  }) => {
     if (
       !assertValidParams(
         params,
@@ -254,6 +268,16 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         sessionMutationAuthorization?.talkSessionTarget ??
         prepareTalkSessionTarget(config, params.sessionKey);
       sessionMutationAuthorization?.assertCurrent();
+      if (
+        isUnauthorizedRawMatrixBrowserSession({
+          cfg: config,
+          clientInfo: client?.connect,
+          sessionKey: params.sessionKey,
+          authorizedByBinding: false,
+        })
+      ) {
+        throw new Error("Matrix Talk sessions require an authorized binding");
+      }
       await appendClientVoiceTranscript({
         agentId: target.agentId,
         sessionKey: target.sessionKey,
@@ -281,6 +305,17 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       return;
     }
     try {
+      const config = context.getRuntimeConfig();
+      if (
+        isUnauthorizedRawMatrixBrowserSession({
+          cfg: config,
+          clientInfo: client?.connect,
+          sessionKey: params.sessionKey,
+          authorizedByBinding: false,
+        })
+      ) {
+        throw new Error("Matrix Talk sessions require an authorized binding");
+      }
       if (
         await closeTalkClientGatewayControlSession({
           voiceSessionId: params.voiceSessionId,
@@ -291,7 +326,6 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         respond(true, { ok: true }, undefined);
         return;
       }
-      const config = context.getRuntimeConfig();
       const { agentId } =
         sessionMutationAuthorization?.talkSessionTarget ??
         prepareTalkSessionTarget(config, params.sessionKey);
