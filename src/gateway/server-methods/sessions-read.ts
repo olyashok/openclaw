@@ -14,8 +14,6 @@ import {
 import { listAgentIds } from "../../agents/agent-scope-config.js";
 import {
   listSessionMembershipKeys,
-  resolveExistingAgentSessionStoreTargetsSync,
-  resolveSessionStorePathCore,
   runSessionsCleanup,
   serializeSessionCleanupResult,
   type SessionEntry,
@@ -26,7 +24,7 @@ import {
   measureDiagnosticsTimelineSpanSync,
 } from "../../infra/diagnostics-timeline.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { isIncognitoSessionKey, normalizeAgentId } from "../../routing/session-key.js";
+import { normalizeAgentId } from "../../routing/session-key.js";
 import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { hasOperatorBoundary } from "../operator-role-policy.js";
 import {
@@ -34,7 +32,6 @@ import {
   tryResolveSessionCompatibilityOwnerAgentId,
 } from "../session-request-agent.js";
 import {
-  canAccessIncognitoSession,
   createSessionListEntryFilter,
   isGatewayAdmin,
   prepareSessionSharing,

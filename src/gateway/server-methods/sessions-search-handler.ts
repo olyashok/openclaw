@@ -35,7 +35,9 @@ export const sessionsSearchHandler: GatewayRequestHandlers["sessions.search"] = 
   context,
   client,
 }) => {
-  if (!assertValidParams(params, validateSessionsSearchParams, "sessions.search", respond)) return;
+  if (!assertValidParams(params, validateSessionsSearchParams, "sessions.search", respond)) {
+    return;
+  }
   const query = params.query.trim();
   if (!query) {
     respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "query must not be empty"));
@@ -64,7 +66,9 @@ export const sessionsSearchHandler: GatewayRequestHandlers["sessions.search"] = 
     ) {
       return false;
     }
-    if (!roleVisibilityFilter) return true;
+    if (!roleVisibilityFilter) {
+      return true;
+    }
     const target = resolveSessionSharingTarget({ cfg, sessionKey });
     return Boolean(target && roleVisibilityFilter(target.storeKey, target.entry));
   };
@@ -118,12 +122,16 @@ export const sessionsSearchHandler: GatewayRequestHandlers["sessions.search"] = 
             })
               .map((entry) => entry.sessionKey)
               .filter((sessionKey) => {
-                if (!canSearchSessionKey(sessionKey)) return false;
+                if (!canSearchSessionKey(sessionKey)) {
+                  return false;
+                }
                 const parsed = parseAgentSessionKey(sessionKey);
                 return !parsed || normalizeAgentId(parsed.agentId) === agentId;
               })
           : undefined);
-      if (targetSessionKeys?.length === 0) return [];
+      if (targetSessionKeys?.length === 0) {
+        return [];
+      }
       return [
         searchSessionTranscripts({
           ...target,
@@ -147,7 +155,9 @@ export const sessionsSearchHandler: GatewayRequestHandlers["sessions.search"] = 
     const seenHits = new Set<string>();
     const hits = sortedHits.filter((hit) => {
       const identity = `${hit.sessionKey}\u0000${hit.sessionId}\u0000${hit.messageId}`;
-      if (seenHits.has(identity)) return false;
+      if (seenHits.has(identity)) {
+        return false;
+      }
       seenHits.add(identity);
       return true;
     });
