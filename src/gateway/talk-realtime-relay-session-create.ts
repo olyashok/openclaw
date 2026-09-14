@@ -599,6 +599,8 @@ export function createTalkRealtimeRelaySession(
     harness,
     outputOwnership,
     sessionKey: initialSessionKey,
+    ...(params.speakerMxid ? { speakerMxid: params.speakerMxid } : {}),
+    ...(params.matrixRoute ? { matrixRoute: params.matrixRoute } : {}),
     ...(initialSessionKey
       ? {
           agentId: resolveTalkSessionAgentId(

@@ -188,6 +188,8 @@ export type RelaySession = {
   outputOwnership: TalkRealtimeRelayOutputOwnership;
   sessionKey?: string;
   agentId?: string;
+  speakerMxid?: string;
+  matrixRoute?: { channel: "matrix"; roomId: string; threadRootEventId: string; accountId: string };
   expiresAtMs: number;
   cleanupTimer: ReturnType<typeof setTimeout>;
   activeAgentRuns: Map<string, string>;
@@ -229,6 +231,8 @@ export type CreateTalkRealtimeRelaySessionParams = {
   voice?: string;
   language?: string;
   forceAgentConsultOnFinalTranscript?: boolean;
+  speakerMxid?: string;
+  matrixRoute?: { channel: "matrix"; roomId: string; threadRootEventId: string; accountId: string };
 };
 
 export type TalkRealtimeRelaySessionResult = {

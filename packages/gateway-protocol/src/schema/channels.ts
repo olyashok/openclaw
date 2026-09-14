@@ -218,7 +218,7 @@ export const TalkClientCreateParamsSchema = closedObject({
 
 /** Tool-call request from a browser/client session back into the agent runtime. */
 export const TalkClientToolCallParamsSchema = closedObject({
-  sessionKey: NonEmptyString,
+  sessionKey: Type.Optional(NonEmptyString),
   voiceSessionId: Type.Optional(VoiceIdString),
   callId: NonEmptyString,
   name: NonEmptyString,
@@ -287,6 +287,7 @@ export const TalkAgentControlResultSchema = closedObject({
 
 /** Creates a gateway-managed Talk session for realtime, transcription, or relay use. */
 export const TalkSessionCreateParamsSchema = closedObject({
+  binding: Type.Optional(NonEmptyString),
   sessionKey: Type.Optional(Type.String()),
   spawnedBy: Type.Optional(NonEmptyString),
   provider: Type.Optional(Type.String()),

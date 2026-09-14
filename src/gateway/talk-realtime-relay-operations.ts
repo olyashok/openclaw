@@ -109,7 +109,10 @@ export function closeRelaySession(
   reason: "completed" | "error",
   options?: RealtimeVoiceCloseOptions,
 ): void {
-  const disposition = options?.disposition ?? "abort";
+  // A server-authorized Matrix Talk relay is only an audio side channel. Closing
+  // its microphone/socket must not cancel the canonical conversation run; the
+  // explicit turn-cancel operation remains the run-abort authority.
+  const disposition = options?.disposition ?? (session.speakerMxid ? "detach" : "abort");
   session.harness.close();
   session.outputOwnership.drain?.resolve();
   relaySessions.delete(session.id);

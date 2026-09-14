@@ -31,12 +31,14 @@ import {
   resolveClientVoiceSessionOrigin,
   resolveOpenClientVoiceSessionId,
 } from "../../talk/client-voice-session.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import {
   authorizeGatewaySessionCreation,
   resolveSandboxedSessionCreation,
 } from "../operator-role-policy.js";
 import { startTalkRealtimeAgentConsult } from "../talk-agent-consult.js";
 import { closeTalkClientGatewayControlSession } from "../talk-client-gateway-control.js";
+import { relaySessions } from "../talk-realtime-relay-state.js";
 import {
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
@@ -76,8 +78,49 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       return;
     }
 
+    const relaySessionId = normalizeOptionalString(params.relaySessionId);
+    const connId = normalizeOptionalString(request.client?.connId);
+    const providedSessionKey = normalizeOptionalString(params.sessionKey);
+    const relay = relaySessionId ? relaySessions.get(relaySessionId) : undefined;
+    if (!providedSessionKey && relaySessionId && (!relay || relay.connId !== connId)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "Talk relay is unavailable"),
+      );
+      return;
+    }
+    const sessionKey =
+      (!providedSessionKey && relay?.connId === connId ? relay.sessionKey : undefined) ??
+      providedSessionKey;
+    if (!sessionKey) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "Talk session key is required"),
+      );
+      return;
+    }
     const config = request.context.getRuntimeConfig();
-    const agentId = resolveTalkSessionAgentId(config, params.sessionKey);
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg: config,
+        clientInfo: request.client?.connect,
+        sessionKey,
+        authorizedByBinding: Boolean(relay && relay.connId === connId),
+      })
+    ) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "Matrix Talk sessions require an authorized binding",
+        ),
+      );
+      return;
+    }
+    const agentId = resolveTalkSessionAgentId(config, sessionKey);
     const creationError = authorizeGatewaySessionCreation({
       cfg: config,
       client: request.client,
@@ -87,8 +130,6 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       respond(false, undefined, creationError);
       return;
     }
-    const relaySessionId = normalizeOptionalString(params.relaySessionId);
-    const connId = normalizeOptionalString(request.client?.connId);
     const explicitVoiceSessionId = normalizeOptionalString(params.voiceSessionId);
     if (relaySessionId && explicitVoiceSessionId && explicitVoiceSessionId !== relaySessionId) {
       respond(
@@ -107,37 +148,37 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       voiceSessionId =
         explicitVoiceSessionId ??
         relaySessionId ??
-        (connId ? readLegacyVoiceBinding(connId, params.sessionKey) : undefined) ??
-        resolveOpenClientVoiceSessionId({ agentId, sessionKey: params.sessionKey }) ??
+        (connId ? readLegacyVoiceBinding(connId, sessionKey) : undefined) ??
+        resolveOpenClientVoiceSessionId({ agentId, sessionKey }) ??
         createOrResumeClientVoiceSession({
           agentId,
-          sessionKey: params.sessionKey,
+          sessionKey,
           origin: "client",
         });
       // Pin the resolved id to this connection so a legacy client's later consults
       // reuse one record instead of forking a new never-closed session each time.
       if (connId && !relaySessionId) {
-        rememberLegacyVoiceBinding({ connId, sessionKey: params.sessionKey, voiceSessionId });
+        rememberLegacyVoiceBinding({ connId, sessionKey, voiceSessionId });
       }
       if (relaySessionId && connId) {
         // Initialize the canonical session row BEFORE binding: the bind drains the
         // relay's buffered finals into transcript appends, which fail without it.
         await ensureClientVoiceAgentSessionEntry({
           agentId,
-          sessionKey: params.sessionKey,
+          sessionKey,
           creation: resolveSandboxedSessionCreation(request.client, config),
         });
         ensureTalkRealtimeRelayVoiceSession({
           relaySessionId,
           connId,
-          sessionKey: params.sessionKey,
+          sessionKey,
         });
         await flushTalkRealtimeRelayVoiceWrites({ relaySessionId, connId });
       }
       const parsedArgs = parseRealtimeVoiceAgentConsultArgs(params.args ?? {});
       const origin = assertClientVoiceSessionOpen({
         agentId,
-        sessionKey: params.sessionKey,
+        sessionKey,
         voiceSessionId,
       });
       if (origin === "relay" && (!relaySessionId || !connId)) {
@@ -162,15 +203,16 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       client: request.client,
       isWebchatConnect: request.isWebchatConnect,
       requestId: request.req.id,
-      sessionKey: params.sessionKey,
+      sessionKey,
       callId: params.callId,
       args: params.args ?? {},
       relaySessionId: normalizeOptionalString(params.relaySessionId),
       connId,
+      matrixRoute: relay?.connId === connId ? relay.matrixRoute : undefined,
       onRunStarted: (runId) => {
         registerClientVoiceConsultRun({
           agentId,
-          sessionKey: params.sessionKey,
+          sessionKey,
           voiceSessionId,
           runId,
           config: request.context.getRuntimeConfig(),
