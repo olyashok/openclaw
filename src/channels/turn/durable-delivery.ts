@@ -27,7 +27,16 @@ import type { ChannelDeliveryInfo, ChannelDeliveryResult } from "./types.js";
 /** Options controlling durable final delivery for inbound channel replies. */
 export type DurableInboundReplyDeliveryOptions = Pick<
   DeliverOutboundPayloadsParams,
-  "deps" | "formatting" | "identity" | "mediaAccess" | "replyToMode" | "silent" | "threadId"
+  | "completionRetention"
+  | "deliveryIntentId"
+  | "deps"
+  | "formatting"
+  | "identity"
+  | "mediaAccess"
+  | "replyToMode"
+  | "reusePendingDeliveryIntent"
+  | "silent"
+  | "threadId"
 > & {
   to?: string | null;
   replyToId?: string | null;
@@ -229,6 +238,9 @@ export async function deliverInboundReplyWithMessageSendContextCore(
     deps: params.deps,
     mediaAccess: params.mediaAccess,
     silent: params.silent,
+    deliveryIntentId: params.deliveryIntentId,
+    reusePendingDeliveryIntent: params.reusePendingDeliveryIntent,
+    completionRetention: params.completionRetention,
     durability,
     ...(requiredCapabilities.reconcileUnknownSend === true
       ? { requireUnknownSendReconciliation: true }
