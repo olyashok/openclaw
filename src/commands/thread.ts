@@ -2,13 +2,14 @@
 // and enqueue at most one continuation for the latest terminal failure.
 
 import { createHash } from "node:crypto";
-import path from "node:path";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveAllAgentSessionStoreTargetsSync, type SessionEntry } from "../config/sessions.js";
-import { streamSessionTranscriptLinesReverse } from "../config/sessions/transcript-stream.js";
+import {
+  listSessionEntriesReadOnly,
+  loadTranscriptTailEventsSync,
+} from "../config/sessions/session-accessor.js";
 import { callGateway } from "../gateway/call.js";
-import { loadSessionStore, resolveSessionFilePath } from "../plugin-sdk/session-store-runtime.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { reconcileInspectableTasks } from "../tasks/task-registry.reconcile.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
@@ -23,12 +24,11 @@ export type SlackThreadRef = {
   sessionSuffix: string;
 };
 
-type ThreadSessionMatch = {
+export type ThreadSessionMatch = {
   agentId: string;
   sessionKey: string;
   storePath: string;
   entry: SessionEntry;
-  sessionFile?: string;
 };
 
 type ThreadTranscriptTail = {
@@ -88,8 +88,11 @@ function sessionsForThread(ref: SlackThreadRef): ThreadSessionMatch[] {
   const cfg = getRuntimeConfig();
   const matches: ThreadSessionMatch[] = [];
   for (const target of resolveAllAgentSessionStoreTargetsSync(cfg)) {
-    const store = loadSessionStore(target.storePath, { skipCache: true });
-    for (const [sessionKey, entry] of Object.entries(store)) {
+    for (const { sessionKey, entry } of listSessionEntriesReadOnly({
+      agentId: target.agentId,
+      storePath: target.storePath,
+      readConsistency: "latest",
+    })) {
       if (!sessionKey.endsWith(ref.sessionSuffix)) {
         continue;
       }
@@ -98,62 +101,59 @@ function sessionsForThread(ref: SlackThreadRef): ThreadSessionMatch[] {
         sessionKey,
         storePath: target.storePath,
         entry,
-        sessionFile: resolveSessionFilePath(entry.sessionId, entry, {
-          sessionsDir: path.dirname(target.storePath),
-          agentId: target.agentId,
-        }),
       });
     }
   }
   return matches.toSorted((left, right) => right.entry.updatedAt - left.entry.updatedAt);
 }
 
-async function readThreadTranscriptTail(
-  sessionFile: string | undefined,
+export async function readThreadTranscriptTail(
+  session: ThreadSessionMatch | undefined,
 ): Promise<ThreadTranscriptTail> {
-  if (!sessionFile) {
+  if (!session?.entry.sessionId) {
     return {};
   }
   const tail: ThreadTranscriptTail = {};
-  let inspected = 0;
-  for await (const line of streamSessionTranscriptLinesReverse(sessionFile)) {
-    inspected += 1;
-    try {
-      const parsed = JSON.parse(line) as {
-        timestamp?: string;
-        message?: {
-          role?: string;
+  const events = loadTranscriptTailEventsSync(
+    {
+      agentId: session.agentId,
+      sessionId: session.entry.sessionId,
+      sessionKey: session.sessionKey,
+      storePath: session.storePath,
+    },
+    200,
+  );
+  for (const event of events.toReversed()) {
+    const parsed = event as {
+      timestamp?: string;
+      message?: {
+        role?: string;
+        toolName?: string;
+        errorMessage?: string;
+        content?: Array<{
           toolName?: string;
-          errorMessage?: string;
-          content?: Array<{
-            toolName?: string;
-            name?: string;
-            isError?: boolean;
-            content?: string;
-          }>;
-        };
+          name?: string;
+          isError?: boolean;
+          content?: string;
+        }>;
       };
-      const message = parsed.message;
-      if (!tail.lastTool && message?.role === "toolResult") {
-        const first = Array.isArray(message.content) ? message.content[0] : undefined;
-        tail.lastTool = message.toolName ?? first?.toolName ?? first?.name;
-        tail.lastToolAt = parsed.timestamp;
+    };
+    const message = parsed.message;
+    if (!tail.lastTool && message?.role === "toolResult") {
+      const first = Array.isArray(message.content) ? message.content[0] : undefined;
+      tail.lastTool = message.toolName ?? first?.toolName ?? first?.name;
+      tail.lastToolAt = parsed.timestamp;
+    }
+    if (!tail.lastError) {
+      const first = Array.isArray(message?.content) ? message.content[0] : undefined;
+      if (message?.errorMessage) {
+        tail.lastError = message.errorMessage;
+      } else if (first?.isError && first.content) {
+        tail.lastError = first.content.slice(0, 500);
       }
-      if (!tail.lastError) {
-        const first = Array.isArray(message?.content) ? message.content[0] : undefined;
-        if (message?.errorMessage) {
-          tail.lastError = message.errorMessage;
-        } else if (first?.isError && first.content) {
-          tail.lastError = first.content.slice(0, 500);
-        }
-      }
-      if ((tail.lastTool && tail.lastError) || inspected >= 200) {
-        break;
-      }
-    } catch {
-      if (inspected >= 200) {
-        break;
-      }
+    }
+    if (tail.lastTool && tail.lastError) {
+      break;
     }
   }
   return tail;
@@ -165,7 +165,7 @@ async function inspectThread(rawPermalink: string) {
   const sessions = sessionsForThread(ref);
   const latestTask = tasks[0];
   const session = sessions[0];
-  const transcript = await readThreadTranscriptTail(session?.sessionFile);
+  const transcript = await readThreadTranscriptTail(session);
   return {
     ref,
     tasks,
