@@ -228,7 +228,8 @@ const SLACK_THREAD_HISTORY_MAX_PAGES = 3;
 function isSlackTimestampBefore(candidate: string | undefined, current: string): boolean {
   const parse = (value: string | undefined): [seconds: bigint, fraction: string] | null => {
     const match = value?.trim().match(/^(\d+)(?:\.(\d+))?$/u);
-    return match ? [BigInt(match[1]), match[2] ?? ""] : null;
+    const seconds = match?.[1];
+    return seconds ? [BigInt(seconds), match[2] ?? ""] : null;
   };
   const candidateParts = parse(candidate);
   const currentParts = parse(current);

@@ -72,6 +72,28 @@ function delegatedResponse() {
   } as Response;
 }
 
+function mockPdfDownload() {
+  mocks.execFile.mockImplementation(async (_binary, args: string[]) => {
+    if (args.includes("info")) {
+      return {
+        stdout: JSON.stringify({
+          id: "drive-file-1",
+          name: "Contract.pdf",
+          mimeType: "application/pdf",
+          size: "1024",
+        }),
+        stderr: "",
+      };
+    }
+    const targetFolder = args[args.indexOf("targetfolder") + 1];
+    if (!targetFolder) {
+      throw new Error("expected Drive download target folder");
+    }
+    await fs.writeFile(path.join(targetFolder, "Contract.pdf"), "%PDF-1.4 test");
+    return { stdout: "downloaded", stderr: "" };
+  });
+}
+
 describe("Fi user requester-bound Google Drive", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -140,23 +162,7 @@ describe("Fi user requester-bound Google Drive", () => {
   });
 
   it("downloads and extracts a requester-visible PDF for the model", async () => {
-    mocks.execFile.mockImplementation(async (_binary, args: string[]) => {
-      if (args.includes("info")) {
-        return {
-          stdout: JSON.stringify({
-            id: "drive-file-1",
-            name: "Contract.pdf",
-            mimeType: "application/pdf",
-            size: "1024",
-          }),
-          stderr: "",
-        };
-      }
-      const targetIndex = args.indexOf("targetfolder");
-      const targetFolder = args[targetIndex + 1];
-      await fs.writeFile(path.join(targetFolder, "Contract.pdf"), "%PDF-1.4 test");
-      return { stdout: "downloaded", stderr: "" };
-    });
+    mockPdfDownload();
     mocks.extractDocumentContent.mockResolvedValue({
       text: "Developer-favorable scope text",
       images: [{ type: "image", data: "cG5n", mimeType: "image/png" }],
@@ -188,6 +194,38 @@ describe("Fi user requester-bound Google Drive", () => {
         mailbox: "member@example.com",
         extractedTextChars: 30,
         extractedImageCount: 1,
+      }),
+    );
+  });
+
+  it("continues a bounded PDF read from a later page", async () => {
+    mockPdfDownload();
+    mocks.extractDocumentContent.mockResolvedValue({
+      text: "Exhibit A scope text",
+      images: [],
+      extractor: "pdf",
+    });
+    const drive = registeredTools(slackContext()).find((tool) => tool.name === "fi_user_gdrive");
+    if (!drive) {
+      throw new Error("expected Drive tool");
+    }
+
+    const result = await drive.execute("call-3", {
+      action: "read",
+      fileId: "drive-file-1",
+      startPage: 31,
+      maxPages: 12,
+    });
+
+    expect(mocks.extractDocumentContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxPages: 12,
+        pageNumbers: Array.from({ length: 12 }, (_, index) => index + 31),
+      }),
+    );
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        requestedPages: { start: 31, end: 42, continueWithStartPage: 43 },
       }),
     );
   });
