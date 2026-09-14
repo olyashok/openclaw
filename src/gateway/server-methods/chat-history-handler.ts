@@ -31,6 +31,7 @@ import {
 } from "../chat-abort.js";
 import { resolveEffectiveChatHistoryMaxChars } from "../chat-display-projection.js";
 import { resolveClaudeCliBindingSessionId } from "../cli-session-history.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import type { ChatRunState } from "../server-chat-state.js";
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
 import { buildGatewaySessionSnapshot } from "../session-event-payload.js";
@@ -112,6 +113,7 @@ async function handleChatMetadataRequest({
   params,
   respond,
   context,
+  client,
 }: GatewayRequestHandlerOptions): Promise<void> {
   if (!assertValidParams(params, validateChatMetadataParams, "chat.metadata", respond)) {
     return;
@@ -132,6 +134,21 @@ async function handleChatMetadataRequest({
     const session = loadGatewaySessionEntryReadOnly(metadataParams.sessionKey, {
       agentId: requested.agentId,
     });
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg: session.cfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: session.canonicalKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.FORBIDDEN, "Matrix conversation access requires the owning app"),
+      );
+      return;
+    }
     respond(
       true,
       await context.readChatMetadata({
@@ -170,6 +187,7 @@ async function handleChatHistoryRequest({
   respond,
   context,
   method,
+  client,
 }: GatewayRequestHandlerOptions & {
   method: ChatHistoryMethod;
 }) {
@@ -245,6 +263,21 @@ async function handleChatHistoryRequest({
       phase: method,
     },
   );
+  if (
+    isUnauthorizedRawMatrixBrowserSession({
+      cfg,
+      clientInfo: client?.connect?.client,
+      sessionKey: canonicalKey,
+      authorizedByBinding: false,
+    })
+  ) {
+    respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.FORBIDDEN, "Matrix conversation access requires the owning app"),
+    );
+    return;
+  }
   const selectedAgent = validateChatSelectedAgent({
     cfg,
     requestedSessionKey: sessionKey,

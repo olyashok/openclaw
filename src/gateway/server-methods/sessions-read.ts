@@ -34,6 +34,7 @@ import {
   normalizeAgentId,
   parseAgentSessionKey,
 } from "../../routing/session-key.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import { hasOperatorBoundary } from "../operator-role-policy.js";
 import {
   resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId,
@@ -102,6 +103,16 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       : undefined;
     const restrictVisibility = restrictIncognito || Boolean(roleVisibilityFilter);
     const canSearchSessionKey = (sessionKey: string) => {
+      if (
+        isUnauthorizedRawMatrixBrowserSession({
+          cfg,
+          clientInfo: client?.connect?.client,
+          sessionKey,
+          authorizedByBinding: false,
+        })
+      ) {
+        return false;
+      }
       if (
         isIncognitoSessionKey(sessionKey) &&
         !canAccessIncognitoSession({ cfg, client: client ?? null, sessionKey })
@@ -277,18 +288,22 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           }
           const { durableStorePath, durableTargets, modelCatalogByAgent, storePath } = loaded;
           const visibilityFilter = prepareSessionSharing({ client, cfg }).entryFilter;
-          const entryFilter =
-            visibilityFilter || options.excludedKeys?.size
-              ? (key: string, entry: SessionEntry) =>
-                  !options.excludedKeys?.has(key) && (visibilityFilter?.(key, entry) ?? true)
-              : undefined;
+          const entryFilter = (key: string, entry: SessionEntry) =>
+            !options.excludedKeys?.has(key) &&
+            !isUnauthorizedRawMatrixBrowserSession({
+              cfg,
+              clientInfo: client?.connect?.client,
+              sessionKey: key,
+              authorizedByBinding: false,
+            }) &&
+            (visibilityFilter?.(key, entry) ?? true);
           const result = await measureDiagnosticsTimelineSpan(
             "gateway.sessions.list.rows",
             () =>
               listSessionsFromStoreAsync({
                 cfg,
                 durableStorePath,
-                ...(entryFilter ? { entryFilter } : {}),
+                entryFilter,
                 storePath,
                 store: loaded.store,
                 modelCatalog: modelCatalogByAgent,
@@ -586,6 +601,17 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           agentId: requestedAgent.agentId,
           store,
         });
+        if (
+          isUnauthorizedRawMatrixBrowserSession({
+            cfg,
+            clientInfo: client?.connect?.client,
+            sessionKey: target.canonicalKey,
+            authorizedByBinding: false,
+          })
+        ) {
+          previews.push({ key, status: "missing", items: [] });
+          continue;
+        }
         const entry = resolveCanonicalSessionEntryFromStoreKeys(store, target.storeKeys);
         if (!entry?.sessionId || roleVisibilityFilter?.(target.canonicalKey, entry) === false) {
           previews.push({ key, status: "missing", items: [] });
@@ -610,7 +636,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
 
     respond(true, { ts: Date.now(), previews } satisfies SessionsPreviewResult, undefined);
   },
-  "sessions.describe": ({ params, respond, context }) => {
+  "sessions.describe": ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateSessionsDescribeParams, "sessions.describe", respond)) {
       return;
     }
@@ -629,6 +655,17 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       cfg,
       ...(requestedAgent.agentId ? { agentId: requestedAgent.agentId } : {}),
     });
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: target.canonicalKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      respond(true, { session: null }, undefined);
+      return;
+    }
     if (!entry) {
       respond(true, { session: null }, undefined);
       return;
@@ -668,7 +705,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
     }
     respond(true, resolved, undefined);
   },
-  "sessions.get": async ({ params, respond, context }) => {
+  "sessions.get": async ({ params, respond, context, client }) => {
     const p = params as {
       key?: unknown;
       sessionKey?: unknown;
@@ -694,11 +731,22 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       respond(false, undefined, requestedAgent.error);
       return;
     }
-    const { storePath, entry } = loadSessionEntriesForTarget({
+    const { target, storePath, entry } = loadSessionEntriesForTarget({
       key,
       cfg,
       agentId: requestedAgent.agentId,
     });
+    if (
+      isUnauthorizedRawMatrixBrowserSession({
+        cfg,
+        clientInfo: client?.connect?.client,
+        sessionKey: target.canonicalKey,
+        authorizedByBinding: false,
+      })
+    ) {
+      respond(true, { messages: [] }, undefined);
+      return;
+    }
     if (!entry?.sessionId) {
       respond(true, { messages: [] }, undefined);
       return;
