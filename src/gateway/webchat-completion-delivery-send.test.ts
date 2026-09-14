@@ -12,11 +12,15 @@ const sessionDelivery = vi.hoisted(() => ({
   load: vi.fn(),
   schedule: vi.fn(),
 }));
+const outboundDelivery = vi.hoisted(() => ({ loadCompletedReceipt: vi.fn() }));
 vi.mock("../channels/turn/durable-delivery.js", () => ({
   deliverInboundReplyWithMessageSendContextCore,
 }));
 vi.mock("../infra/outbound/session-binding-service.js", () => ({
   getSessionBindingService: () => ({ bind: bindSessionConversation }),
+}));
+vi.mock("../infra/outbound/delivery-queue-storage.js", () => ({
+  loadCompletedDeliveryReceipt: outboundDelivery.loadCompletedReceipt,
 }));
 vi.mock("../infra/session-delivery-queue-runtime.js", () => ({
   scheduleSessionDelivery: sessionDelivery.schedule,
@@ -80,6 +84,7 @@ describe("deliverWebchatCompletionFallback", () => {
       status: "pending",
     });
     sessionDelivery.load.mockResolvedValue(null);
+    outboundDelivery.loadCompletedReceipt.mockResolvedValue(null);
     sessionDelivery.schedule.mockResolvedValue(true);
   });
 
@@ -295,10 +300,39 @@ describe("deliverWebchatCompletionFallback", () => {
     const log = { warn: vi.fn() };
     bindSessionConversation.mockRejectedValueOnce(new Error("binding unavailable"));
 
-    expect(await deliverWebchatCompletionFallback(baseParams({ log }))).toBe("handled");
+    expect(await deliverWebchatCompletionFallback(baseParams({ log }))).toBe("failed");
     expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledTimes(1);
     expect(log.warn).toHaveBeenCalledWith(
       expect.stringContaining("continuation binding failed run=run-1"),
+    );
+  });
+
+  it("retries only the exact-thread binding after a crash boundary retained the provider receipt", async () => {
+    const log = { warn: vi.fn() };
+    bindSessionConversation.mockRejectedValueOnce(new Error("simulated crash before bind commit"));
+    const params = baseParams({ log, deliveryIntentId: "outer-delivery-1" });
+
+    expect(await deliverWebchatCompletionFallback(params)).toBe("failed");
+    deliverInboundReplyWithMessageSendContextCore.mockResolvedValueOnce({
+      status: "handled_visible",
+      delivery: { visibleReplySent: false },
+    });
+    outboundDelivery.loadCompletedReceipt.mockResolvedValueOnce({
+      platformMessageId: "1700000000.000001",
+    });
+    params.state!.attemptedAtMs = undefined;
+
+    expect(await deliverWebchatCompletionFallback(params)).toBe("handled");
+    expect(outboundDelivery.loadCompletedReceipt).toHaveBeenCalledWith(
+      "webchat-completion-outbound:v1:outer-delivery-1",
+    );
+    expect(bindSessionConversation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        conversation: expect.objectContaining({
+          conversationId: "1700000000.000001",
+          parentConversationId: "user:U123",
+        }),
+      }),
     );
   });
 

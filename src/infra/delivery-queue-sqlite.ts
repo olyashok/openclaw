@@ -244,7 +244,12 @@ export function deleteDeliveryQueueEntry(queueName: string, id: string, stateDir
 }
 
 /** Retain a delivered row as a durable idempotency tombstone. */
-export function completeDeliveryQueueEntry(queueName: string, id: string, stateDir?: string): void {
+export function completeDeliveryQueueEntry(
+  queueName: string,
+  id: string,
+  stateDir?: string,
+  completionReceipt?: Readonly<{ platformMessageId: string }>,
+): void {
   const now = Date.now();
   const current = loadDeliveryQueueEntry(queueName, id, stateDir);
   const requestedRetention = current?.completionRetention;
@@ -253,7 +258,7 @@ export function completeDeliveryQueueEntry(queueName: string, id: string, stateD
     throw new Error(`Invalid bounded delivery completion retention: ${queueName}/${id}`);
   }
   const tombstone = projectDeliveryQueueTerminalEntry(
-    { id, retryCount: 0 },
+    { id, retryCount: 0, completionReceipt },
     now,
     "completed",
     retention,

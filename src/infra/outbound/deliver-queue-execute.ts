@@ -129,12 +129,19 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
         expectedPlatformSendAttemptId: () => producerClaimId,
       })
     : undefined;
-  const ackOwnedQueue = (options?: { suppressCompletionReceipt?: boolean }) => {
+  const ackOwnedQueue = (options?: {
+    suppressCompletionReceipt?: boolean;
+    completionReceipt?: Readonly<{ platformMessageId: string }>;
+  }) => {
     throwIfProducerLeaseLost();
     if (!queueOwner) {
       throw new Error("Queued delivery acknowledgement requires a queue id");
     }
     return queueOwner.ack(options);
+  };
+  const completionReceipt = (): { platformMessageId: string } | undefined => {
+    const platformMessageId = deliveredResults.at(-1)?.messageId.trim();
+    return platformMessageId ? { platformMessageId } : undefined;
   };
   const recordOwnedQueueFailure = (
     record: typeof failDelivery | typeof failDeliveryAfterPlatformSend,
@@ -439,7 +446,7 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
               : await (
                   results.length === 0 && typeof params.completionRetention === "object"
                     ? ackOwnedQueue({ suppressCompletionReceipt: true })
-                    : ackOwnedQueue()
+                    : ackOwnedQueue({ completionReceipt: completionReceipt() })
                 )
                   .then(() => true)
                   .catch(async (err: unknown) => {
