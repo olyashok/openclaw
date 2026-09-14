@@ -2,15 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   verifyClaim: vi.fn(),
-  resolveRoute: vi.fn(),
+  resolveMatrixBinding: vi.fn(),
   deliver: vi.fn(),
 }));
 vi.mock("../webchat-completion-delivery.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../webchat-completion-delivery.js")>()),
   verifyWebchatCompletionDeliveryClaim: mocks.verifyClaim,
 }));
-vi.mock("../../infra/outbound/outbound-session.js", () => ({
-  resolveOutboundSessionRoute: mocks.resolveRoute,
+vi.mock("../talk-matrix-binding.js", () => ({
+  resolveMatrixTalkBinding: mocks.resolveMatrixBinding,
 }));
 vi.mock("../webchat-completion-delivery-send.js", () => ({
   deliverWebchatCompletionFallback: mocks.deliver,
@@ -23,10 +23,10 @@ describe("conversation.continue", () => {
     vi.clearAllMocks();
     process.env.OPENCLAW_WEBCHAT_COMPLETION_DELIVERY_SECRET = "test-secret";
     mocks.verifyClaim.mockReturnValue({ channel: "slack", to: "user:U3", accountId: "fi-admin" });
-    mocks.resolveRoute.mockResolvedValue({
-      recipientSessionExact: true,
+    mocks.resolveMatrixBinding.mockResolvedValue({
       sessionKey: "agent:cellect-fi-admin:matrix:room:thread",
-      peer: { kind: "group", id: "!room:example" },
+      agentId: "cellect-fi-admin",
+      accountId: "matrix-admin",
     });
     mocks.deliver.mockResolvedValue("handled");
   });
@@ -39,7 +39,7 @@ describe("conversation.continue", () => {
           channel: "matrix",
           roomId: "!room:example",
           threadRootEventId: "$root",
-          agentMxid: "@cellect-fi-admin:example.org",
+          agentMxid: "@cellect-fi-dev:example.org",
         },
         destinationClaim: "signed-claim",
       },
@@ -47,13 +47,15 @@ describe("conversation.continue", () => {
       context: { getRuntimeConfig: () => ({}), logGateway: { warn: vi.fn() } },
     } as never);
 
-    expect(mocks.resolveRoute).toHaveBeenCalledWith(
+    expect(mocks.resolveMatrixBinding).toHaveBeenCalledWith(
       expect.objectContaining({
-        channel: "matrix",
-        agentId: "cellect-fi-admin",
-        target: "!room:example",
-        threadId: "$root",
+        roomId: "!room:example",
+        threadRootEventId: "$root",
+        agentMxid: "@cellect-fi-dev:example.org",
       }),
+    );
+    expect(mocks.verifyClaim).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedAgentId: "cellect-fi-admin" }),
     );
     expect(mocks.deliver).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -65,7 +67,7 @@ describe("conversation.continue", () => {
     expect(respond).toHaveBeenCalledWith(true, { status: "continued" });
   });
 
-  it("rejects a signed shared-channel destination before Matrix resolution", async () => {
+  it("rejects a signed shared-channel destination after canonical Matrix identity resolution", async () => {
     mocks.verifyClaim.mockReturnValue({ channel: "slack", to: "channel:C1" });
     const respond = vi.fn();
     await handleConversationContinue({
@@ -76,7 +78,7 @@ describe("conversation.continue", () => {
       respond,
       context: { getRuntimeConfig: () => ({}), logGateway: { warn: vi.fn() } },
     } as never);
-    expect(mocks.resolveRoute).not.toHaveBeenCalled();
+    expect(mocks.resolveMatrixBinding).toHaveBeenCalledOnce();
     expect(respond).toHaveBeenCalledWith(false, undefined, expect.any(Object));
   });
 });
