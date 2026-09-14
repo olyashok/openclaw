@@ -74,7 +74,7 @@ describe("deliverWebchatCompletionFallback", () => {
     vi.clearAllMocks();
     deliverInboundReplyWithMessageSendContextCore.mockResolvedValue({
       status: "handled_visible",
-      delivery: { visibleReplySent: true },
+      delivery: { visibleReplySent: true, messageIds: ["1700000000.000001"] },
     });
     bindSessionConversation.mockResolvedValue({ bindingId: "default:user:U123" });
     sessionDelivery.complete.mockResolvedValue(undefined);
@@ -215,7 +215,7 @@ describe("deliverWebchatCompletionFallback", () => {
     expect(bindSessionConversation).not.toHaveBeenCalled();
   });
 
-  it("recovers a persisted completion and binds Slack replies to the original session", async () => {
+  it("recovers a persisted completion and binds only its Slack message thread to the original session", async () => {
     await deliverQueuedWebchatCompletionFallback({
       cfg: {},
       entry: {
@@ -241,10 +241,47 @@ describe("deliverWebchatCompletionFallback", () => {
         conversation: {
           channel: "slack",
           accountId: "fi-admin",
-          conversationId: "user:U123",
+          conversationId: "1700000000.000001",
+          parentConversationId: "user:U123",
         },
       }),
     );
+    expect(deliverInboundReplyWithMessageSendContextCore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryIntentId: "webchat-completion-outbound:v1:queued-completion",
+        reusePendingDeliveryIntent: true,
+        completionRetention: expect.objectContaining({
+          idPrefix: "webchat-completion-outbound:v1:",
+        }),
+      }),
+    );
+  });
+
+  it("never binds a shared Slack destination to a private WebChat session", async () => {
+    const log = { warn: vi.fn() };
+    const sharedState: WebchatCompletionDeliveryState = {
+      route: { channel: "slack", to: "channel:C123", accountId: "fi-admin" },
+    };
+
+    expect(await deliverWebchatCompletionFallback(baseParams({ state: sharedState, log }))).toBe(
+      "handled",
+    );
+    expect(bindSessionConversation).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("continuation disabled for non-private destination"),
+    );
+  });
+
+  it("fails closed when Slack does not return the message identity needed for a thread binding", async () => {
+    const log = { warn: vi.fn() };
+    deliverInboundReplyWithMessageSendContextCore.mockResolvedValueOnce({
+      status: "handled_visible",
+      delivery: { visibleReplySent: true },
+    });
+
+    expect(await deliverWebchatCompletionFallback(baseParams({ log }))).toBe("handled");
+    expect(bindSessionConversation).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("missing provider message id"));
   });
 
   it("does not bind a destination when no reply became visible", async () => {
@@ -278,9 +315,11 @@ describe("deliverWebchatCompletionFallback", () => {
     });
 
     expect(await deliverWebchatCompletionFallback(baseParams({ log }))).toBe("handled");
-    expect(bindSessionConversation).toHaveBeenCalledTimes(1);
+    expect(bindSessionConversation).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(
-      expect.stringContaining("delivery partially completed run=run-1"),
+      expect.stringContaining(
+        "delivery partially completed without continuation binding run=run-1",
+      ),
     );
   });
 });

@@ -37,7 +37,16 @@ export type WebchatCompletionFallbackParams = {
   fallbackError?: string;
   nowMs?: number;
   log: { warn: (message: string) => void };
+  /** Stable outer-queue identity used to deduplicate the provider send after restart. */
+  deliveryIntentId?: string;
 };
+
+const COMPLETION_OUTBOUND_INTENT_PREFIX = "webchat-completion-outbound:v1:";
+const completionOutboundRetention = {
+  idPrefix: COMPLETION_OUTBOUND_INTENT_PREFIX,
+  maxAgeMs: 24 * 60 * 60_000,
+  maxEntries: 2_000,
+} as const;
 
 type PendingWebchatCompletion = {
   state: WebchatCompletionDeliveryState;
@@ -184,11 +193,34 @@ function resolveCompletionAnswer(params: WebchatCompletionFallbackParams): strin
   return params.fallbackError?.trim() || replyText;
 }
 
-async function bindCompletionConversation(params: WebchatCompletionFallbackParams): Promise<void> {
+function isPrivateSlackDestination(route: WebchatCompletionDeliveryState["route"]): boolean {
+  // Fi's signed route issuer uses Slack's canonical `user:<member-id>` target for a DM.
+  // Unknown/bare/channel targets are notification-only: failing closed here prevents a
+  // private WebChat transcript from becoming the current session of a shared channel.
+  return route.channel === "slack" && /^user:[^:]+$/i.test(route.to.trim());
+}
+
+async function bindCompletionConversation(
+  params: WebchatCompletionFallbackParams,
+  messageId: string | undefined,
+): Promise<void> {
   const targetSessionKey = params.sessionKey ?? params.ctx.SessionKey;
   if (!targetSessionKey) {
     params.log.warn(
       `webchat completion continuation binding failed run=${params.runId}: missing session key`,
+    );
+    return;
+  }
+  if (!isPrivateSlackDestination(params.state!.route)) {
+    params.log.warn(
+      `webchat completion continuation disabled for non-private destination run=${params.runId}`,
+    );
+    return;
+  }
+  const normalizedMessageId = messageId?.trim();
+  if (!normalizedMessageId) {
+    params.log.warn(
+      `webchat completion continuation binding failed run=${params.runId}: missing provider message id`,
     );
     return;
   }
@@ -201,7 +233,8 @@ async function bindCompletionConversation(params: WebchatCompletionFallbackParam
       conversation: {
         channel: route.channel,
         accountId: route.accountId ?? "default",
-        conversationId: route.to,
+        conversationId: normalizedMessageId,
+        parentConversationId: route.to,
       },
       metadata: {
         agentId: params.agentId,
@@ -266,12 +299,18 @@ export async function deliverWebchatCompletionFallback(
       messageSendingHooks: true,
       reconcileUnknownSend: true,
     },
+    ...(params.deliveryIntentId
+      ? {
+          deliveryIntentId: `${COMPLETION_OUTBOUND_INTENT_PREFIX}${params.deliveryIntentId}`,
+          reusePendingDeliveryIntent: true,
+          completionRetention: completionOutboundRetention,
+        }
+      : {}),
   }).catch((error: unknown) => ({ status: "failed" as const, error }));
   if (result.status === "failed") {
     if (result.sentBeforeError) {
-      await bindCompletionConversation(params);
       params.log.warn(
-        `webchat completion delivery partially completed run=${params.runId}: ${String(result.error)}`,
+        `webchat completion delivery partially completed without continuation binding run=${params.runId}: ${String(result.error)}`,
       );
       return "handled";
     }
@@ -289,7 +328,7 @@ export async function deliverWebchatCompletionFallback(
   if (result.status === "handled_visible") {
     // Delivery is already recipient-visible, so binding failure is observable but
     // must not retry and duplicate the final answer.
-    await bindCompletionConversation(params);
+    await bindCompletionConversation(params, result.delivery.messageIds?.[0]);
   }
   return "handled";
 }
@@ -312,6 +351,7 @@ export async function deliverQueuedWebchatCompletionFallback(params: {
     ctx: { SessionKey: entry.sessionKey },
     replies: [{ kind: "final", payload: { text: entry.text } }],
     ...(entry.isError ? { fallbackError: entry.text } : {}),
+    deliveryIntentId: entry.id,
     log: params.log,
   });
   if (result !== "handled") {
