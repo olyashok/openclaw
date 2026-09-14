@@ -5,6 +5,7 @@ import type { BoundedSerialQueue } from "../shared/bounded-serial-queue.js";
 import type { RealtimeVoiceAgentControlResult } from "../talk/agent-run-control.js";
 import type {
   RealtimeVoiceBrowserAudioContract,
+  RealtimeVoiceCloseDisposition,
   RealtimeVoiceAudioClearReason,
   RealtimeVoiceAgentConsultRunner,
   RealtimeVoiceProviderConfig,
@@ -189,6 +190,7 @@ export type RelaySession = {
   sessionKey?: string;
   agentId?: string;
   speakerMxid?: string;
+  closeDisposition?: RealtimeVoiceCloseDisposition;
   matrixRoute?: { channel: "matrix"; roomId: string; threadRootEventId: string; accountId: string };
   expiresAtMs: number;
   cleanupTimer: ReturnType<typeof setTimeout>;
