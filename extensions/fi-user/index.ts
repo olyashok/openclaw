@@ -224,6 +224,7 @@ const GDriveSchema = Type.Object(
     query: Type.Optional(Type.String({ maxLength: 1_000 })),
     maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
     fileId: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9_-]+$" })),
+    startPage: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
     maxPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
     password: Type.Optional(Type.String({ maxLength: 500 })),
   },
@@ -285,6 +286,7 @@ async function readDriveFile(params: {
   config: Required<PluginConfig>;
   mailbox: string;
   fileId: string;
+  startPage: number;
   maxPages: number;
   password?: string;
 }): Promise<AgentToolResult<Record<string, unknown>>> {
@@ -312,10 +314,10 @@ async function readDriveFile(params: {
       "false",
     ]);
     const files = await downloadedFiles(tempDir);
-    if (files.length !== 1) {
+    const filePath = files[0];
+    if (files.length !== 1 || !filePath) {
       throw new Error(`Expected one downloaded Drive file but found ${files.length}`);
     }
-    const filePath = files[0];
     const bytes = await fs.readFile(filePath);
     if (bytes.byteLength > MAX_DRIVE_FILE_BYTES) {
       throw new Error(
@@ -327,12 +329,22 @@ async function readDriveFile(params: {
       metadata.mimeType === "application/pdf" ||
       path.extname(filePath).toLowerCase() === ".pdf"
     ) {
+      const requestedPages = {
+        start: params.startPage,
+        end: params.startPage + params.maxPages - 1,
+        continueWithStartPage: params.startPage + params.maxPages,
+      };
+      const pageNumbers = Array.from(
+        { length: params.maxPages },
+        (_, index) => params.startPage + index,
+      );
       const extracted = await extractDocumentContent({
         buffer: bytes,
         mimeType: "application/pdf",
         maxPages: params.maxPages,
         maxPixels: 20_000_000,
         minTextChars: 1,
+        pageNumbers,
         ...(params.password ? { password: params.password } : {}),
       });
       if (!extracted) {
@@ -344,12 +356,13 @@ async function readDriveFile(params: {
         extractedTextChars: extracted.text.length,
         extractedImageCount: extracted.images.length,
         extractor: extracted.extractor,
+        requestedPages,
       };
       const content: AgentToolResult<typeof details>["content"] = [
         {
           type: "text",
           text: JSON.stringify(
-            { mailbox: params.mailbox, file: metadata, text: extracted.text },
+            { mailbox: params.mailbox, file: metadata, requestedPages, text: extracted.text },
             null,
             2,
           ),
@@ -363,6 +376,9 @@ async function readDriveFile(params: {
       metadata.mimeType === "application/vnd.google-apps.document" ||
       isTextFile(metadata, filePath)
     ) {
+      if (params.startPage !== 1) {
+        throw new Error("startPage is available only for PDF files");
+      }
       const text = bytes.toString("utf8").slice(0, MAX_DRIVE_TEXT_CHARS);
       return jsonResult({ mailbox: params.mailbox, file: metadata, text });
     }
@@ -382,7 +398,7 @@ function createGDriveTool(
     name: "fi_user_gdrive",
     label: "My Google Drive",
     description:
-      "Search and read files only from the current verified Cellect Fi requester's Google Drive. The Drive identity is fixed by Fi membership and cannot be selected by the model. Search uses Google Drive query syntax and includes files shared with the requester.",
+      "Search and read files only from the current verified Cellect Fi requester's Google Drive. The Drive identity is fixed by Fi membership and cannot be selected by the model. Search uses Google Drive query syntax and includes files shared with the requester. PDF reads are bounded page windows: use startPage to continue later sections and maxPages to control the window; a bounded result does not mean the source file is truncated.",
     parameters: GDriveSchema,
     async execute(_toolCallId, raw) {
       const input = raw as {
@@ -390,6 +406,7 @@ function createGDriveTool(
         query?: string;
         maxResults?: number;
         fileId?: string;
+        startPage?: number;
         maxPages?: number;
         password?: string;
       };
@@ -421,6 +438,7 @@ function createGDriveTool(
         config,
         mailbox,
         fileId: input.fileId,
+        startPage: input.startPage ?? 1,
         maxPages: input.maxPages ?? 30,
         ...(input.password ? { password: input.password } : {}),
       });
