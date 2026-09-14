@@ -141,6 +141,10 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
       },
       params.deliveryQueueStateContext,
     );
+  const completionReceipt = (): { platformMessageId: string } | undefined => {
+    const platformMessageId = deliveredResults.at(-1)?.messageId.trim();
+    return platformMessageId ? { platformMessageId } : undefined;
+  };
   const emitTerminals = (
     terminals: Parameters<typeof emitOutboundAuditTerminals>[0]["terminals"],
   ): void => {
@@ -512,7 +516,7 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
               : await (
                   results.length === 0 && typeof params.completionRetention === "object"
                     ? queueOwner.ack({ suppressCompletionReceipt: true })
-                    : queueOwner.ack()
+                    : queueOwner.ack({ completionReceipt: completionReceipt() })
                 )
                   .then(() => true)
                   .catch(async (err: unknown) => {
@@ -626,11 +630,8 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
               queuedPostSendState = "failed";
             }
           } else if (
-            await (
-              producerClaimId
-                ? queueOwner.ack({ suppressCompletionReceipt: true })
-                : queueOwner.ack()
-            )
+            await queueOwner
+              .ack({ suppressCompletionReceipt: true })
               .then(() => true)
               .catch(() => false)
           ) {

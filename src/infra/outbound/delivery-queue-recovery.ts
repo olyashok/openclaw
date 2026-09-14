@@ -731,7 +731,7 @@ async function drainQueuedEntry(
             stateContext,
           );
         }
-        await owner.ack();
+        await owner.ack({ completionReceipt: { platformMessageId: result.messageId } });
         emitRecoveredTerminalSuccess(entry, result);
         await runReconciledSentCommitHooks({
           entry,
@@ -1033,7 +1033,11 @@ async function drainQueuedEntry(
       try {
         await (results.length === 0 && typeof entry.completionRetention === "object"
           ? owner.ack({ suppressCompletionReceipt: true })
-          : owner.ack());
+          : owner.ack(
+              results.at(-1)?.messageId
+                ? { completionReceipt: { platformMessageId: results.at(-1)!.messageId } }
+                : undefined,
+            ));
         postSendState = "acked";
       } catch (ackErr) {
         const ackError = `failed to ack recovered delivery: ${formatErrorMessage(ackErr)}`;
