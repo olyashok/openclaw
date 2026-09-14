@@ -1,6 +1,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveOutboundSessionRoute } from "../infra/outbound/outbound-session.js";
+import { resolveLoadedPluginConversationRouteOwner } from "./conversation-route-ownership.js";
 
 export async function resolveMatrixTalkBinding(params: {
   cfg: OpenClawConfig;
@@ -26,13 +27,22 @@ export async function resolveMatrixTalkBinding(params: {
     throw new Error("Matrix Talk agent account did not resolve uniquely");
   }
   const accountId = matches[0]!;
-  const binding = params.cfg.bindings?.find(
-    (candidate) =>
-      candidate.type !== "acp" &&
-      candidate.match?.channel === "matrix" &&
-      candidate.match?.accountId === accountId,
-  );
-  const agentId = normalizeOptionalString(binding?.agentId);
+  const owner = resolveLoadedPluginConversationRouteOwner({
+    config: params.cfg,
+    conversation: {
+      channel: "matrix",
+      accountId,
+      kind: "channel",
+      peerId: roomId,
+      nativeChannelId: roomId,
+      target: `room:${roomId}`,
+      threadId: threadRootEventId,
+    },
+  });
+  if (owner && "unavailable" in owner) {
+    throw new Error("Matrix Talk agent route is temporarily unavailable");
+  }
+  const agentId = normalizeOptionalString(owner?.agentId);
   if (!agentId) {
     throw new Error("Matrix Talk agent route is not configured");
   }

@@ -170,11 +170,13 @@ export const createTalkClient: GatewayRequestHandler = async ({
     replacement?.assertCurrent(target);
     const { agentId, sessionKey } = target;
     const sessionTarget = { agentId, sessionKey: target.canonicalKey, storePath: target.storePath };
+    const rawMatrixSessionKey = normalizeOptionalString(params.sessionKey);
     if (
+      rawMatrixSessionKey &&
       isUnauthorizedRawMatrixBrowserSession({
         cfg: runtimeConfig,
-        clientInfo: client?.connect,
-        sessionKey: params.sessionKey,
+        clientInfo: client?.connect?.client,
+        sessionKey: rawMatrixSessionKey,
         authorizedByBinding: false,
       })
     ) {
