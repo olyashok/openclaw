@@ -1,6 +1,6 @@
 // Gateway Talk realtime agent-consult bridge.
 // Starts chat.send runs that answer realtime Talk tool calls.
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   ErrorCodes,
   errorShape,
@@ -13,6 +13,8 @@ import { abortChatRunById } from "./chat-abort.js";
 import {
   handleChatSend,
   handleChatSendWithRuntimeTools,
+  handleTrustedInternalChatSend,
+  handleTrustedInternalChatSendWithRuntimeTools,
 } from "./server-methods/chat-send-handler.js";
 import type {
   GatewayClient,
@@ -70,6 +72,13 @@ export async function startTalkRealtimeAgentConsult(params: {
   args: unknown;
   relaySessionId?: string;
   connId?: string;
+  /** Server-authorized source route captured when the Matrix Talk capability is consumed. */
+  matrixRoute?: {
+    channel: "matrix";
+    roomId: string;
+    threadRootEventId: string;
+    accountId: string;
+  };
   onRunStarted?: (runId: string) => void;
 }): Promise<
   { ok: true; runId: string; idempotencyKey: string } | { ok: false; error: ErrorShape }
@@ -80,7 +89,13 @@ export async function startTalkRealtimeAgentConsult(params: {
   } catch (err) {
     return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)) };
   }
-  const idempotencyKey = `talk-${params.callId}-${randomUUID()}`;
+  const idempotencyKey = `talk-${createHash("sha256")
+    .update(params.sessionKey)
+    .update("\0")
+    .update(params.relaySessionId ?? "")
+    .update("\0")
+    .update(params.callId)
+    .digest("hex")}`;
   const normalizedTalk = normalizeTalkSection(params.context.getRuntimeConfig().talk);
   const authority = resolveTalkAgentConsultAuthority(params.client?.connect?.scopes);
   let acknowledgedRunId: string | undefined;
@@ -101,6 +116,15 @@ export async function startTalkRealtimeAgentConsult(params: {
         sessionKey: params.sessionKey,
         message,
         idempotencyKey,
+        ...(params.matrixRoute
+          ? {
+              deliver: true,
+              originatingChannel: params.matrixRoute.channel,
+              originatingTo: `room:${params.matrixRoute.roomId}`,
+              originatingAccountId: params.matrixRoute.accountId,
+              originatingThreadId: params.matrixRoute.threadRootEventId,
+            }
+          : {}),
         ...(normalizedTalk?.consultThinkingLevel
           ? { thinking: normalizedTalk.consultThinkingLevel }
           : {}),
@@ -154,8 +178,11 @@ export async function startTalkRealtimeAgentConsult(params: {
     } as GatewayRequestHandlerOptions;
     // talk.client.toolCall enters below the normal chat.send scope gate, so its
     // delegated run must carry the Talk caller's already-resolved tool boundary.
-    const chatSendResult =
-      authority.toolsAllow !== undefined
+    const chatSendResult = params.matrixRoute
+      ? authority.toolsAllow !== undefined
+        ? handleTrustedInternalChatSendWithRuntimeTools(chatSendOptions, authority.toolsAllow)
+        : handleTrustedInternalChatSend(chatSendOptions)
+      : authority.toolsAllow !== undefined
         ? handleChatSendWithRuntimeTools(chatSendOptions, authority.toolsAllow)
         : handleChatSend(chatSendOptions);
     void Promise.resolve(chatSendResult).then(

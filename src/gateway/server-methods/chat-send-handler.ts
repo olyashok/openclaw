@@ -449,6 +449,17 @@ export async function handleChatSendWithRuntimeTools(
   await handleChatSendWithOptions(options, undefined, undefined, { toolsAllow });
 }
 
+/** Dispatches Gateway-authored input within its caller-owned delegated tool boundary. */
+export async function handleTrustedInternalChatSendWithRuntimeTools(
+  options: GatewayRequestHandlerOptions,
+  toolsAllow: string[],
+): Promise<void> {
+  await handleChatSendWithOptions(options, undefined, undefined, {
+    trustedSystemInput: true,
+    toolsAllow,
+  });
+}
+
 /** Dispatches an operator-requested proposal revision with its reviewed revision bound to the run. */
 export async function handleChatSendWithSkillWorkshopProposalRevision(
   options: GatewayRequestHandlerOptions,
