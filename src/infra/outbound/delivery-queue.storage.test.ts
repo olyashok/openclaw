@@ -16,6 +16,7 @@ import {
   failDeliveryBeforePlatformSend,
   failPendingDelivery,
   loadPendingDelivery,
+  loadCompletedDeliveryReceipt,
   markDeliveryPlatformOutcomeUnknown,
   markDeliveryPlatformSendDispatched,
   markDeliveryPlatformSendAttemptStarted,
@@ -399,7 +400,9 @@ describe("delivery-queue storage", () => {
         tmpDir(),
       );
 
-      await ackDelivery(id, tmpDir());
+      await ackDelivery(id, tmpDir(), {
+        completionReceipt: { platformMessageId: "slack-message-1" },
+      });
       const repeated = await enqueueDeliveryOnce(
         {
           channel: "directchat",
@@ -414,6 +417,9 @@ describe("delivery-queue storage", () => {
       expect(repeated).toEqual({ id, created: false });
       expect(await loadPendingDeliveries(tmpDir())).toEqual([]);
       expect(readStatus(id)).toBe("completed");
+      await expect(loadCompletedDeliveryReceipt(id, tmpDir())).resolves.toEqual({
+        platformMessageId: "slack-message-1",
+      });
     });
 
     it("ack is idempotent (no error on missing file)", async () => {

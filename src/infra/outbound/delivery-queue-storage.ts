@@ -274,6 +274,7 @@ type AckDeliveryOptions = {
   retainSpoolArtifacts?: boolean;
   /** An intentionally suppressed pre-send batch must not become a success receipt. */
   suppressCompletionReceipt?: boolean;
+  completionReceipt?: Readonly<{ platformMessageId: string }>;
   /** Prevent an older provider attempt from settling a replacement owner. */
   expectedPlatformSendAttemptId?: string | null;
 };
@@ -293,7 +294,12 @@ export async function ackDelivery(
   const settle = (current: QueuedDelivery | null): void => {
     spoolPaths = current ? collectEntrySpoolPaths(queuedDeliveryPayloads(current), stateDir) : [];
     if (current?.completionRetention && options?.suppressCompletionReceipt !== true) {
-      completeDeliveryQueueEntry(OUTBOUND_DELIVERY_QUEUE_NAME, id, stateDir);
+      completeDeliveryQueueEntry(
+        OUTBOUND_DELIVERY_QUEUE_NAME,
+        id,
+        stateDir,
+        options?.completionReceipt,
+      );
     } else {
       deleteDeliveryQueueEntry(OUTBOUND_DELIVERY_QUEUE_NAME, id, stateDir);
     }
@@ -534,6 +540,15 @@ export const loadPendingDelivery = async (
   stateDir?: string,
 ): Promise<QueuedDelivery | null> =>
   loadDeliveryQueueEntry(OUTBOUND_DELIVERY_QUEUE_NAME, id, stateDir) as QueuedDelivery | null;
+
+/** Load a retained stable-producer completion receipt after its platform send was acknowledged. */
+export const loadCompletedDeliveryReceipt = async (
+  id: string,
+  stateDir?: string,
+): Promise<Readonly<{ platformMessageId: string }> | null> => {
+  const entry = loadDeliveryQueueEntry(OUTBOUND_DELIVERY_QUEUE_NAME, id, stateDir, "all");
+  return entry?.completionReceipt ?? null;
+};
 
 /** Failed settlement retains owner metadata, but is never eligible for sending. */
 export async function loadUnfinishedDeliveries(stateDir?: string): Promise<QueuedDelivery[]> {

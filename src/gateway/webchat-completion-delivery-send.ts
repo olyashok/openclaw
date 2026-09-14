@@ -5,6 +5,7 @@ import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import type { MsgContext } from "../auto-reply/templating.js";
 import { deliverInboundReplyWithMessageSendContextCore } from "../channels/turn/durable-delivery.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { loadCompletedDeliveryReceipt } from "../infra/outbound/delivery-queue-storage.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
 import { scheduleSessionDelivery } from "../infra/session-delivery-queue-runtime.js";
 import {
@@ -198,26 +199,26 @@ function isPrivateSlackDestination(route: WebchatCompletionDeliveryState["route"
 async function bindCompletionConversation(
   params: WebchatCompletionFallbackParams,
   messageId: string | undefined,
-): Promise<void> {
+): Promise<"bound" | "notification-only" | "failed"> {
   const targetSessionKey = params.sessionKey ?? params.ctx.SessionKey;
   if (!targetSessionKey) {
     params.log.warn(
       `webchat completion continuation binding failed run=${params.runId}: missing session key`,
     );
-    return;
+    return "failed";
   }
   if (!isPrivateSlackDestination(params.state!.route)) {
     params.log.warn(
       `webchat completion continuation disabled for non-private destination run=${params.runId}`,
     );
-    return;
+    return "notification-only";
   }
   const normalizedMessageId = messageId?.trim();
   if (!normalizedMessageId) {
     params.log.warn(
       `webchat completion continuation binding failed run=${params.runId}: missing provider message id`,
     );
-    return;
+    return "notification-only";
   }
   try {
     const route = params.state!.route;
@@ -236,10 +237,12 @@ async function bindCompletionConversation(
         boundBy: "webchat-completion-delivery",
       },
     });
+    return "bound";
   } catch (error) {
     params.log.warn(
       `webchat completion continuation binding failed run=${params.runId}: ${String(error)}`,
     );
+    return "failed";
   }
 }
 
@@ -323,7 +326,17 @@ export async function deliverWebchatCompletionFallback(
   if (result.status === "handled_visible") {
     // Delivery is already recipient-visible, so binding failure is observable but
     // must not retry and duplicate the final answer.
-    await bindCompletionConversation(params, result.delivery.messageIds?.[0]);
+    let messageId = result.delivery.messageIds?.[0];
+    if (!messageId && params.deliveryIntentId) {
+      messageId = (
+        await loadCompletedDeliveryReceipt(
+          `${COMPLETION_OUTBOUND_INTENT_PREFIX}${params.deliveryIntentId}`,
+        )
+      )?.platformMessageId;
+    }
+    if ((await bindCompletionConversation(params, messageId)) === "failed") {
+      return "failed";
+    }
   }
   return "handled";
 }

@@ -532,7 +532,11 @@ function recoveryPlatformAttemptId(
 async function ackRecoveredDelivery(
   entry: QueuedDelivery,
   stateDir?: string,
-  options?: { retainSpoolArtifacts?: boolean; suppressCompletionReceipt?: boolean },
+  options?: {
+    retainSpoolArtifacts?: boolean;
+    suppressCompletionReceipt?: boolean;
+    completionReceipt?: Readonly<{ platformMessageId: string }>;
+  },
   claimedAttemptId?: string,
 ): Promise<void> {
   await createQueuedDeliveryOwner({
@@ -708,7 +712,12 @@ async function drainQueuedEntry(opts: {
         if (entry.deliveryCompletion) {
           await completeDurableDelivery(entry.deliveryCompletion, result, opts.stateDir);
         }
-        await ackRecoveredDelivery(entry, opts.stateDir, undefined, entry.platformSendAttemptId);
+        await ackRecoveredDelivery(
+          entry,
+          opts.stateDir,
+          { completionReceipt: { platformMessageId: result.messageId } },
+          entry.platformSendAttemptId,
+        );
         emitRecoveredTerminalSuccess(entry, result);
         await runReconciledSentCommitHooks({
           entry,
@@ -982,7 +991,14 @@ async function drainQueuedEntry(opts: {
               { suppressCompletionReceipt: true },
               producerClaimId,
             )
-          : ackRecoveredDelivery(entry, opts.stateDir, undefined, producerClaimId));
+          : ackRecoveredDelivery(
+              entry,
+              opts.stateDir,
+              results.at(-1)?.messageId
+                ? { completionReceipt: { platformMessageId: results.at(-1)!.messageId } }
+                : undefined,
+              producerClaimId,
+            ));
         postSendState = "acked";
       } catch (ackErr) {
         const ackError = `failed to ack recovered delivery: ${formatErrorMessage(ackErr)}`;
