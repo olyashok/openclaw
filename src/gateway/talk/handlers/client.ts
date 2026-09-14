@@ -51,6 +51,7 @@ import { relaySessions } from "../relay/state.js";
 import { resolveOwnedActiveTalkRunTarget } from "../run-ownership.js";
 import { prepareTalkSessionTarget, requirePreparedTalkSessionTarget } from "../session-target.js";
 import { unregisterTalkVoiceSession } from "../voice-selection.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { createTalkClient } from "./client-create.js";
 import {
   forgetLegacyVoiceBinding,
@@ -126,6 +127,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     );
     request.sessionMutationAuthorization?.assertCurrent();
     if (
+      !isWebchatSessionAllowed({ cfg: config, client: request.client, sessionKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg: config,
         clientInfo: request.client?.connect?.client,
@@ -279,6 +281,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         prepareTalkSessionTarget(config, params.sessionKey);
       sessionMutationAuthorization?.assertCurrent();
       if (
+        !isWebchatSessionAllowed({ cfg: config, client, sessionKey: params.sessionKey }) ||
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
           clientInfo: client?.connect?.client,
@@ -318,6 +321,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     try {
       const config = context.getRuntimeConfig();
       if (
+        !isWebchatSessionAllowed({ cfg: config, client, sessionKey: params.sessionKey }) ||
         isUnauthorizedRawMatrixBrowserSession({
           cfg: config,
           clientInfo: client?.connect?.client,

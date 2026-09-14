@@ -206,6 +206,13 @@ export const DevicePairSetupCodeParamsSchema = closedObject({
   bootstrapProfile: Type.Optional(
     Type.String({ enum: ["limited", "node", "voice-node", "webchat"] }),
   ),
+  allowedAgentIds: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+      minItems: 1,
+      maxItems: 32,
+      uniqueItems: true,
+    }),
+  ),
   joinUrl: Type.Optional(Type.Literal(true)),
 });
 

@@ -406,6 +406,7 @@ export async function attachAuthenticatedGatewayConnect(
     ...(!usesLegacyNodeProtocol && pluginSurfaceBaseUrl ? { pluginSurfaceBaseUrl } : {}),
     isDeviceTokenAuth: authMethod === "device-token",
     pairedClientId,
+    ...(deviceToken?.allowedAgentIds ? { allowedAgentIds: deviceToken.allowedAgentIds } : {}),
     usesSharedGatewayAuth: sessionUsesSharedGatewayAuth,
     sharedGatewaySessionGeneration: sessionSharedGatewaySessionGeneration,
     authPolicyGeneration: resolveGatewayAuthPolicyGeneration(context.configSnapshot),

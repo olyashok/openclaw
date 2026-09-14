@@ -54,6 +54,7 @@ import {
   loadGatewaySessionEntryReadOnly,
   resolveSessionModelRef,
 } from "../session-utils.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { prepareSessionWorkspaceIcon } from "../workspace-icon-http.js";
 import {
   CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES,
@@ -176,6 +177,7 @@ export async function handleChatHistoryRequest({
     legacyKey,
   } = selectedSession;
   if (
+    !isWebchatSessionAllowed({ cfg, client, sessionKey: canonicalKey }) ||
     isUnauthorizedRawMatrixBrowserSession({
       cfg,
       clientInfo: client?.connect?.client,

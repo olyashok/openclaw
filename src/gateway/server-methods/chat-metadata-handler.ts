@@ -17,6 +17,7 @@ import {
   SessionMutationAuthorizationChangedError,
 } from "../session-sharing.js";
 import { retainGatewaySessionEntryReadOnly } from "../session-utils-read-lifetime.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { resolveAgentIdOrRespondError } from "./agent-id-shared.js";
 import type { ChatMetadataReadParams } from "./chat-metadata-contract.js";
 import { normalizeOptionalChatText } from "./chat-text-normalization.js";
@@ -59,6 +60,7 @@ export function resolveChatMetadataReadParams(
       }
     };
     if (
+      !isWebchatSessionAllowed({ cfg: session.cfg, client, sessionKey: session.canonicalKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg: session.cfg,
         clientInfo: client?.connect?.client,

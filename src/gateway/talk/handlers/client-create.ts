@@ -56,6 +56,7 @@ import {
   prepareTalkVoiceReplacement,
   registerTalkVoiceSession,
 } from "../voice-selection.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import {
   forgetLegacyVoiceBinding,
   rememberLegacyVoiceBinding,
@@ -173,13 +174,14 @@ export const createTalkClient: GatewayRequestHandler = async ({
     const rawMatrixSessionKey = normalizeOptionalString(params.sessionKey);
     if (
       rawMatrixSessionKey &&
-      isUnauthorizedRawMatrixBrowserSession({
-        cfg: runtimeConfig,
-        clientInfo: client?.connect?.client,
-        pairedClientId: client?.pairedClientId,
-        sessionKey: rawMatrixSessionKey,
-        authorizedByBinding: false,
-      })
+      (!isWebchatSessionAllowed({ cfg: runtimeConfig, client, sessionKey: rawMatrixSessionKey }) ||
+        isUnauthorizedRawMatrixBrowserSession({
+          cfg: runtimeConfig,
+          clientInfo: client?.connect?.client,
+          pairedClientId: client?.pairedClientId,
+          sessionKey: rawMatrixSessionKey,
+          authorizedByBinding: false,
+        }))
     ) {
       rejectTalkClientRequest(
         respond,

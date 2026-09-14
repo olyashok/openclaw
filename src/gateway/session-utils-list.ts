@@ -31,6 +31,7 @@ import type { SessionRowProjection } from "./session-row-projection.js";
 import type { SessionListRowContext } from "./session-utils-contracts.js";
 import { getSessionDefaults } from "./session-utils-model.js";
 import type { GatewaySessionRow, SessionsListResult } from "./session-utils.types.js";
+import { isWebchatSessionAllowed } from "./webchat-agent-authorization.js";
 
 type SessionEntrySelection = Omit<SessionListFilteredEntries, "ownerEntries"> & {
   ownerCount: number;
@@ -366,6 +367,7 @@ export function prepareProjectedSessionList(params: {
       const row = getTarget(key);
       const visible = Boolean(
         row &&
+        isWebchatSessionAllowed({ cfg: prepared.cfg, client, sessionKey: row.key }) &&
         !isUnauthorizedRawMatrixBrowserSession({
           cfg: prepared.cfg,
           clientInfo: client?.connect?.client,

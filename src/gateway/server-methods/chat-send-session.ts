@@ -33,6 +33,7 @@ import {
   resolveSessionModelRef,
 } from "../session-utils.js";
 import { prepareSkillLibrarySessionCreation } from "../skill-library-session.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { hasGatewayAdminScope, resolveChatSendActiveScopeKey } from "./chat-origin-routing.js";
 import { createRestartSafeChatRequest } from "./chat-restart-recovery.js";
 import type { NormalizedChatSendRequest } from "./chat-send-request.js";
@@ -174,6 +175,7 @@ export function prepareChatSendSession(params: {
   const { p, explicitOrigin, normalizedAttachments, turnKind, rawMessage } = request;
   const { cfg, agentId, sessionKey, entry, legacyKey, selectedAgent } = loadedValue;
   if (
+    !isWebchatSessionAllowed({ cfg, client, sessionKey }) ||
     isUnauthorizedRawMatrixBrowserSession({
       cfg,
       clientInfo: request.clientInfo,

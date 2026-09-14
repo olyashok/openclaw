@@ -25,6 +25,7 @@ import {
   readSessionMessageByIdAsync,
 } from "../session-transcript-readers.js";
 import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { readChatHistoryPage } from "./chat-history-pages.js";
 import { projectPendingInputMessage } from "./chat-pending-inputs.js";
 import { normalizeOptionalChatText as normalizeOptionalText } from "./chat-text-normalization.js";
@@ -102,6 +103,7 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
     const session = loadGatewaySessionEntryReadOnly(sessionKey, { agentId: requestedAgentId }, cfg);
     const { agentId: sessionAgentId, storePath, entry, canonicalKey } = session;
     if (
+      !isWebchatSessionAllowed({ cfg, client, sessionKey: canonicalKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,

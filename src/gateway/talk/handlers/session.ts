@@ -72,6 +72,7 @@ import {
   stopTalkTranscriptionRelaySession,
 } from "../transcription-relay.js";
 import { prepareTalkVoiceReplacement } from "../voice-selection.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { acknowledgeTalkSessionMark } from "./session-mark.js";
 
 function isActiveManagedRoomClient(
@@ -316,7 +317,13 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             pairedClientId: client?.pairedClientId,
             sessionKey: target.canonicalKey,
             authorizedByBinding: Boolean(bound),
-          })
+          }) ||
+          (requestedSessionKey &&
+            !isWebchatSessionAllowed({
+              cfg: runtimeConfig,
+              client,
+              sessionKey: requestedSessionKey,
+            }))
         ) {
           return respondInvalidRequest(
             respond,

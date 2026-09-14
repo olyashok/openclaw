@@ -15,6 +15,7 @@ import { sessionObserverScopeKey } from "../session-observer-model.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { resolveSessionSubscriptionKey } from "../session-subscription-keys.js";
 import { resolveSessionStoreKey } from "../session-utils.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { canAccessApprovalSession } from "./approval-record-lookup.js";
 import { sessionsListHandler } from "./sessions-read.js";
 import { requireSessionKey } from "./sessions-shared.js";
@@ -146,6 +147,7 @@ export const sessionSubscriptionHandlers: GatewayRequestHandlers = {
       storeAgentId: requestedAgentId,
     });
     if (
+      !isWebchatSessionAllowed({ cfg, client, sessionKey: canonicalKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,
