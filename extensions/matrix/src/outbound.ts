@@ -106,7 +106,9 @@ function resolveMatrixExtraContent(payload: ReplyPayload): MatrixExtraContentFie
     typeof voice.id === "string"
       ? voice
       : undefined;
-  if (!presentation && !trustedVoice) return undefined;
+  if (!presentation && !trustedVoice) {
+    return undefined;
+  }
   return {
     ...(presentation ? { [MATRIX_OPENCLAW_PRESENTATION_KEY]: presentation } : {}),
     ...(trustedVoice ? { [MATRIX_OPENCLAW_VOICE_TRANSCRIPT_KEY]: trustedVoice } : {}),

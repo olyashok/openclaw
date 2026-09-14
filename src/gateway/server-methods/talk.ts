@@ -748,21 +748,29 @@ function stripUnresolvedSecretApiKeyFromRecord(
 export const talkHandlers: GatewayRequestHandlers = {
   "talk.binding.resolve": async ({ params, respond, context }) => {
     try {
+      const roomId = normalizeOptionalString(params.roomId);
+      const threadRootEventId = normalizeOptionalString(params.threadRootEventId);
+      const agentMxid = normalizeOptionalString(params.agentMxid);
+      if (!roomId || !threadRootEventId || !agentMxid) {
+        throw new Error("Matrix Talk binding requires roomId, threadRootEventId, and agentMxid");
+      }
       const resolved = await resolveMatrixTalkBinding({
         cfg: context.getRuntimeConfig(),
-        roomId: String(params.roomId ?? ""),
-        threadRootEventId: String(params.threadRootEventId ?? ""),
-        agentMxid: String(params.agentMxid ?? ""),
+        roomId,
+        threadRootEventId,
+        agentMxid,
       });
       const speakerMxid = normalizeOptionalString(params.speakerMxid);
-      if (!speakerMxid?.startsWith("@")) throw new Error("Matrix Talk speaker is required");
+      if (!speakerMxid?.startsWith("@")) {
+        throw new Error("Matrix Talk speaker is required");
+      }
       respond(
         true,
         {
           binding: mintTalkBindingCapability({
             ...resolved,
-            roomId: String(params.roomId),
-            threadRootEventId: String(params.threadRootEventId),
+            roomId,
+            threadRootEventId,
             speakerMxid,
           }),
         },

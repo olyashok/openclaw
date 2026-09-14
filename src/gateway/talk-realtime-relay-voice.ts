@@ -33,7 +33,9 @@ async function projectRelayTranscriptToOwningMatrix(params: {
       }
     : stored.deliveryContext;
   const threadId = params.session.matrixRoute?.threadRootEventId ?? stored.threadId;
-  if (deliveryContext?.channel?.toLowerCase() !== "matrix" || !deliveryContext.to) return;
+  if (deliveryContext?.channel?.toLowerCase() !== "matrix" || !deliveryContext.to) {
+    return;
+  }
   const projectionId = `voice:${params.session.id}:${params.entryId}`;
   await deliverOutboundPayloads({
     cfg,

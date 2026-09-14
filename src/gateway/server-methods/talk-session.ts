@@ -254,8 +254,9 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           );
         }
         const bound = binding ? consumeTalkBindingCapability(binding) : undefined;
-        if (binding && !bound)
+        if (binding && !bound) {
           return respondInvalidRequest(respond, "Talk binding is invalid or expired");
+        }
         const realtimeConfig = buildTalkRealtimeConfig(runtimeConfig, params.provider);
         const launchOptions = buildRealtimeVoiceLaunchOptions({
           requested: params,
@@ -270,11 +271,12 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             sessionKey: requestedSessionKey,
             authorizedByBinding: Boolean(bound),
           })
-        )
+        ) {
           return respondInvalidRequest(
             respond,
             "Matrix Talk sessions require an authorized binding",
           );
+        }
         const bareTalkAgentId =
           requestedSessionKey && !parseAgentSessionKey(requestedSessionKey)
             ? resolveTalkSessionAgentId(runtimeConfig, requestedSessionKey)
