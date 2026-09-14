@@ -5,6 +5,16 @@ import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import type { MsgContext } from "../auto-reply/templating.js";
 import { deliverInboundReplyWithMessageSendContextCore } from "../channels/turn/durable-delivery.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
+import { scheduleSessionDelivery } from "../infra/session-delivery-queue-runtime.js";
+import {
+  completeSessionDelivery,
+  enqueueClaimedSessionDelivery,
+  loadPendingSessionDelivery,
+  resolveSessionDeliveryId,
+  type QueuedSessionDelivery,
+} from "../infra/session-delivery-queue-storage.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import { isSuppressedControlReplyText } from "./control-reply-text.js";
 import {
   resolveWebchatCompletionDeliveryReason,
@@ -20,6 +30,7 @@ export type WebchatCompletionFallbackParams = {
   startedAtMs: number;
   runId: string;
   sessionId: string;
+  sessionKey?: string;
   agentId: string;
   ctx: MsgContext;
   replies: CompletionReply[];
@@ -33,7 +44,6 @@ type PendingWebchatCompletion = {
   sessionKey: string;
   ownerConnId?: string;
   ownerDeviceId?: string;
-  timer: ReturnType<typeof setTimeout>;
 };
 
 // Active chat registrations are removed immediately after the final UI broadcast.
@@ -42,13 +52,18 @@ const pendingWebchatCompletions = new Map<string, PendingWebchatCompletion>();
 
 export type MarkWebchatCompletionSeenResult = "seen" | "not-found" | "unauthorized";
 
-export function markWebchatCompletionSeen(params: {
+function completionDeliveryIdempotencyKey(sessionKey: string, runId: string): string {
+  return `webchat-completion:${sessionKey}:${runId}`;
+}
+
+export async function markWebchatCompletionSeen(params: {
   runId?: string;
   sessionKey: string;
   requesterConnId?: string;
   requesterDeviceId?: string;
   nowMs?: number;
-}): MarkWebchatCompletionSeenResult {
+}): Promise<MarkWebchatCompletionSeenResult> {
+  const queueContext = captureOpenClawStateWorkerContext();
   const candidates = params.runId
     ? [[params.runId, pendingWebchatCompletions.get(params.runId)] as const]
     : [...pendingWebchatCompletions.entries()];
@@ -66,22 +81,41 @@ export function markWebchatCompletionSeen(params: {
       }
       continue;
     }
+    await completeSessionDelivery(
+      resolveSessionDeliveryId(completionDeliveryIdempotencyKey(params.sessionKey, runId)),
+      queueContext,
+    );
     pending.state.seenAtMs = params.nowMs ?? Date.now();
-    clearTimeout(pending.timer);
     pendingWebchatCompletions.delete(runId);
     marked = true;
+  }
+  if (!marked && params.runId) {
+    const deliveryId = resolveSessionDeliveryId(
+      completionDeliveryIdempotencyKey(params.sessionKey, params.runId),
+    );
+    const persisted = await loadPendingSessionDelivery(deliveryId, queueContext);
+    if (persisted?.kind === "completionFallback") {
+      const sameOwner = persisted.ownerDeviceId
+        ? params.requesterDeviceId === persisted.ownerDeviceId
+        : Boolean(persisted.ownerConnId && params.requesterConnId === persisted.ownerConnId);
+      if (persisted.sessionKey !== params.sessionKey || !sameOwner) {
+        return "unauthorized";
+      }
+      await completeSessionDelivery(deliveryId, queueContext);
+      marked = true;
+    }
   }
   return marked ? "seen" : "not-found";
 }
 
-export function scheduleWebchatCompletionFallback(
+export async function scheduleWebchatCompletionFallback(
   params: WebchatCompletionFallbackParams & {
     sessionKey: string;
     ownerConnId?: string;
     ownerDeviceId?: string;
     unreadGraceMs?: number;
   },
-): "scheduled" | "skipped" {
+): Promise<"scheduled" | "skipped"> {
   const state = params.state;
   if (
     !state ||
@@ -92,29 +126,93 @@ export function scheduleWebchatCompletionFallback(
     return "skipped";
   }
   state.completedAtMs = params.nowMs ?? Date.now();
+  const answer = resolveCompletionAnswer(params);
+  if (!answer) {
+    params.log.warn(
+      `webchat completion delivery skipped without visible reply run=${params.runId}`,
+    );
+    return "skipped";
+  }
   const unreadGraceMs = params.unreadGraceMs ?? WEBCHAT_COMPLETION_DELIVERY_UNREAD_GRACE_MS;
-  const timer = setTimeout(
-    () => {
-      pendingWebchatCompletions.delete(params.runId);
-      void deliverWebchatCompletionFallback({ ...params, nowMs: Date.now() }).catch(
-        (error: unknown) => {
-          params.log.warn(
-            `webchat completion delivery crashed run=${params.runId}: ${String(error)}`,
-          );
-        },
-      );
+  const queueContext = captureOpenClawStateWorkerContext();
+  const idempotencyKey = completionDeliveryIdempotencyKey(params.sessionKey, params.runId);
+  const queued = await enqueueClaimedSessionDelivery(
+    {
+      kind: "completionFallback",
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+      runId: params.runId,
+      agentId: params.agentId,
+      route: state.route,
+      text: answer,
+      ...(params.fallbackError ? { isError: true as const } : {}),
+      ...(params.ownerConnId ? { ownerConnId: params.ownerConnId } : {}),
+      ...(params.ownerDeviceId ? { ownerDeviceId: params.ownerDeviceId } : {}),
+      idempotencyKey,
     },
-    Math.max(0, unreadGraceMs),
+    unreadGraceMs,
+    queueContext,
   );
-  timer.unref?.();
+  if (queued.status === "failed" || queued.status === "completed") {
+    params.log.warn(`webchat completion delivery could not be scheduled run=${params.runId}`);
+    return "skipped";
+  }
   pendingWebchatCompletions.set(params.runId, {
     state,
     sessionKey: params.sessionKey,
     ownerConnId: params.ownerConnId,
     ownerDeviceId: params.ownerDeviceId,
-    timer,
   });
+  await scheduleSessionDelivery(queued.id, queueContext);
   return "scheduled";
+}
+
+function resolveCompletionAnswer(params: WebchatCompletionFallbackParams): string {
+  const finalEntries = params.replies.filter((item) => item.kind === "final");
+  const substantiveEntries = finalEntries.filter(
+    (item) => !isReplyPayloadStatusNotice(item.payload),
+  );
+  const candidates = substantiveEntries.length > 0 ? substantiveEntries : finalEntries;
+  const replyText = uniqueStrings(
+    candidates
+      .map((item) => item.payload.text?.trim())
+      .filter(
+        (text): text is string =>
+          typeof text === "string" && text.length > 0 && !isSuppressedControlReplyText(text),
+      ),
+  ).join("\n\n");
+  return params.fallbackError?.trim() || replyText;
+}
+
+async function bindCompletionConversation(params: WebchatCompletionFallbackParams): Promise<void> {
+  const targetSessionKey = params.sessionKey ?? params.ctx.SessionKey;
+  if (!targetSessionKey) {
+    params.log.warn(
+      `webchat completion continuation binding failed run=${params.runId}: missing session key`,
+    );
+    return;
+  }
+  try {
+    const route = params.state!.route;
+    await getSessionBindingService().bind({
+      targetSessionKey,
+      targetKind: "session",
+      placement: "current",
+      conversation: {
+        channel: route.channel,
+        accountId: route.accountId ?? "default",
+        conversationId: route.to,
+      },
+      metadata: {
+        agentId: params.agentId,
+        boundBy: "webchat-completion-delivery",
+      },
+    });
+  } catch (error) {
+    params.log.warn(
+      `webchat completion continuation binding failed run=${params.runId}: ${String(error)}`,
+    );
+  }
 }
 
 export async function deliverWebchatCompletionFallback(
@@ -131,20 +229,7 @@ export async function deliverWebchatCompletionFallback(
     return "skipped";
   }
   state.attemptedAtMs = nowMs;
-  const finalEntries = params.replies.filter((item) => item.kind === "final");
-  const substantiveEntries = finalEntries.filter(
-    (item) => !isReplyPayloadStatusNotice(item.payload),
-  );
-  const candidates = substantiveEntries.length > 0 ? substantiveEntries : finalEntries;
-  const replyText = uniqueStrings(
-    candidates
-      .map((item) => item.payload.text?.trim())
-      .filter(
-        (text): text is string =>
-          typeof text === "string" && text.length > 0 && !isSuppressedControlReplyText(text),
-      ),
-  ).join("\n\n");
-  const answer = params.fallbackError?.trim() || replyText;
+  const answer = resolveCompletionAnswer(params);
   if (!answer) {
     params.log.warn(
       `webchat completion delivery skipped without visible reply run=${params.runId}`,
@@ -183,6 +268,13 @@ export async function deliverWebchatCompletionFallback(
     },
   }).catch((error: unknown) => ({ status: "failed" as const, error }));
   if (result.status === "failed") {
+    if (result.sentBeforeError) {
+      await bindCompletionConversation(params);
+      params.log.warn(
+        `webchat completion delivery partially completed run=${params.runId}: ${String(result.error)}`,
+      );
+      return "handled";
+    }
     params.log.warn(
       `webchat completion delivery failed run=${params.runId}: ${String(result.error)}`,
     );
@@ -194,5 +286,35 @@ export async function deliverWebchatCompletionFallback(
     );
     return "failed";
   }
+  if (result.status === "handled_visible") {
+    // Delivery is already recipient-visible, so binding failure is observable but
+    // must not retry and duplicate the final answer.
+    await bindCompletionConversation(params);
+  }
   return "handled";
+}
+
+export async function deliverQueuedWebchatCompletionFallback(params: {
+  cfg: OpenClawConfig;
+  entry: Extract<QueuedSessionDelivery, { kind: "completionFallback" }>;
+  log: { warn: (message: string) => void };
+}): Promise<void> {
+  const { entry } = params;
+  pendingWebchatCompletions.delete(entry.runId);
+  const result = await deliverWebchatCompletionFallback({
+    cfg: params.cfg,
+    state: { route: entry.route, armedAtMs: entry.enqueuedAt },
+    startedAtMs: entry.enqueuedAt,
+    sessionId: entry.sessionId,
+    sessionKey: entry.sessionKey,
+    agentId: entry.agentId,
+    runId: entry.runId,
+    ctx: { SessionKey: entry.sessionKey },
+    replies: [{ kind: "final", payload: { text: entry.text } }],
+    ...(entry.isError ? { fallbackError: entry.text } : {}),
+    log: params.log,
+  });
+  if (result !== "handled") {
+    throw new Error(`webchat completion delivery ${result}`);
+  }
 }
