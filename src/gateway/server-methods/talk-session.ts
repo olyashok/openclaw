@@ -51,6 +51,7 @@ import {
   sendTalkTranscriptionRelayAudio,
   stopTalkTranscriptionRelaySession,
 } from "../talk-transcription-relay.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { formatForLog } from "../ws-log.js";
 import { acknowledgeTalkSessionMark } from "./talk-session-mark.js";
 import {
@@ -265,13 +266,18 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
         const requestedSessionKey = bound?.sessionKey ?? normalizeOptionalString(params.sessionKey);
         if (
           requestedSessionKey &&
-          isUnauthorizedRawMatrixBrowserSession({
+          (!isWebchatSessionAllowed({
             cfg: runtimeConfig,
-            clientInfo: client?.connect?.client,
-            pairedClientId: client?.pairedClientId,
+            client,
             sessionKey: requestedSessionKey,
-            authorizedByBinding: Boolean(bound),
-          })
+          }) ||
+            isUnauthorizedRawMatrixBrowserSession({
+              cfg: runtimeConfig,
+              clientInfo: client?.connect?.client,
+              pairedClientId: client?.pairedClientId,
+              sessionKey: requestedSessionKey,
+              authorizedByBinding: Boolean(bound),
+            }))
         ) {
           return respondInvalidRequest(
             respond,

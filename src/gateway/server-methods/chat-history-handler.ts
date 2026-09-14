@@ -43,6 +43,7 @@ import {
   loadGatewaySessionEntryReadOnly,
   resolveSessionModelRef,
 } from "../session-utils.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { prepareSessionWorkspaceIcon } from "../workspace-icon-http.js";
 import { resolveAgentIdOrRespondError } from "./agent-id-shared.js";
 import {
@@ -135,6 +136,7 @@ async function handleChatMetadataRequest({
       agentId: requested.agentId,
     });
     if (
+      !isWebchatSessionAllowed({ cfg: session.cfg, client, sessionKey: session.canonicalKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg: session.cfg,
         clientInfo: client?.connect?.client,
@@ -265,6 +267,7 @@ async function handleChatHistoryRequest({
     },
   );
   if (
+    !isWebchatSessionAllowed({ cfg, client, sessionKey: canonicalKey }) ||
     isUnauthorizedRawMatrixBrowserSession({
       cfg,
       clientInfo: client?.connect?.client,

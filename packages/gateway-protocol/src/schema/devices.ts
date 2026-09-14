@@ -204,6 +204,13 @@ export const DevicePairSetupCodeParamsSchema = closedObject({
   preferRemoteUrl: Type.Optional(Type.Boolean()),
   includeQr: Type.Optional(Type.Boolean()),
   bootstrapProfile: Type.Optional(Type.String({ enum: ["limited", "node", "webchat"] })),
+  allowedAgentIds: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+      minItems: 1,
+      maxItems: 32,
+      uniqueItems: true,
+    }),
+  ),
   joinUrl: Type.Optional(Type.Literal(true)),
 });
 

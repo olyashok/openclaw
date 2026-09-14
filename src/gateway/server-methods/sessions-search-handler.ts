@@ -24,6 +24,7 @@ import {
   resolveSessionSharingTarget,
 } from "../session-sharing.js";
 import { resolveSessionStoreAgentId } from "../session-store-key.js";
+import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { gatewayClientSessionCreator } from "./gateway-client-identity.js";
 import { resolveSessionSearchScope } from "./sessions-search-scope.js";
 import type { GatewayRequestHandlers } from "./types.js";
@@ -51,6 +52,7 @@ export const sessionsSearchHandler: GatewayRequestHandlers["sessions.search"] = 
   const restrictVisibility = restrictIncognito || Boolean(roleVisibilityFilter);
   const canSearchSessionKey = (sessionKey: string) => {
     if (
+      !isWebchatSessionAllowed({ cfg, client, sessionKey }) ||
       isUnauthorizedRawMatrixBrowserSession({
         cfg,
         clientInfo: client?.connect?.client,

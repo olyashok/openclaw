@@ -420,6 +420,7 @@ export async function attachAuthenticatedGatewayConnect(
     connectionKind: "gateway",
     isDeviceTokenAuth: authMethod === "device-token",
     pairedClientId,
+    ...(deviceToken?.allowedAgentIds ? { allowedAgentIds: deviceToken.allowedAgentIds } : {}),
     usesSharedGatewayAuth: sessionUsesSharedGatewayAuth,
     sharedGatewaySessionGeneration: sessionSharedGatewaySessionGeneration,
     presenceKey,
