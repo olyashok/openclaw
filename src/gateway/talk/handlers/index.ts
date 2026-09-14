@@ -76,6 +76,7 @@ import { respondUnavailable } from "../../server-methods/response.js";
 import { inferSpeechMimeType } from "../../server-methods/speech-mime.js";
 import type { GatewayRequestHandlers } from "../../server-methods/types.js";
 import { assertValidParams } from "../../server-methods/validation.js";
+import { resolveMatrixTalkBinding } from "../../talk-matrix-binding.js";
 import { formatForLog } from "../../ws-log.js";
 import {
   buildTalkRealtimeConfig,
@@ -850,6 +851,26 @@ function stripUnresolvedSecretApiKeyFromRecord(
 /** Gateway request handlers for Talk config, catalog, sessions, and speech. */
 export const talkHandlers: GatewayRequestHandlers = {
   ...talkVoiceHandlers,
+  "talk.binding.resolve": async ({ params, respond, context }) => {
+    try {
+      const resolved = await resolveMatrixTalkBinding({
+        cfg: context.getRuntimeConfig(),
+        roomId: String(params.roomId ?? ""),
+        threadRootEventId: String(params.threadRootEventId ?? ""),
+        agentMxid: String(params.agentMxid ?? ""),
+      });
+      respond(true, { binding: resolved.sessionKey }, undefined);
+    } catch (error) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          error instanceof Error ? error.message : "Matrix Talk binding failed",
+        ),
+      );
+    }
+  },
   ...talkSessionHandlers,
   ...talkClientHandlers,
   "talk.catalog": async ({ params, respond, context }) => {

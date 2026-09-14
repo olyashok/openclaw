@@ -362,6 +362,7 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["assistant.media.get", null, "operator.read", "<=2026.7", { advertise: false }],
   ["sessions.get", "sessions-read", "operator.read", "<=2026.7", { advertise: false }],
   ["sessions.resolve", "sessions-read", "operator.read", "<=2026.7", { advertise: false }],
+  ["talk.binding.resolve", "talk", "operator.admin", "2026.8", { advertise: false }],
   ["sessions.usage", "usage", "operator.read", "<=2026.7", { advertise: false }],
   ["sessions.usage.timeseries", "usage", "operator.read", "<=2026.7", { advertise: false }],
   ["sessions.usage.logs", "usage", "operator.read", "<=2026.7", { advertise: false }],
