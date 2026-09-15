@@ -232,6 +232,8 @@ describe("matrix thread bindings", () => {
       placement: "child",
       metadata: {
         introText: "intro root",
+        idleTimeoutMs: 0,
+        maxAgeMs: 0,
       },
     });
 
@@ -246,6 +248,8 @@ describe("matrix thread bindings", () => {
       conversationId: "$root",
       parentConversationId: "!room:example",
     });
+    expect(binding.expiresAt).toBeUndefined();
+    expect(binding.metadata).toMatchObject({ idleTimeoutMs: 0, maxAgeMs: 0 });
   });
 
   it("posts intro messages inside existing Matrix threads for current placement", async () => {

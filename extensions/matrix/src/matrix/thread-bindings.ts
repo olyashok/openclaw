@@ -41,6 +41,12 @@ const THREAD_BINDINGS_MAX_ENTRIES = 10_000;
 const THREAD_BINDINGS_SWEEP_INTERVAL_MS = 60_000;
 const TOUCH_PERSIST_DELAY_MS = 30_000;
 
+function normalizeBindingTimeoutOverride(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : undefined;
+}
+
 type StoredMatrixThreadBindingState = {
   version: number;
   bindings: MatrixThreadBindingRecord[];
@@ -595,8 +601,9 @@ export async function createMatrixThreadBindingManager(params: {
         boundBy: normalizeOptionalString(input.metadata?.boundBy) || "system",
         boundAt: now,
         lastActivityAt: now,
-        idleTimeoutMs: defaults.idleTimeoutMs,
-        maxAgeMs: defaults.maxAgeMs,
+        idleTimeoutMs:
+          normalizeBindingTimeoutOverride(input.metadata?.idleTimeoutMs) ?? defaults.idleTimeoutMs,
+        maxAgeMs: normalizeBindingTimeoutOverride(input.metadata?.maxAgeMs) ?? defaults.maxAgeMs,
       };
       setBindingRecord(record);
       await persist();
