@@ -52,12 +52,30 @@ export function registerControlUiBootstrapLifecycleSuite(): void {
       });
       expect(connected.error).toBeUndefined();
       expect(connected.ok).toBe(true);
-      expect(
-        (connected.payload as { auth?: { deviceToken?: unknown } } | undefined)?.auth?.deviceToken,
-      ).toEqual(expect.any(String));
+      const deviceToken = (connected.payload as { auth?: { deviceToken?: unknown } } | undefined)
+        ?.auth?.deviceToken;
+      expect(deviceToken).toEqual(expect.any(String));
       const paired = await getPairedDevice(identity.deviceId);
       expect(paired?.tokens?.operator?.allowedAgentIds).toEqual(["cellect-fi-user"]);
+      expect(paired?.tokens?.operator?.token).toBe(deviceToken);
+      expect(paired?.tokens?.operator?.issuer).toEqual({
+        kind: "shared-gateway-auth",
+        generation: expect.any(String),
+      });
       ws.close();
+
+      const wsReconnect = await openWs(port, { origin: originForPort(port) });
+      const reconnected = await connectReq(wsReconnect, {
+        skipDefaultAuth: true,
+        deviceToken: deviceToken as string,
+        role: "operator",
+        scopes: [...WEBCHAT_PAIRING_SETUP_BOOTSTRAP_PROFILE.scopes],
+        client,
+        deviceIdentityPath: identityPath,
+      });
+      expect(reconnected.error).toBeUndefined();
+      expect(reconnected.ok).toBe(true);
+      wsReconnect.close();
     } finally {
       await server.close();
       restoreGatewayToken(prevToken);
