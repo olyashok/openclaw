@@ -51,21 +51,24 @@ function registeredTools(context: OpenClawPluginToolContext): AnyAgentTool[] {
   return result ? (Array.isArray(result) ? result : [result]) : [];
 }
 
-function registeredMessageReceivedHook() {
+function registeredMessageReceivedHook(config = runtimeConfig) {
   const hooks: Array<(event: never, context: never) => Promise<void> | void> = [];
   fiUserPlugin.register?.(
     createTestPluginApi({
       id: "fi-user",
       name: "Fi User Delegation",
-      config: runtimeConfig,
+      config,
       on: (name, handler) => {
-        if (name === "message_received")
+        if (name === "message_received") {
           hooks.push(handler as (event: never, context: never) => Promise<void> | void);
+        }
       },
     }),
   );
   const hook = hooks[0];
-  if (!hook) throw new Error("expected message_received hook");
+  if (!hook) {
+    throw new Error("expected message_received hook");
+  }
   return hook;
 }
 
@@ -157,6 +160,30 @@ describe("Fi user requester-bound Google Drive", () => {
           content: "Check this invoice",
           messageId: "1710000000.000001",
         }),
+      }),
+    );
+  });
+
+  it("uses a broker token resolved from the private plugin configuration", async () => {
+    const config = structuredClone(runtimeConfig);
+    config.plugins.entries["fi-user"].config.brokerTokenEnv = "resolved-broker-token";
+    const hook = registeredMessageReceivedHook(config);
+    await hook(
+      {
+        content: "Check this invoice",
+        senderId: "U12345678",
+        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
+      } as never,
+      {
+        channelId: "slack",
+        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
+      } as never,
+    );
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith(
+      "https://fi.example.test/api/openclaw-session-projection",
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: "Bearer resolved-broker-token" }),
       }),
     );
   });
