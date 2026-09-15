@@ -36,6 +36,7 @@ type Delegation = {
 const FI_USER_AGENT_ID = "cellect-fi-user";
 const DIRECT_SLACK_SESSION = /^agent:cellect-fi-user:slack:direct:[^\s]{1,480}$/;
 const SLACK_USER_ID = /^U[A-Z0-9]{8,}$/i;
+const ENVIRONMENT_VARIABLE_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const projectedDirectSessions = new Set<string>();
 const MAX_PROJECTED_DIRECT_SESSIONS = 10_000;
 
@@ -55,7 +56,9 @@ function pluginConfig(
   context: OpenClawPluginToolContext,
 ): Required<PluginConfig> {
   const cfg = context.getRuntimeConfig?.() ?? context.runtimeConfig ?? context.config;
-  if (!cfg) return configFromRuntime(api);
+  if (!cfg) {
+    return configFromRuntime(api);
+  }
   const raw = cfg.plugins?.entries?.["fi-user"]?.config as PluginConfig | undefined;
   return {
     baseUrl: raw?.baseUrl?.replace(/\/+$/, "") || "https://app.cellect.ai/fi",
@@ -63,6 +66,22 @@ function pluginConfig(
     gamBinary: raw?.gamBinary || "/home/node/.openclaw/bin/gam7/gam",
     gamConfigDir: raw?.gamConfigDir || "/home/claude/GAMConfig",
   };
+}
+
+/**
+ * OpenClaw resolves ${...} configuration references before plugins run, then
+ * clears the source environment value. Keep the old environment-name form for
+ * existing deployments, while accepting that already-resolved private value.
+ */
+function brokerToken(config: Required<PluginConfig>): string | undefined {
+  const configured = config.brokerTokenEnv.trim();
+  if (!configured) {
+    return undefined;
+  }
+  return (
+    process.env[configured]?.trim() ||
+    (ENVIRONMENT_VARIABLE_NAME.test(configured) ? undefined : configured)
+  );
 }
 
 /**
@@ -100,8 +119,8 @@ async function projectVerifiedDirectSlackMessage(
   }
 
   const config = configFromRuntime(api);
-  const brokerToken = process.env[config.brokerTokenEnv]?.trim();
-  if (!brokerToken) {
+  const token = brokerToken(config);
+  if (!token) {
     api.logger.warn("fi-user: direct-session projection skipped; broker is not configured");
     return;
   }
@@ -110,7 +129,7 @@ async function projectVerifiedDirectSlackMessage(
     const response = await fetch(`${config.baseUrl}/api/openclaw-session-projection`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${brokerToken}`,
+        authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
@@ -154,15 +173,15 @@ async function exchange(
   ) {
     throw new Error("This operation requires a verified Slack requester on Cellect Fi");
   }
-  const brokerToken = process.env[config.brokerTokenEnv]?.trim();
-  if (!brokerToken) {
+  const token = brokerToken(config);
+  if (!token) {
     throw new Error("Fi user delegation broker is not configured");
   }
 
   const response = await fetch(`${config.baseUrl}/api/openclaw-user-delegation`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${brokerToken}`,
+      authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({ requesterSenderId, agentId: context.agentId }),
