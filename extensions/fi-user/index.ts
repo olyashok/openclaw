@@ -33,11 +33,14 @@ type Delegation = {
   fi: { token: string; expiresAt: number };
 };
 
-function pluginConfig(
-  api: OpenClawPluginApi,
-  context: OpenClawPluginToolContext,
-): Required<PluginConfig> {
-  const cfg = context.getRuntimeConfig?.() ?? context.runtimeConfig ?? context.config ?? api.config;
+const FI_USER_AGENT_ID = "cellect-fi-user";
+const DIRECT_SLACK_SESSION = /^agent:cellect-fi-user:slack:direct:[^\s]{1,480}$/;
+const SLACK_USER_ID = /^U[A-Z0-9]{8,}$/i;
+const projectedDirectSessions = new Set<string>();
+const MAX_PROJECTED_DIRECT_SESSIONS = 10_000;
+
+function configFromRuntime(api: OpenClawPluginApi): Required<PluginConfig> {
+  const cfg = api.runtime.config?.current?.() ?? api.config;
   const raw = cfg.plugins?.entries?.["fi-user"]?.config as PluginConfig | undefined;
   return {
     baseUrl: raw?.baseUrl?.replace(/\/+$/, "") || "https://app.cellect.ai/fi",
@@ -45,6 +48,97 @@ function pluginConfig(
     gamBinary: raw?.gamBinary || "/home/node/.openclaw/bin/gam7/gam",
     gamConfigDir: raw?.gamConfigDir || "/home/claude/GAMConfig",
   };
+}
+
+function pluginConfig(
+  api: OpenClawPluginApi,
+  context: OpenClawPluginToolContext,
+): Required<PluginConfig> {
+  const cfg = context.getRuntimeConfig?.() ?? context.runtimeConfig ?? context.config;
+  if (!cfg) return configFromRuntime(api);
+  const raw = cfg.plugins?.entries?.["fi-user"]?.config as PluginConfig | undefined;
+  return {
+    baseUrl: raw?.baseUrl?.replace(/\/+$/, "") || "https://app.cellect.ai/fi",
+    brokerTokenEnv: raw?.brokerTokenEnv || "OPENCLAW_FI_USER_BROKER_TOKEN",
+    gamBinary: raw?.gamBinary || "/home/node/.openclaw/bin/gam7/gam",
+    gamConfigDir: raw?.gamConfigDir || "/home/claude/GAMConfig",
+  };
+}
+
+/**
+ * Mirror only an active member's canonical Slack DM session into the private
+ * Matrix room Fi provisions for that exact member. This is best-effort
+ * secondary delivery: an unavailable Fi or Matrix path never delays Slack.
+ */
+async function projectVerifiedDirectSlackMessage(
+  api: OpenClawPluginApi,
+  event: {
+    content: string;
+    sessionKey?: string;
+    messageId?: string;
+    runId?: string;
+    senderId?: string;
+  },
+  context: {
+    channelId: string;
+    sessionKey?: string;
+    messageId?: string;
+    runId?: string;
+    senderId?: string;
+  },
+): Promise<void> {
+  const sessionKey = event.sessionKey ?? context.sessionKey;
+  const senderId = (event.senderId ?? context.senderId ?? "").trim().toUpperCase();
+  if (
+    context.channelId !== "slack" ||
+    !sessionKey ||
+    !DIRECT_SLACK_SESSION.test(sessionKey) ||
+    !SLACK_USER_ID.test(senderId) ||
+    projectedDirectSessions.has(sessionKey)
+  ) {
+    return;
+  }
+
+  const config = configFromRuntime(api);
+  const brokerToken = process.env[config.brokerTokenEnv]?.trim();
+  if (!brokerToken) {
+    api.logger.warn("fi-user: direct-session projection skipped; broker is not configured");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${config.baseUrl}/api/openclaw-session-projection`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${brokerToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        requesterSenderId: senderId,
+        agentId: FI_USER_AGENT_ID,
+        sessionKey,
+        content: event.content,
+        ...((event.messageId ?? context.messageId)
+          ? { messageId: event.messageId ?? context.messageId }
+          : {}),
+        ...((event.runId ?? context.runId) ? { runId: event.runId ?? context.runId } : {}),
+      }),
+    });
+    // A caller without an active Fi membership simply has no Matrix mirror.
+    // A Matrix-disabled environment likewise stays quiet.
+    if (response.ok || response.status === 404 || response.status === 409) {
+      if (response.ok) {
+        if (projectedDirectSessions.size >= MAX_PROJECTED_DIRECT_SESSIONS) {
+          projectedDirectSessions.clear();
+        }
+        projectedDirectSessions.add(sessionKey);
+      }
+      return;
+    }
+    api.logger.warn(`fi-user: direct-session projection failed (${response.status})`);
+  } catch {
+    api.logger.warn("fi-user: direct-session projection failed");
+  }
 }
 
 async function exchange(
@@ -609,9 +703,13 @@ export default definePluginEntry({
   name: "Fi User Delegation",
   description: "Requester-bound Gmail, Google Drive, and Fi data-room operations",
   register(api) {
+    api.on("message_received", async (event, context) => {
+      // Keep source-channel delivery independent of Fi/Matrix latency.
+      void projectVerifiedDirectSlackMessage(api, event, context);
+    });
     api.registerTool((context: OpenClawPluginToolContext) => {
       if (
-        context.agentId !== "cellect-fi-user" ||
+        context.agentId !== FI_USER_AGENT_ID ||
         context.messageChannel !== "slack" ||
         !context.requesterSenderId?.trim()
       ) {

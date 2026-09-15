@@ -574,6 +574,37 @@ Explicit conversation bindings always win over `sessionScope`; bound rooms and t
 
 When OpenClaw detects a Matrix DM room colliding with another DM room on the same shared session, it posts a one-time `m.notice` pointing to the `/focus` escape hatch and suggesting a `dm.sessionScope` change. The notice only appears when thread bindings are enabled.
 
+### Mirror an existing session into Matrix
+
+An operator can add a Matrix view to a session that started on another channel without
+copying its transcript or creating another agent session:
+
+```bash
+openclaw gateway call matrix.sessionProjection.create --params '{
+  "targetSessionKey": "agent:main:slack:channel:C123:thread:1700000000.000001",
+  "roomId": "!room:example.org",
+  "accountId": "default",
+  "label": "Slack support thread"
+}'
+```
+
+The Matrix account must already be running and joined to the target room. The method
+creates one durable child thread, binds it to the existing canonical session, and is
+idempotent for the same session, account, and room. Subsequent non-Matrix user messages
+and final assistant answers appear in that thread. Progress, reasoning, status notices,
+and tool output are not mirrored. Replies written in Matrix still route to the canonical
+session through the normal conversation binding; they are not reflected back into Matrix
+as duplicate events.
+
+The method does not replay a prior transcript. A trusted product bridge may include the
+single source message that triggered the create request so the new thread has a visible
+starting point.
+
+The method requires `operator.admin`. It returns `threadRootEventId`, which clients can
+use to focus the projected Matrix thread. The projection does not infer a destination
+room: a product integration must choose a room the user is authorized to read and pass
+its exact, case-sensitive Matrix room ID.
+
 ## ACP conversation bindings
 
 Matrix rooms, DMs, and existing Matrix threads can become durable ACP workspaces without changing the chat surface.

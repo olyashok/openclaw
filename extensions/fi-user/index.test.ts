@@ -51,6 +51,24 @@ function registeredTools(context: OpenClawPluginToolContext): AnyAgentTool[] {
   return result ? (Array.isArray(result) ? result : [result]) : [];
 }
 
+function registeredMessageReceivedHook() {
+  const hooks: Array<(event: never, context: never) => Promise<void> | void> = [];
+  fiUserPlugin.register?.(
+    createTestPluginApi({
+      id: "fi-user",
+      name: "Fi User Delegation",
+      config: runtimeConfig,
+      on: (name, handler) => {
+        if (name === "message_received")
+          hooks.push(handler as (event: never, context: never) => Promise<void> | void);
+      },
+    }),
+  );
+  const hook = hooks[0];
+  if (!hook) throw new Error("expected message_received hook");
+  return hook;
+}
+
 function slackContext(overrides: Partial<OpenClawPluginToolContext> = {}) {
   return {
     agentId: "cellect-fi-user",
@@ -112,6 +130,56 @@ describe("Fi user requester-bound Google Drive", () => {
     ]);
     expect(registeredTools(slackContext({ requesterSenderId: undefined }))).toEqual([]);
     expect(registeredTools(slackContext({ messageChannel: "matrix" }))).toEqual([]);
+  });
+
+  it("asks Fi to create one verified private Matrix projection for a direct Slack session", async () => {
+    const hook = registeredMessageReceivedHook();
+    await hook(
+      {
+        content: "Check this invoice",
+        senderId: "U12345678",
+        messageId: "1710000000.000001",
+        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
+      } as never,
+      {
+        channelId: "slack",
+        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
+      } as never,
+    );
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith(
+      "https://fi.example.test/api/openclaw-session-projection",
+      expect.objectContaining({
+        body: JSON.stringify({
+          requesterSenderId: "U12345678",
+          agentId: "cellect-fi-user",
+          sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
+          content: "Check this invoice",
+          messageId: "1710000000.000001",
+        }),
+      }),
+    );
+  });
+
+  it("never projects Slack channels or another agent's session", async () => {
+    const hook = registeredMessageReceivedHook();
+    await hook(
+      {
+        content: "channel",
+        senderId: "U12345678",
+        sessionKey: "agent:cellect-fi-user:slack:channel:C1",
+      } as never,
+      { channelId: "slack" } as never,
+    );
+    await hook(
+      {
+        content: "other",
+        senderId: "U12345678",
+        sessionKey: "agent:cellect-fi-admin:slack:direct:D1",
+      } as never,
+      { channelId: "slack" } as never,
+    );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("searches every file visible to the immutable requester mailbox", async () => {
