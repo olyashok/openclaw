@@ -481,9 +481,9 @@ async function authenticateGatewayConnectCore(
     : undefined;
   // A host-issued Control UI handoff creates a durable browser token. Bind both
   // the bootstrap session and that token to the current shared-auth generation.
-  const controlUiBootstrapSharedGatewaySessionGeneration =
+  const browserBootstrapSharedGatewaySessionGeneration =
     authMethod === "bootstrap-token" &&
-    isControlUi &&
+    (isControlUi || isWebchat) &&
     role === "operator" &&
     isControlUiOperatorBootstrapProfile({
       profile: issuedBootstrapProfile,
@@ -494,11 +494,11 @@ async function authenticateGatewayConnectCore(
   const sessionUsesSharedGatewayAuth =
     usesSharedGatewayAuth ||
     deviceTokenSharedGatewaySessionGeneration !== undefined ||
-    controlUiBootstrapSharedGatewaySessionGeneration !== undefined;
+    browserBootstrapSharedGatewaySessionGeneration !== undefined;
   const sessionSharedGatewaySessionGeneration =
     sharedGatewaySessionGeneration ??
     deviceTokenSharedGatewaySessionGeneration ??
-    controlUiBootstrapSharedGatewaySessionGeneration;
+    browserBootstrapSharedGatewaySessionGeneration;
   if (sessionUsesSharedGatewayAuth) {
     const requiredSharedGatewaySessionGeneration = getRequiredSharedGatewaySessionGeneration?.();
     if (

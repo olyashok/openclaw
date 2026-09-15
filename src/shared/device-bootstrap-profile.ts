@@ -5,6 +5,7 @@ import { normalizeDeviceAuthRole, normalizeDeviceAuthScopes } from "./device-aut
 export type DeviceBootstrapPurpose =
   | "control-ui"
   | "control-ui-owner"
+  | "webchat"
   | "mobile-full"
   | "voice-node"
   | "cloud-worker";
@@ -37,6 +38,13 @@ export const BOOTSTRAP_HANDOFF_OPERATOR_SCOPES = [
 ] as const;
 
 const BOOTSTRAP_HANDOFF_OPERATOR_SCOPE_SET = new Set<string>(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES);
+
+/** Embedded webchat scopes, including Talk without widening native setup profiles. */
+const WEBCHAT_BOOTSTRAP_OPERATOR_SCOPE_SET = new Set<string>([
+  "operator.read",
+  "operator.talk",
+  "operator.write",
+]);
 
 /** Full browser-owner scopes allowed only by the host-issued Control UI profile. */
 export const CONTROL_UI_OWNER_BOOTSTRAP_OPERATOR_SCOPES = [
@@ -75,7 +83,7 @@ export const PAIRING_SETUP_BOOTSTRAP_PROFILE: DeviceBootstrapProfile = {
 export const WEBCHAT_PAIRING_SETUP_BOOTSTRAP_PROFILE: DeviceBootstrapProfile = {
   roles: ["operator"],
   scopes: ["operator.read", "operator.talk", "operator.write"],
-  purpose: "control-ui",
+  purpose: "webchat",
 };
 
 /** Full browser-owner profile issued only by dashboard and graphical onboarding. */
@@ -196,11 +204,13 @@ export function resolveBootstrapProfileScopesForRole(
     const allowedScopes =
       purpose === "control-ui-owner"
         ? CONTROL_UI_OWNER_BOOTSTRAP_OPERATOR_SCOPE_SET
-        : purpose === "mobile-full"
-          ? MOBILE_FULL_ACCESS_OPERATOR_SCOPE_SET
-          : purpose === "voice-node"
-            ? VOICE_NODE_OPERATOR_SCOPE_SET
-            : BOOTSTRAP_HANDOFF_OPERATOR_SCOPE_SET;
+        : purpose === "webchat"
+          ? WEBCHAT_BOOTSTRAP_OPERATOR_SCOPE_SET
+          : purpose === "mobile-full"
+            ? MOBILE_FULL_ACCESS_OPERATOR_SCOPE_SET
+            : purpose === "voice-node"
+              ? VOICE_NODE_OPERATOR_SCOPE_SET
+              : BOOTSTRAP_HANDOFF_OPERATOR_SCOPE_SET;
     return normalizedScopes.filter((scope) => allowedScopes.has(scope));
   }
   return [];
@@ -270,6 +280,7 @@ export function normalizeDeviceBootstrapProfile(
   const purpose =
     input?.purpose === "control-ui" ||
     input?.purpose === "control-ui-owner" ||
+    input?.purpose === "webchat" ||
     input?.purpose === "mobile-full" ||
     input?.purpose === "voice-node" ||
     input?.purpose === "cloud-worker"
