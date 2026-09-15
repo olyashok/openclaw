@@ -164,6 +164,10 @@ function pumpMicrophone(samples: Float32Array): void {
   });
 }
 
+function speechFrame(): Float32Array {
+  return new Float32Array(4096).fill(0.25);
+}
+
 function zeroPcmBase64(sampleRate: number): string {
   return "AAAA".repeat((sampleRate * 2) / 3);
 }
@@ -523,10 +527,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     pumpMicrophone(new Float32Array(4096));
 
     expect(requestCallsFor(client, "talk.session.cancelOutput")).toHaveLength(0);
-    const appendCall = vi
-      .mocked(client["request"])
-      .mock.calls.find((call) => call[0] === "talk.session.appendAudio");
-    expect((appendCall?.[1] as { sessionId?: string } | undefined)?.sessionId).toBe("relay-1");
+    expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(0);
     transport.stop();
   });
 
@@ -710,7 +711,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     const transport = createTransport({ callbacks: { onStatus }, client });
 
     await startTransport(transport);
-    const samples = new Float32Array(4096);
+    const samples = speechFrame();
     for (let index = 0; index < 10_000; index += 1) {
       pumpMicrophone(samples);
     }
@@ -743,7 +744,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     await startTransport(transport);
     for (const timestamp of [10, 20, 30, 40]) {
       audioCurrentTime = timestamp / 1_000;
-      pumpMicrophone(new Float32Array(4096));
+      pumpMicrophone(speechFrame());
     }
 
     expect(
@@ -769,7 +770,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     const oldTransport = createTransport({ callbacks: { onStatus: oldStatus }, client: oldClient });
 
     await oldTransport.start();
-    pumpMicrophone(new Float32Array(4096));
+    pumpMicrophone(speechFrame());
     oldTransport.stop();
 
     const replacementStatus = vi.fn();
@@ -779,7 +780,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
       client: replacementClient,
     });
     await replacement.start();
-    pumpMicrophone(new Float32Array(4096));
+    pumpMicrophone(speechFrame());
     rejectOldAppend(new Error("late stale append failure"));
     await Promise.resolve();
 
@@ -801,11 +802,11 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     const transport = createTransport({ callbacks: { onStatus }, client });
 
     await startTransport(transport);
-    pumpMicrophone(new Float32Array(4096));
+    pumpMicrophone(speechFrame());
     await waitForFast(() =>
       expect(onStatus).toHaveBeenCalledWith("error", "Unknown realtime relay session"),
     );
-    pumpMicrophone(new Float32Array(4096));
+    pumpMicrophone(speechFrame());
     transport.stop();
 
     const appendCalls = vi
@@ -825,7 +826,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     const transport = createTransport({ callbacks: { onStatus }, client });
 
     await startTransport(transport);
-    pumpMicrophone(new Float32Array(4096));
+    pumpMicrophone(speechFrame());
     emitTalkEvent({
       relaySessionId: "relay-1",
       type: "close",

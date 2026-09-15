@@ -4,6 +4,7 @@ import {
   bytesToBase64,
   estimateBase64DecodedByteLength,
   floatToPcm16,
+  RealtimeTalkInputGate,
   RealtimeTalkMediaStreamMeter,
   RealtimeTalkPcmInputPump,
   RealtimeTalkPcmOutputQueue,
@@ -79,6 +80,7 @@ function isGemini31LiveModel(model: string | undefined): boolean {
 }
 
 export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
+  private readonly inputGate = new RealtimeTalkInputGate();
   private ws: WebSocket | null = null;
   private setupTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
   private readonly input = new RealtimeTalkInputController((detail) => {
@@ -162,6 +164,7 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
     }
     const wsUrl = buildGoogleLiveUrl(this.session);
     this.closed = false;
+    this.inputGate.reset();
     this.cameraPublished = false;
     try {
       await this.input.open(this.ctx.inputDeviceId);
@@ -282,6 +285,7 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
     this.ws = null;
     runRealtimeTalkCleanup([
       () => this.input.stop(),
+      () => this.inputGate.reset(),
       () => this.toolOwner.release(),
       () => this.inputPump.stop(),
       () => inputMeter?.stop(),
@@ -334,15 +338,21 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
       if (this.ws?.readyState !== WebSocket.OPEN) {
         return;
       }
-      const pcm = floatToPcm16(samples);
-      this.send({
-        realtimeInput: {
-          audio: {
-            data: bytesToBase64(pcm),
-            mimeType: `audio/pcm;rate=${this.inputContext?.sampleRate ?? 16000}`,
+      const sampleRate = this.inputContext?.sampleRate ?? 16_000;
+      const gated = this.inputGate.push(samples, sampleRate);
+      for (const frame of gated.frames) {
+        this.send({
+          realtimeInput: {
+            audio: {
+              data: bytesToBase64(floatToPcm16(frame)),
+              mimeType: `audio/pcm;rate=${sampleRate}`,
+            },
           },
-        },
-      });
+        });
+      }
+      if (gated.streamPaused) {
+        this.send({ realtimeInput: { audioStreamEnd: true } });
+      }
     });
   }
 

@@ -5,6 +5,7 @@ import {
   bytesToBase64,
   floatToPcm16,
   measureRealtimeTalkAudioFrame,
+  RealtimeTalkInputGate,
   RealtimeTalkMediaStreamMeter,
   RealtimeTalkPcmInputPump,
   RealtimeTalkPcmOutputQueue,
@@ -44,6 +45,7 @@ function estimateRelayEventBytes(event: GatewayRelayEvent): number {
 }
 
 export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport {
+  private readonly inputGate = new RealtimeTalkInputGate();
   private readonly input = new RealtimeTalkInputController((detail) =>
     this.failAudioAppend(detail),
   );
@@ -88,6 +90,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
       throw new Error("Gateway-relay realtime Talk currently requires PCM16 audio");
     }
     this.closed = false;
+    this.inputGate.reset();
     this.activated = false;
     this.pendingActivationEvents = [];
     this.pendingActivationEventBytes = 0;
@@ -177,6 +180,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.inputPump.stop();
+    this.inputGate.reset();
     this.abortPendingAudioAppends();
     this.inputMeter?.stop();
     this.inputMeter = null;
@@ -211,29 +215,37 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
       if (!abortController || abortController.signal.aborted || this.pendingOutputCancellations) {
         return;
       }
-      if (this.pendingAudioAppends.size >= MAX_PENDING_AUDIO_APPENDS) {
-        this.failAudioAppend("Realtime Talk audio input fell behind");
-        return;
+      const sampleRate = this.inputContext?.sampleRate ?? this.session.audio.inputSampleRateHz;
+      const { frames } = this.inputGate.push(samples, sampleRate);
+      let timestamp = (this.inputContext?.currentTime ?? 0) * 1_000;
+      timestamp -= frames.reduce((total, frame) => total + (frame.length / sampleRate) * 1_000, 0);
+      for (const frame of frames) {
+        timestamp += (frame.length / sampleRate) * 1_000;
+        // Speech frames cannot be silently discarded; if the retained pre-roll would
+        // outrun the Gateway, fail the session instead of building stale audio latency.
+        if (this.pendingAudioAppends.size >= MAX_PENDING_AUDIO_APPENDS) {
+          this.failAudioAppend("Realtime Talk audio input fell behind");
+          return;
+        }
+        const request = this.ctx.client
+          .request(
+            "talk.session.appendAudio",
+            {
+              sessionId: this.session.relaySessionId,
+              audioBase64: bytesToBase64(floatToPcm16(frame)),
+              timestamp: Math.round(timestamp),
+            },
+            {
+              signal: abortController.signal,
+              timeoutMs: AUDIO_APPEND_TIMEOUT_MS,
+            },
+          )
+          .catch((error: unknown) => this.failAudioAppend(error));
+        this.pendingAudioAppends.add(request);
+        void request.finally(() => {
+          this.pendingAudioAppends.delete(request);
+        });
       }
-      const pcm = floatToPcm16(samples);
-      const request = this.ctx.client
-        .request(
-          "talk.session.appendAudio",
-          {
-            sessionId: this.session.relaySessionId,
-            audioBase64: bytesToBase64(pcm),
-            timestamp: Math.round((this.inputContext?.currentTime ?? 0) * 1000),
-          },
-          {
-            signal: abortController.signal,
-            timeoutMs: AUDIO_APPEND_TIMEOUT_MS,
-          },
-        )
-        .catch((error: unknown) => this.failAudioAppend(error));
-      this.pendingAudioAppends.add(request);
-      void request.finally(() => {
-        this.pendingAudioAppends.delete(request);
-      });
     });
   }
 

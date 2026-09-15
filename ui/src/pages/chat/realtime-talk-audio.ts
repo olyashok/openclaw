@@ -73,6 +73,96 @@ export function measureRealtimeTalkAudioFrame(samples: Float32Array): RealtimeTa
   };
 }
 
+type BufferedRealtimeTalkFrame = {
+  samples: Float32Array;
+  durationMs: number;
+};
+
+export type RealtimeTalkInputGateResult = {
+  frames: Float32Array[];
+  streamPaused: boolean;
+};
+
+const REALTIME_TALK_MIN_SPEECH_RMS = 0.016;
+const REALTIME_TALK_MIN_SPEECH_PEAK = 0.035;
+const REALTIME_TALK_INITIAL_NOISE_FLOOR = 0.002;
+
+/** Suppress sustained silence while retaining the audio immediately before speech onset. */
+export class RealtimeTalkInputGate {
+  private readonly buffered: BufferedRealtimeTalkFrame[] = [];
+  private bufferedMs = 0;
+  private noiseFloor = REALTIME_TALK_INITIAL_NOISE_FLOOR;
+  private speaking = false;
+  private quietMs = 0;
+
+  constructor(
+    private readonly preRollMs = 300,
+    private readonly trailingSilenceMs = 650,
+  ) {}
+
+  push(samples: Float32Array, sampleRateHz: number): RealtimeTalkInputGateResult {
+    if (samples.length === 0 || !Number.isFinite(sampleRateHz) || sampleRateHz <= 0) {
+      return { frames: [], streamPaused: false };
+    }
+    const durationMs = (samples.length / sampleRateHz) * 1_000;
+    const { peak, rms } = measureRealtimeTalkAudioFrame(samples);
+    const speech =
+      rms >= Math.max(REALTIME_TALK_MIN_SPEECH_RMS, this.noiseFloor * 2.5) ||
+      peak >= Math.max(REALTIME_TALK_MIN_SPEECH_PEAK, this.noiseFloor * 5);
+
+    if (!this.speaking) {
+      this.bufferFrame(samples, durationMs);
+      if (!speech) {
+        this.noiseFloor = 0.95 * this.noiseFloor + 0.05 * rms;
+        return { frames: [], streamPaused: false };
+      }
+      this.speaking = true;
+      this.quietMs = 0;
+      return { frames: this.drainBuffer(), streamPaused: false };
+    }
+
+    if (speech) {
+      this.quietMs = 0;
+    } else {
+      this.quietMs += durationMs;
+    }
+    const streamPaused = this.quietMs >= this.trailingSilenceMs;
+    if (streamPaused) {
+      this.speaking = false;
+      this.quietMs = 0;
+      this.buffered.length = 0;
+      this.bufferedMs = 0;
+    }
+    return { frames: [samples], streamPaused };
+  }
+
+  reset(): void {
+    this.buffered.length = 0;
+    this.bufferedMs = 0;
+    this.noiseFloor = REALTIME_TALK_INITIAL_NOISE_FLOOR;
+    this.speaking = false;
+    this.quietMs = 0;
+  }
+
+  private bufferFrame(samples: Float32Array, durationMs: number): void {
+    this.buffered.push({ samples: samples.slice(), durationMs });
+    this.bufferedMs += durationMs;
+    while (
+      this.buffered.length > 1 &&
+      this.bufferedMs - this.buffered[0]!.durationMs > this.preRollMs
+    ) {
+      this.bufferedMs -= this.buffered.shift()!.durationMs;
+    }
+  }
+
+  private drainBuffer(): Float32Array[] {
+    const frames = this.buffered.map((frame) => frame.samples);
+    this.buffered.length = 0;
+    this.bufferedMs = 0;
+    return frames;
+  }
+}
+
 export class RealtimeTalkPcmInputPump {
   private source: MediaStreamAudioSourceNode | null = null;
   private processor: ScriptProcessorNode | null = null;

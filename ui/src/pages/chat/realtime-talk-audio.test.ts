@@ -2,9 +2,48 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bytesToBase64,
+  RealtimeTalkInputGate,
   RealtimeTalkMediaStreamMeter,
   RealtimeTalkPcmOutputQueue,
 } from "./realtime-talk-audio.ts";
+
+describe("RealtimeTalkInputGate", () => {
+  const sampleRate = 1_000;
+  const frame = (level: number, milliseconds = 100) => new Float32Array(milliseconds).fill(level);
+
+  it("suppresses idle silence and restores pre-roll at speech onset", () => {
+    const gate = new RealtimeTalkInputGate(300, 600);
+
+    for (let index = 0; index < 20; index += 1) {
+      expect(gate.push(frame(0), sampleRate).frames).toEqual([]);
+    }
+    const started = gate.push(frame(0.1), sampleRate);
+
+    expect(started.frames).toHaveLength(4);
+    expect(
+      started.frames.slice(0, 3).every((samples) => samples.every((sample) => sample === 0)),
+    ).toBe(true);
+  });
+
+  it("sends one trailing window, signals pause, then suppresses silence again", () => {
+    const gate = new RealtimeTalkInputGate(200, 300);
+
+    expect(gate.push(frame(0.1), sampleRate).frames).toHaveLength(1);
+    expect(gate.push(frame(0), sampleRate).streamPaused).toBe(false);
+    expect(gate.push(frame(0), sampleRate).streamPaused).toBe(false);
+    expect(gate.push(frame(0), sampleRate).streamPaused).toBe(true);
+    expect(gate.push(frame(0), sampleRate).frames).toEqual([]);
+  });
+
+  it("learns stable low background noise without opening the stream", () => {
+    const gate = new RealtimeTalkInputGate();
+
+    for (let index = 0; index < 100; index += 1) {
+      expect(gate.push(frame(0.01), sampleRate).frames).toEqual([]);
+    }
+    expect(gate.push(frame(0.08), sampleRate).frames.length).toBeGreaterThan(0);
+  });
+});
 
 class MockAudioBufferSource {
   buffer: unknown = null;
