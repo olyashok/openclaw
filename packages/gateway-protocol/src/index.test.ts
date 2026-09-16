@@ -802,6 +802,7 @@ describe("validateTalkSession", () => {
         mode: "realtime",
         transport: "managed-room",
         brain: "agent-consult",
+        sessionCapsule: "Project: Example Project",
       }),
     ]);
   });
@@ -814,6 +815,15 @@ describe("validateTalkSession", () => {
       "unexpected property 'instructionsOverride'",
     );
     expectRejected(validateTalkSessionCreateParams, [{ mode: "realtime", language: "de-DE" }]);
+  });
+
+  it("bounds realtime session capsules", () => {
+    expectAccepted(validateTalkSessionCreateParams, [
+      talkClient({ sessionCapsule: "Project: Example Project" }),
+    ]);
+    expectRejected(validateTalkSessionCreateParams, [
+      talkClient({ sessionCapsule: "x".repeat(6001) }),
+    ]);
   });
 });
 

@@ -298,6 +298,8 @@ export const TalkSessionCreateParamsSchema = closedObject({
   silenceDurationMs: Type.Optional(Type.Integer({ minimum: 1 })),
   prefixPaddingMs: Type.Optional(Type.Integer({ minimum: 0 })),
   reasoningEffort: Type.Optional(Type.String()),
+  /** Bounded, informational app context for the first realtime turn. */
+  sessionCapsule: Type.Optional(Type.String({ minLength: 1, maxLength: 6000 })),
   mode: Type.Optional(TalkModeSchema),
   transport: Type.Optional(TalkTransportSchema),
   brain: Type.Optional(TalkBrainSchema),

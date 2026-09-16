@@ -13099,7 +13099,7 @@ public struct TalkAgentControlResult: Codable, Sendable {
 }
 
 public struct TalkClientToolCallParams: Codable, Sendable {
-    public let sessionkey: String
+    public let sessionkey: String?
     public let voicesessionid: String?
     public let callid: String
     public let name: String
@@ -13107,7 +13107,7 @@ public struct TalkClientToolCallParams: Codable, Sendable {
     public let relaysessionid: String?
 
     public init(
-        sessionkey: String,
+        sessionkey: String? = nil,
         voicesessionid: String? = nil,
         callid: String,
         name: String,
@@ -13293,6 +13293,7 @@ public struct TalkSessionCancelOutputResult: Codable, Sendable {
 }
 
 public struct TalkSessionCreateParams: Codable, Sendable {
+    public let binding: String?
     public let sessionkey: String?
     public let spawnedby: String?
     public let provider: String?
@@ -13303,12 +13304,14 @@ public struct TalkSessionCreateParams: Codable, Sendable {
     public let silencedurationms: Int?
     public let prefixpaddingms: Int?
     public let reasoningeffort: String?
+    public let sessioncapsule: String?
     public let mode: AnyCodable?
     public let transport: AnyCodable?
     public let brain: AnyCodable?
     public let ttlms: Int?
 
     public init(
+        binding: String? = nil,
         sessionkey: String? = nil,
         spawnedby: String? = nil,
         provider: String? = nil,
@@ -13319,11 +13322,13 @@ public struct TalkSessionCreateParams: Codable, Sendable {
         silencedurationms: Int? = nil,
         prefixpaddingms: Int? = nil,
         reasoningeffort: String? = nil,
+        sessioncapsule: String? = nil,
         mode: AnyCodable? = nil,
         transport: AnyCodable? = nil,
         brain: AnyCodable? = nil,
         ttlms: Int? = nil)
     {
+        self.binding = binding
         self.sessionkey = sessionkey
         self.spawnedby = spawnedby
         self.provider = provider
@@ -13334,6 +13339,7 @@ public struct TalkSessionCreateParams: Codable, Sendable {
         self.silencedurationms = silencedurationms
         self.prefixpaddingms = prefixpaddingms
         self.reasoningeffort = reasoningeffort
+        self.sessioncapsule = sessioncapsule
         self.mode = mode
         self.transport = transport
         self.brain = brain
@@ -13341,6 +13347,7 @@ public struct TalkSessionCreateParams: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case binding
         case sessionkey = "sessionKey"
         case spawnedby = "spawnedBy"
         case provider
@@ -13351,6 +13358,7 @@ public struct TalkSessionCreateParams: Codable, Sendable {
         case silencedurationms = "silenceDurationMs"
         case prefixpaddingms = "prefixPaddingMs"
         case reasoningeffort = "reasoningEffort"
+        case sessioncapsule = "sessionCapsule"
         case mode
         case transport
         case brain
@@ -20321,6 +20329,7 @@ public struct DevicePairSetupCodeParams: Codable, Sendable {
     public let preferremoteurl: Bool?
     public let includeqr: Bool?
     public let bootstrapprofile: String?
+    public let allowedagentids: [String]?
     public let joinurl: Bool?
 
     public init(
@@ -20328,12 +20337,14 @@ public struct DevicePairSetupCodeParams: Codable, Sendable {
         preferremoteurl: Bool? = nil,
         includeqr: Bool? = nil,
         bootstrapprofile: String? = nil,
+        allowedagentids: [String]? = nil,
         joinurl: Bool? = nil)
     {
         self.publicurl = publicurl
         self.preferremoteurl = preferremoteurl
         self.includeqr = includeqr
         self.bootstrapprofile = bootstrapprofile
+        self.allowedagentids = allowedagentids
         self.joinurl = joinurl
     }
 
@@ -20342,6 +20353,7 @@ public struct DevicePairSetupCodeParams: Codable, Sendable {
         case preferremoteurl = "preferRemoteUrl"
         case includeqr = "includeQr"
         case bootstrapprofile = "bootstrapProfile"
+        case allowedagentids = "allowedAgentIds"
         case joinurl = "joinUrl"
     }
 }
@@ -21008,6 +21020,7 @@ public struct ChatSendParams: Codable, Sendable {
     public let suppresscommandinterpretation: Bool?
     public let expectedleafentryid: AnyCodable?
     public let expectedsessionroutingcontract: String?
+    public let completiondeliveryclaim: String?
     public let idempotencykey: String
 
     public init(
@@ -21034,6 +21047,7 @@ public struct ChatSendParams: Codable, Sendable {
         suppresscommandinterpretation: Bool? = nil,
         expectedleafentryid: AnyCodable? = nil,
         expectedsessionroutingcontract: String? = nil,
+        completiondeliveryclaim: String? = nil,
         idempotencykey: String)
     {
         self.sessionkey = sessionkey
@@ -21059,6 +21073,7 @@ public struct ChatSendParams: Codable, Sendable {
         self.suppresscommandinterpretation = suppresscommandinterpretation
         self.expectedleafentryid = expectedleafentryid
         self.expectedsessionroutingcontract = expectedsessionroutingcontract
+        self.completiondeliveryclaim = completiondeliveryclaim
         self.idempotencykey = idempotencykey
     }
 
@@ -21085,6 +21100,7 @@ public struct ChatSendParams: Codable, Sendable {
         suppresscommandinterpretation: Bool? = nil,
         expectedleafentryid: AnyCodable? = nil,
         expectedsessionroutingcontract: String? = nil,
+        completiondeliveryclaim: String? = nil,
         idempotencykey: String)
     {
         self.init(
@@ -21111,6 +21127,7 @@ public struct ChatSendParams: Codable, Sendable {
             suppresscommandinterpretation: suppresscommandinterpretation,
             expectedleafentryid: expectedleafentryid,
             expectedsessionroutingcontract: expectedsessionroutingcontract,
+            completiondeliveryclaim: completiondeliveryclaim,
             idempotencykey: idempotencykey)
     }
 
@@ -21138,7 +21155,58 @@ public struct ChatSendParams: Codable, Sendable {
         case suppresscommandinterpretation = "suppressCommandInterpretation"
         case expectedleafentryid = "expectedLeafEntryId"
         case expectedsessionroutingcontract = "expectedSessionRoutingContract"
+        case completiondeliveryclaim = "completionDeliveryClaim"
         case idempotencykey = "idempotencyKey"
+    }
+}
+
+public struct ChatHandoffArmParams: Codable, Sendable {
+    public let runid: String
+
+    public init(
+        runid: String)
+    {
+        self.runid = runid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case runid = "runId"
+    }
+}
+
+public struct ConversationContinueParams: Codable, Sendable {
+    public let source: [String: AnyCodable]
+    public let destinationclaim: String
+
+    public init(
+        source: [String: AnyCodable],
+        destinationclaim: String)
+    {
+        self.source = source
+        self.destinationclaim = destinationclaim
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case source
+        case destinationclaim = "destinationClaim"
+    }
+}
+
+public struct ChatHandoffSeenParams: Codable, Sendable {
+    public let runid: String?
+    public let sessionkey: String
+
+    public init(
+        runid: String? = nil,
+        sessionkey: String)
+    {
+        self.runid = runid
+        self.sessionkey = sessionkey
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case runid = "runId"
+        case sessionkey = "sessionKey"
     }
 }
 
