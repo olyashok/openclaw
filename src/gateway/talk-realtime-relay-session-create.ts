@@ -302,6 +302,7 @@ export function createTalkRealtimeRelaySession(
         outputOwnership.drain?.resolve();
         outputOwnership.phase = "unowned";
         outputOwnership.turnId = outputOwnership.responseId = undefined;
+        outputOwnership.clearTerminalToolOwner();
         const talkEvent = resetTalkRealtimeRelayContinuity(relay, event.type);
         if (!getActiveRelay()) {
           return;
@@ -353,7 +354,7 @@ export function createTalkRealtimeRelaySession(
         return;
       }
       const responseId = outcome.responseId ?? outputOwnership.responseId;
-      const disposition = outputOwnership.finish(responseId);
+      const disposition = outputOwnership.finish(responseId, false, outcome.status === "completed");
       if (disposition === "ignore") {
         return;
       }
@@ -444,7 +445,7 @@ export function createTalkRealtimeRelaySession(
       if (outputOwnership.phase === "cancelling") {
         return;
       }
-      const outputTurnId = outputOwnership.resolve(true);
+      const outputTurnId = outputOwnership.resolveToolCall();
       if (!outputTurnId) {
         return;
       }

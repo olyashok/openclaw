@@ -2995,6 +2995,52 @@ describe("talk realtime gateway relay", () => {
     expect(broadcastToConnIds).not.toHaveBeenCalled();
   });
 
+  it("keeps the completed response owner for terminal tool callbacks", () => {
+    let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
+    const provider = createIdleRelayProvider();
+    provider.createBridge = (request) => {
+      bridgeRequest = request;
+      return makeRelayTransport();
+    };
+    const broadcastToConnIds = vi.fn();
+    const session = createTalkRealtimeRelaySession({
+      context: { broadcastToConnIds } as never,
+      connId: "conn-1",
+      provider,
+      providerConfig: {},
+      instructions: "brief",
+      tools: [],
+    });
+
+    bridgeRequest?.onEvent?.({
+      direction: "server",
+      type: "response.created",
+      responseId: "response-1",
+    });
+    bridgeRequest?.onResponseDone?.({ status: "completed", responseId: "response-1" });
+    bridgeRequest?.onEvent?.({
+      direction: "server",
+      type: "response.done",
+      responseId: "response-1",
+    });
+    bridgeRequest?.onToolCall?.({
+      itemId: "item-1",
+      callId: "call-1",
+      name: "lookup_weather",
+      args: { question: "status?" },
+    });
+
+    expect(relaySessions.has(session.relaySessionId)).toBe(true);
+    expect(broadcastToConnIds.mock.calls.map(([, payload]) => payload)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "toolCall", callId: "call-1" })]),
+    );
+    expect(
+      broadcastToConnIds.mock.calls.some(
+        ([, payload]) => (payload as Record<string, unknown>).type === "error",
+      ),
+    ).toBe(false);
+  });
+
   it("aborts linked agent consult runs when the relay turn is cancelled", () => {
     const { abortController, broadcast, nodeSendToSession, removeChatRun, chatRunState, session } =
       createAbortableRelayRunFixture();
