@@ -160,6 +160,10 @@ async function projectToMatrix(params: {
             accountId: binding.conversation.accountId,
             threadId,
             deliveryQueueId: `matrix-session-projection:${binding.bindingId}:${identity}`,
+            // Each content-addressed projection is one durable payload part;
+            // sendMessageMatrix owns any wire-event splitting within that part.
+            deliveryPartIndex: 0,
+            deliveryPartCount: 1,
             extraContent: {
               [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: {
                 version: 1,
@@ -194,7 +198,9 @@ async function projectInitialMessage(params: {
   binding?: ProjectionBinding;
 }): Promise<void> {
   const initial = params.initialMessage;
-  if (!initial) return;
+  if (!initial) {
+    return;
+  }
   await projectToMatrix({
     cfg: params.cfg,
     sessionKey: params.targetSessionKey,
