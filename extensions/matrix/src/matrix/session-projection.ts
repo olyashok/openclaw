@@ -229,10 +229,12 @@ export async function handleMatrixSessionProjectionMessageReceived(
   });
 }
 
-function isTerminalVisibleReply(event: ReplyPayloadSendingEvent): boolean {
+function isVisibleAnswerReply(event: ReplyPayloadSendingEvent): boolean {
   const text = clean(event.payload.text);
   return (
-    event.kind === "final" &&
+    // Completed answer chunks can own delivery in block-streaming mode;
+    // the subsequent final payload may be empty or already deduplicated.
+    (event.kind === "block" || event.kind === "final") &&
     Boolean(text) &&
     event.payload.isReasoning !== true &&
     event.payload.isCommentary !== true &&
@@ -248,7 +250,7 @@ export async function handleMatrixSessionProjectionReplyPayloadSending(
   context: MessageHookContext,
   cfg: CoreConfig,
 ): Promise<void> {
-  if (!isTerminalVisibleReply(event)) {
+  if (!isVisibleAnswerReply(event)) {
     return;
   }
   await projectToMatrix({
