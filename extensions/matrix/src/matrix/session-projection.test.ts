@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createMatrixSessionProjection,
+  inspectMatrixSessionProjection,
   handleMatrixSessionProjectionMessageReceived,
   handleMatrixSessionProjectionReplyPayloadSending,
   MATRIX_SESSION_PROJECTION_BOUND_BY,
@@ -102,6 +103,57 @@ describe("Matrix session projection", () => {
         }),
       }),
     );
+  });
+
+  it("reports a missing projection without repairing or delivering anything", () => {
+    expect(
+      inspectMatrixSessionProjection({ cfg, targetSessionKey: sessionKey, roomId: "!room" }),
+    ).toEqual({
+      status: "missing",
+      accountId: "fi-user",
+      agentId: "cellect-fi-user",
+      roomId: "!room",
+    });
+    expect(mocks.bind).not.toHaveBeenCalled();
+    expect(mocks.touch).not.toHaveBeenCalled();
+    expect(mocks.sendMessageMatrix).not.toHaveBeenCalled();
+  });
+
+  it("reads an existing projection without touching or replaying it", () => {
+    mocks.listBySession.mockReturnValue([projectionBinding]);
+    expect(
+      inspectMatrixSessionProjection({ cfg, targetSessionKey: sessionKey, roomId: "!room" }),
+    ).toMatchObject({ status: "existing", threadRootEventId: "$root" });
+    expect(mocks.bind).not.toHaveBeenCalled();
+    expect(mocks.touch).not.toHaveBeenCalled();
+    expect(mocks.sendMessageMatrix).not.toHaveBeenCalled();
+  });
+
+  it("does not expose bindings from another room, account, or binding purpose", () => {
+    mocks.listBySession.mockReturnValue([
+      {
+        ...projectionBinding,
+        conversation: { ...projectionBinding.conversation, parentConversationId: "!other" },
+      },
+      {
+        ...projectionBinding,
+        conversation: { ...projectionBinding.conversation, accountId: "other" },
+      },
+      { ...projectionBinding, metadata: { boundBy: "subagent" } },
+    ]);
+    expect(
+      inspectMatrixSessionProjection({ cfg, targetSessionKey: sessionKey, roomId: "!room" }).status,
+    ).toBe("missing");
+    expect(mocks.bind).not.toHaveBeenCalled();
+    expect(mocks.sendMessageMatrix).not.toHaveBeenCalled();
+  });
+
+  it("requires an existing canonical session before inspecting bindings", () => {
+    mocks.getSessionEntry.mockReturnValue(undefined);
+    expect(() =>
+      inspectMatrixSessionProjection({ cfg, targetSessionKey: sessionKey, roomId: "!room" }),
+    ).toThrow("target OpenClaw session does not exist");
+    expect(mocks.listBySession).not.toHaveBeenCalled();
   });
 
   it("returns the existing projection instead of creating a duplicate Matrix thread", async () => {
