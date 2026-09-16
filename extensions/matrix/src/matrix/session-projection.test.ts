@@ -281,6 +281,47 @@ describe("Matrix session projection", () => {
     );
   });
 
+  it("projects completed answer blocks without exposing technical or commentary lanes", async () => {
+    mocks.listBySession.mockReturnValue([projectionBinding]);
+    const context = { channelId: "webchat", sessionKey, runId: "run-block" };
+    for (const payload of [
+      { text: "reasoning", isReasoning: true },
+      { text: "commentary", isCommentary: true },
+      { text: "status", isStatusNotice: true },
+      { text: "compaction", isCompactionNotice: true },
+      { text: "fallback", isFallbackNotice: true },
+    ]) {
+      await handleMatrixSessionProjectionReplyPayloadSending(
+        { kind: "block", payload, sessionKey, runId: "run-block" },
+        context,
+        cfg,
+      );
+    }
+    await handleMatrixSessionProjectionReplyPayloadSending(
+      { kind: "tool", payload: { text: "tool output" }, sessionKey, runId: "run-block" },
+      context,
+      cfg,
+    );
+    await handleMatrixSessionProjectionReplyPayloadSending(
+      { kind: "block", payload: { text: "The completed answer." }, sessionKey, runId: "run-block" },
+      context,
+      cfg,
+    );
+    expect(mocks.sendMessageMatrix).toHaveBeenCalledTimes(1);
+    // A repeated final payload is the same answer, not a second Matrix event.
+    await handleMatrixSessionProjectionReplyPayloadSending(
+      { kind: "final", payload: { text: "The completed answer." }, sessionKey, runId: "run-block" },
+      context,
+      cfg,
+    );
+    expect(mocks.sendMessageMatrix).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMessageMatrix).toHaveBeenCalledWith(
+      "room:!room",
+      "**OpenClaw · Assistant**\nThe completed answer.",
+      expect.objectContaining({ deliveryPartIndex: 0, deliveryPartCount: 1 }),
+    );
+  });
+
   it("gives separate final payload chunks stable, distinct delivery identities", async () => {
     mocks.listBySession.mockReturnValue([projectionBinding]);
     const context = { channelId: "slack", sessionKey, runId: "run-1" };
