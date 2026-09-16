@@ -301,6 +301,8 @@ export const TalkSessionCreateParamsSchema = closedObject({
   mode: Type.Optional(TalkModeSchema),
   transport: Type.Optional(TalkTransportSchema),
   brain: Type.Optional(TalkBrainSchema),
+  /** Bounded, app-supplied metadata for the provider's initial realtime session. */
+  sessionCapsule: Type.Optional(Type.String({ minLength: 1, maxLength: 6000 })),
   ttlMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000 })),
 });
 

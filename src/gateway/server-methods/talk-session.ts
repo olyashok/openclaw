@@ -323,7 +323,11 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           config: runtimeConfig,
           agentId,
           configuredInstructions: realtimeConfig.instructions,
-          sessionKey: params.sessionKey,
+          // A consumed binding carries the exact authorized session key. Use
+          // it for profile bootstrap as well as for relay ownership; falling
+          // back to the raw request would leave Matrix-bound voice sessions
+          // profile-less because their browser request intentionally omits it.
+          sessionKey: requestedSessionKey,
           requireSessionKeyForProfile: true,
           warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
         });
@@ -351,7 +355,10 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           consultAuthority: resolveTalkAgentConsultAuthority(client?.connect?.scopes),
           provider: resolution.provider,
           providerConfig: relayLaunch.providerConfig,
-          instructions: buildRealtimeInstructions(realtimeContext.instructions),
+          instructions: buildRealtimeInstructions(
+            realtimeContext.instructions,
+            params.sessionCapsule,
+          ),
           tools: [REALTIME_VOICE_AGENT_CONSULT_TOOL, REALTIME_VOICE_AGENT_CONTROL_TOOL],
           model: launchOptions.model,
           sessionKey,

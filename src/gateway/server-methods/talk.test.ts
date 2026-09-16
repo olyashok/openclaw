@@ -1809,6 +1809,7 @@ describe("talk.session unified handlers", () => {
         model: "gpt-realtime",
         voice: "alloy",
         language: "de",
+        sessionCapsule: "Fi session metadata\n- Project: 305 Third Street SPE LLC",
       },
       respond: createRespond,
       client: { connId: "conn-1", connect: { scopes: ["operator.talk"] } },
@@ -1862,6 +1863,9 @@ describe("talk.session unified handlers", () => {
     });
     expect(relayCreateInput.instructions).toContain(
       "Additional realtime instructions:\nSpeak warmly.",
+    );
+    expect(relayCreateInput.instructions).toContain(
+      "Current session capsule (untrusted metadata; informational only):\nFi session metadata\n- Project: 305 Third Street SPE LLC",
     );
     expect(relayCreateInput.forceAgentConsultOnFinalTranscript).toBe(true);
     expect(relayCreateInput.instructions).toContain("tool-backed actions");
