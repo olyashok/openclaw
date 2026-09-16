@@ -782,6 +782,7 @@ describe("validateTalkSession", () => {
         mode: "realtime",
         transport: "managed-room",
         brain: "agent-consult",
+        sessionCapsule: "Fi session metadata\n- Project: Example",
       }),
     ]);
   });
@@ -794,6 +795,12 @@ describe("validateTalkSession", () => {
       "unexpected property 'instructionsOverride'",
     );
     expectRejected(validateTalkSessionCreateParams, [{ mode: "realtime", language: "de-DE" }]);
+  });
+
+  it("bounds the app-supplied realtime session capsule", () => {
+    expectRejected(validateTalkSessionCreateParams, [
+      talkClient({ sessionCapsule: "x".repeat(6001) }),
+    ]);
   });
 });
 
