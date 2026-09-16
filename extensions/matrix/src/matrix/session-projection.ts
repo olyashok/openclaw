@@ -263,6 +263,65 @@ export async function handleMatrixSessionProjectionReplyPayloadSending(
   });
 }
 
+type ProjectionTarget = {
+  cfg: CoreConfig;
+  targetSessionKey: string;
+  roomId: string;
+  accountId?: string;
+};
+
+function resolveProjectionTarget(params: ProjectionTarget) {
+  const targetSessionKey = clean(params.targetSessionKey);
+  const roomId = clean(params.roomId);
+  if (!targetSessionKey || !roomId) {
+    throw new Error("targetSessionKey and roomId are required");
+  }
+  if (!roomId.startsWith("!")) {
+    throw new Error("roomId must be a Matrix room id");
+  }
+  if (targetSessionKey.length > 512 || roomId.length > 255) {
+    throw new Error("targetSessionKey or roomId is too long");
+  }
+  const accountId = normalizeAccountId(
+    clean(params.accountId) || resolveDefaultMatrixAccountId(params.cfg),
+  );
+  if (!getMatrixThreadBindingManager(accountId)) {
+    throw new Error(`Matrix account ${accountId} is not running`);
+  }
+  const agentId = resolveSessionAgentIdStrict({ config: params.cfg, sessionKey: targetSessionKey });
+  if (!getSessionEntry({ sessionKey: targetSessionKey, agentId })) {
+    throw new Error("target OpenClaw session does not exist");
+  }
+  return { targetSessionKey, accountId, agentId, roomId };
+}
+
+function findProjectionBinding(target: ReturnType<typeof resolveProjectionTarget>) {
+  return getSessionBindingService()
+    .listBySession(target.targetSessionKey)
+    .find(
+      (binding) =>
+        isProjectionBinding(binding) &&
+        binding.conversation.accountId === target.accountId &&
+        binding.conversation.parentConversationId === target.roomId,
+    );
+}
+
+/** Diagnostics must never create, touch, or replay a binding or its messages. */
+export function inspectMatrixSessionProjection(params: ProjectionTarget) {
+  const target = resolveProjectionTarget(params);
+  const binding = findProjectionBinding(target);
+  const { accountId, agentId, roomId } = target;
+  return binding
+    ? {
+        status: "existing" as const,
+        accountId,
+        agentId,
+        roomId,
+        threadRootEventId: binding.conversation.conversationId,
+      }
+    : { status: "missing" as const, accountId, agentId, roomId };
+}
+
 export async function createMatrixSessionProjection(params: {
   cfg: CoreConfig;
   targetSessionKey: string;
@@ -282,45 +341,15 @@ export async function createMatrixSessionProjection(params: {
   roomId: string;
   threadRootEventId: string;
 }> {
-  const targetSessionKey = clean(params.targetSessionKey);
-  const roomId = clean(params.roomId);
-  if (!targetSessionKey || !roomId) {
-    throw new Error("targetSessionKey and roomId are required");
-  }
-  if (!roomId.startsWith("!")) {
-    throw new Error("roomId must be a Matrix room id");
-  }
-  if (targetSessionKey.length > 512 || roomId.length > 255) {
-    throw new Error("targetSessionKey or roomId is too long");
-  }
-
-  const accountId = normalizeAccountId(
-    clean(params.accountId) || resolveDefaultMatrixAccountId(params.cfg),
-  );
-  if (!getMatrixThreadBindingManager(accountId)) {
-    throw new Error(`Matrix account ${accountId} is not running`);
-  }
-  const agentId = resolveSessionAgentIdStrict({
-    config: params.cfg,
-    sessionKey: targetSessionKey,
-  });
-  if (!getSessionEntry({ sessionKey: targetSessionKey, agentId })) {
-    throw new Error("target OpenClaw session does not exist");
-  }
+  const target = resolveProjectionTarget(params);
+  const { targetSessionKey, accountId, agentId, roomId } = target;
 
   const label = (clean(params.label) || `${agentId} session`).slice(0, 160);
   return await projectionCreationQueue.enqueue(
     `${accountId}\u0000${roomId}\u0000${targetSessionKey}`,
     async () => {
       const bindingService = getSessionBindingService();
-      const existing = bindingService
-        .listBySession(targetSessionKey)
-        .find(
-          (binding) =>
-            isProjectionBinding(binding) &&
-            binding.conversation.accountId === accountId &&
-            binding.conversation.parentConversationId === roomId,
-        );
+      const existing = findProjectionBinding(target);
       if (existing) {
         const result = {
           status: "existing" as const,
@@ -404,6 +433,26 @@ export async function handleMatrixSessionProjectionCreate({
           : undefined,
     });
     respond(true, result);
+  } catch (error) {
+    respond(false, { error: formatErrorMessage(error) });
+  }
+}
+
+export function handleMatrixSessionProjectionInspect({
+  params,
+  respond,
+  context,
+}: GatewayRequestHandlerOptions): void {
+  try {
+    respond(
+      true,
+      inspectMatrixSessionProjection({
+        cfg: context.getRuntimeConfig() as CoreConfig,
+        targetSessionKey: clean(params?.targetSessionKey),
+        roomId: clean(params?.roomId),
+        accountId: clean(params?.accountId) || undefined,
+      }),
+    );
   } catch (error) {
     respond(false, { error: formatErrorMessage(error) });
   }

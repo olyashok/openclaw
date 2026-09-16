@@ -13,6 +13,7 @@ const runtimeMocks = vi.hoisted(() => ({
   handleMatrixSubagentDeliveryTarget: vi.fn(() => "delivery-target"),
   handleMatrixSubagentEnded: vi.fn(async () => {}),
   handleMatrixSessionProjectionCreate: vi.fn(async () => {}),
+  handleMatrixSessionProjectionInspect: vi.fn(() => {}),
   handleMatrixSessionProjectionMessageReceived: vi.fn(async () => {}),
   handleMatrixSessionProjectionReplyPayloadSending: vi.fn(async () => {}),
   handleVerificationBootstrap: vi.fn(async () => {}),
@@ -171,6 +172,14 @@ describe("matrix plugin", () => {
     expect(projectionRegistration?.[2]).toEqual({ scope: "operator.admin" });
     await projectionRegistration?.[1]({ params: { roomId: "!room" } });
     expect(runtimeMocks.handleMatrixSessionProjectionCreate).toHaveBeenCalledWith({
+      params: { roomId: "!room" },
+    });
+    const inspectionRegistration = registerGatewayMethod.mock.calls.find(
+      ([method]) => method === "matrix.sessionProjection.inspect",
+    );
+    expect(inspectionRegistration?.[2]).toEqual({ scope: "operator.admin" });
+    await inspectionRegistration?.[1]({ params: { roomId: "!room" } });
+    expect(runtimeMocks.handleMatrixSessionProjectionInspect).toHaveBeenCalledWith({
       params: { roomId: "!room" },
     });
   });
