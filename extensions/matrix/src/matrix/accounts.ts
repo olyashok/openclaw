@@ -72,35 +72,6 @@ function resolveMatrixAccountAuthView(params: {
   };
 }
 
-function resolveMatrixAccountUserId(params: {
-  cfg: CoreConfig;
-  accountId: string;
-  env?: NodeJS.ProcessEnv;
-}): string | null {
-  const env = params.env ?? process.env;
-  const authView = resolveMatrixAccountAuthView({
-    cfg: params.cfg,
-    accountId: params.accountId,
-    env,
-  });
-  const configuredUserId = authView.userId.trim();
-  if (configuredUserId) {
-    return configuredUserId;
-  }
-
-  const stored = loadMatrixCredentials(env, params.accountId);
-  if (!stored) {
-    return null;
-  }
-  if (authView.homeserver && stored.homeserver !== authView.homeserver) {
-    return null;
-  }
-  if (authView.accessToken && stored.accessToken !== authView.accessToken) {
-    return null;
-  }
-  return stored.userId.trim() || null;
-}
-
 export function listMatrixAccountIds(cfg: CoreConfig): string[] {
   const ids = resolveConfiguredMatrixAccountIds(cfg, process.env);
   return ids.length > 0 ? ids : [DEFAULT_ACCOUNT_ID];
@@ -127,14 +98,11 @@ export function resolveConfiguredMatrixBotUserIds(params: {
     if (normalizeAccountId(accountId) === currentAccountId) {
       continue;
     }
-    if (!resolveMatrixAccount({ cfg: params.cfg, accountId, env }).configured) {
+    const account = resolveMatrixAccount({ cfg: params.cfg, accountId, env });
+    if (!account.configured) {
       continue;
     }
-    const userId = resolveMatrixAccountUserId({
-      cfg: params.cfg,
-      accountId,
-      env,
-    });
+    const userId = account.userId;
     if (userId) {
       ids.add(userId);
     }
@@ -181,13 +149,21 @@ export function resolveMatrixAccount(params: {
         })
       : false;
   const configured = hasHomeserver && (hasAccessToken || hasPasswordAuth || hasStored);
+  // Token-only auth learns the MXID through whoami and persists it at login.
+  // Project that identity only while the stored homeserver and token still match.
+  const storedUserId =
+    stored &&
+    (!authView.homeserver || stored.homeserver === authView.homeserver) &&
+    (!authView.accessToken || stored.accessToken === authView.accessToken)
+      ? stored.userId.trim()
+      : undefined;
   return {
     accountId,
     enabled,
     name: normalizeOptionalString(base.name),
     configured,
     homeserver: authView.homeserver || undefined,
-    userId: authView.userId || undefined,
+    userId: authView.userId || storedUserId || undefined,
     config: base,
   };
 }
