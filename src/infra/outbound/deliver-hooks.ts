@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { copyReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
 import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
 import {
@@ -44,7 +45,7 @@ export function buildInboundReplyPayloadSendingBeforeDeliver(
 ): ReplyDispatchBeforeDeliver {
   const finalized = finalizeInboundContext(ctx);
   const hookCtx = deriveInboundMessageHookContext(finalized);
-  return markReplyDispatchBeforeDeliverDeadlineOwned(async (payload, info) => {
+  const beforeDeliver: ReplyDispatchBeforeDeliver = async (payload, info) => {
     const runId = runState.runId;
     const hookedPayload = await runReplyPayloadSendingHook({
       payload,
@@ -64,7 +65,11 @@ export function buildInboundReplyPayloadSendingBeforeDeliver(
       return null;
     }
     return hookedPayload;
-  });
+  };
+  // Runtime callbacks can emit blocks from a model-only plugin generation.
+  // Delivery belongs to the inbound scope that installed this stage, not the
+  // emitting model's registry.
+  return markReplyDispatchBeforeDeliverDeadlineOwned(AsyncLocalStorage.bind(beforeDeliver));
 }
 
 /** Legacy dispatcher-owned `message_sending` stage retained for low-level SDK compatibility. */
