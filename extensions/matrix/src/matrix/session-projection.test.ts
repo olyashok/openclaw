@@ -131,6 +131,8 @@ describe("Matrix session projection", () => {
       expect.objectContaining({
         deliveryQueueId:
           "matrix-session-projection:fi-user:!room:$root:user:initial-1:b8a13c395457031b",
+        deliveryPartIndex: 0,
+        deliveryPartCount: 1,
       }),
     );
   });
@@ -225,6 +227,8 @@ describe("Matrix session projection", () => {
         threadId: "$root",
         deliveryQueueId:
           "matrix-session-projection:fi-user:!room:$root:user:1700000000.000001:b8a13c395457031b",
+        deliveryPartIndex: 0,
+        deliveryPartCount: 1,
         extraContent: {
           [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: {
             version: 1,
@@ -271,6 +275,8 @@ describe("Matrix session projection", () => {
       expect.objectContaining({
         deliveryQueueId:
           "matrix-session-projection:fi-user:!room:$root:assistant:run-1:1b9108e6266ad652",
+        deliveryPartIndex: 0,
+        deliveryPartCount: 1,
       }),
     );
   });
