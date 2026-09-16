@@ -100,6 +100,11 @@ export class TalkRealtimeRelayOutputOwnership {
   responseId?: string;
   drain?: { promise: Promise<void>; resolve: () => void };
   private cancelledTerminal?: { responseId?: string };
+  // OpenAI and xAI deliver completed function calls from the terminal response
+  // callback after onResponseDone. Keep that response's turn available for the
+  // synchronous tool callback, but fence it as soon as a replacement response
+  // is created.
+  private terminalToolTurnId?: string;
 
   constructor(
     private readonly activeTurnId: () => string | undefined,
@@ -129,6 +134,7 @@ export class TalkRealtimeRelayOutputOwnership {
     }
     if (this.phase === "unowned") {
       this.cancelledTerminal = undefined;
+      this.terminalToolTurnId = undefined;
       Object.assign(this, {
         mode: normalizedResponseId ? ("exact-response" as const) : ("turn-bound" as const),
         phase: "owned" as const,
@@ -172,7 +178,29 @@ export class TalkRealtimeRelayOutputOwnership {
     return turnId;
   }
 
-  finish(responseId: string | undefined, cancellationEvent = false) {
+  resolveToolCall(): string | undefined {
+    if (this.suppressingOutput) {
+      return undefined;
+    }
+    const activeTurnId = this.activeTurnId();
+    if (this.phase === "owned") {
+      return this.resolve(true);
+    }
+    if (activeTurnId && this.mode === "turn-bound") {
+      return this.resolve(true);
+    }
+    if (this.terminalToolTurnId && (!activeTurnId || activeTurnId === this.terminalToolTurnId)) {
+      return this.terminalToolTurnId;
+    }
+    this.fail("Realtime provider output has no live response owner.");
+    return undefined;
+  }
+
+  clearTerminalToolOwner(): void {
+    this.terminalToolTurnId = undefined;
+  }
+
+  finish(responseId: string | undefined, cancellationEvent = false, allowTerminalTools = false) {
     const cancelled = this.suppressingOutput;
     if (
       (cancellationEvent && !cancelled) ||
@@ -181,6 +209,7 @@ export class TalkRealtimeRelayOutputOwnership {
     ) {
       return "ignore";
     }
+    this.terminalToolTurnId = allowTerminalTools && !cancelled ? this.turnId : undefined;
     this.drain?.resolve();
     Object.assign(this, { phase: "unowned" as const, turnId: undefined, responseId: undefined });
     return cancelled ? "cancelled" : "completed";
@@ -199,6 +228,7 @@ export class TalkRealtimeRelayOutputOwnership {
   resetContinuity(): void {
     this.outputGeneration += 1;
     this.cancelledTerminal = undefined;
+    this.terminalToolTurnId = undefined;
     this.drain?.resolve();
     Object.assign(this, { phase: "unowned" as const, turnId: undefined, responseId: undefined });
   }
