@@ -39,6 +39,14 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
   );
 
   api.registerGatewayMethod(
+    "matrix.sessionProjection.rebaseHistory",
+    async (options) => {
+      const { handleMatrixSessionProjectionRebase } = await loadSessionProjectionModule();
+      await handleMatrixSessionProjectionRebase(options);
+    },
+    { scope: "operator.admin" },
+  );
+  api.registerGatewayMethod(
     "matrix.sessionProjection.create",
     async (options) => {
       const { handleMatrixSessionProjectionCreate } = await loadSessionProjectionModule();

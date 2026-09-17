@@ -3,6 +3,7 @@ import type {
   SessionBindingRecord,
 } from "openclaw/plugin-sdk/thread-bindings-session-runtime";
 import { resolveThreadBindingLifecycle } from "openclaw/plugin-sdk/thread-bindings-session-runtime";
+import type { ProjectionExternalSource } from "./projection-source.js";
 
 type MatrixThreadBindingTargetKind = "subagent" | "acp";
 
@@ -15,6 +16,7 @@ export type MatrixThreadBindingRecord = {
   agentId?: string;
   label?: string;
   boundBy?: string;
+  externalSource?: ProjectionExternalSource;
   boundAt: number;
   lastActivityAt: number;
   idleTimeoutMs?: number;
@@ -117,6 +119,7 @@ export function toSessionBindingRecord(
       agentId: record.agentId,
       label: record.label,
       boundBy: record.boundBy,
+      externalSource: record.externalSource,
       lastActivityAt: record.lastActivityAt,
       idleTimeoutMs,
       maxAgeMs,
