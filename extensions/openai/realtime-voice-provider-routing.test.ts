@@ -663,7 +663,7 @@ describe("OpenAI realtime voice provider routing", () => {
                 prefix_padding_ms: 240,
                 silence_duration_ms: 620,
               },
-              transcription: { model: "gpt-4o-mini-transcribe" },
+              transcription: { model: "gpt-live-transcribe", delay: "low" },
             },
             output: { voice: "cedar" },
           },

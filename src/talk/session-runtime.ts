@@ -18,6 +18,7 @@ import type {
   RealtimeVoiceProviderConfig,
   RealtimeVoiceResponseOutcome,
   RealtimeVoiceRole,
+  RealtimeVoiceTranscriptUpdate,
   RealtimeVoiceTool,
   RealtimeVoiceToolCallEvent,
   RealtimeVoiceToolResultOptions,
@@ -82,7 +83,12 @@ export type RealtimeVoiceBridgeSessionParams = {
   triggerGreetingOnReady?: boolean;
   tools?: RealtimeVoiceTool[];
   runAgentConsult?: RealtimeVoiceAgentConsultRunner;
-  onTranscript?: (role: RealtimeVoiceRole, text: string, isFinal: boolean) => void;
+  onTranscript?: (
+    role: RealtimeVoiceRole,
+    text: string,
+    isFinal: boolean,
+    update?: RealtimeVoiceTranscriptUpdate,
+  ) => void;
   handleDelegationInput?: RealtimeVoiceBridgeCallbacks["handleDelegationInput"];
   onEvent?: (event: RealtimeVoiceBridgeEvent) => void;
   onResponseDone?: (outcome: RealtimeVoiceResponseOutcome) => void;
