@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
 import { handleGatewayRequest } from "./server-methods.js";
-import type { GatewayRequestContext, GatewayRequestHandler } from "./server-methods/types.js";
+import type { GatewayRequestHandler } from "./server-methods/types.js";
 import { roleClient, rolePolicyConfig } from "./session-sharing.test-utils.js";
 import { relaySessions, type RelaySession } from "./talk-realtime-relay-state.js";
 
@@ -41,10 +42,9 @@ describe("bound Talk relay authorization at gateway dispatch", () => {
       await handleGatewayRequest({
         req: { type: "req", id: "bound-relay-consult", method: METHOD, params },
         client: requestClient,
-        context: {
+        context: createDirectChatContext({
           getRuntimeConfig: () => cfg,
-          logGateway: { warn: vi.fn() },
-        } as GatewayRequestContext,
+        }),
         respond,
         isWebchatConnect: () => false,
         extraHandlers: { [METHOD]: handler },
