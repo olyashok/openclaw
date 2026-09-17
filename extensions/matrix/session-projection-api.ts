@@ -9,6 +9,16 @@ const loadSessionProjectionModule = createLazyRuntimeModule(
 );
 
 export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
+  api.runtime.channel.runtimeContexts.register({
+    channelId: "matrix",
+    capability: "session-read-projections",
+    context: {
+      list: async () => {
+        const { listReadOnlyMatrixSessionProjections } = await loadSessionProjectionModule();
+        return listReadOnlyMatrixSessionProjections();
+      },
+    },
+  });
   const runInBackground = (operation: string, task: Promise<void>) => {
     // Mirroring is secondary delivery. A slow or unavailable Matrix server
     // must never delay the originating channel's message or assistant answer.

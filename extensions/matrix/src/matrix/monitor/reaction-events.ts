@@ -13,6 +13,7 @@ import { resolveMatrixAccountConfig } from "../account-config.js";
 import { extractMatrixReactionAnnotation } from "../reaction-common.js";
 import { resolveMatrixThreadRootId } from "../relations.js";
 import type { MatrixClient } from "../sdk.js";
+import { isMatrixReadOnlyProjectionRoom } from "../thread-bindings-shared.js";
 import { resolveMatrixInboundRoute } from "./route.js";
 import type { PluginRuntime } from "./runtime-api.js";
 import { resolveMatrixThreadRouting } from "./threads.js";
@@ -251,6 +252,9 @@ export async function handleInboundMatrixReaction(params: {
     messageId: reaction.eventId,
     threadRootId,
   });
+  if (isMatrixReadOnlyProjectionRoom(params.accountId, params.roomId)) {
+    return;
+  }
   const { route, runtimeBindingId } = resolveMatrixInboundRoute({
     cfg: params.cfg,
     accountId: params.accountId,

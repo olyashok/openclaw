@@ -1,0 +1,204 @@
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  projectSlackChannelThread,
+  registerSlackProjectionReconciler,
+} from "./channel-projection.js";
+
+const discovery = vi.hoisted(() => ({ entry: vi.fn() }));
+vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
+  getSessionEntry: discovery.entry,
+  sessionDeliveryOrigin: () => ({ accountId: "fi-admin" }),
+}));
+
+describe("Fi Slack channel publisher", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+  it("projects an admin channel thread with membership evidence and actual source authors", async () => {
+    const readThread = vi.fn().mockResolvedValue({
+      workspaceId: "T123",
+      channelId: "C123",
+      rootMessageId: "1700000000.000001",
+      memberSenderIds: ["U111"],
+      messages: [
+        { messageId: "1700000000.000001", senderId: "U111", content: "hi", bot: false },
+        { messageId: "1700000000.000002", senderId: "U222", content: "hello", bot: true },
+        { messageId: "1700000000.000003", senderId: "U333", content: "another bot", bot: true },
+      ],
+    });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    const api = {
+      runtime: { channel: { runtimeContexts: { get: () => ({ readThread, botUserId: "U222" }) } } },
+    } as unknown as OpenClawPluginApi;
+    await projectSlackChannelThread({
+      api,
+      sessionKey: "agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001",
+      accountId: "fi-admin",
+      requesterSenderId: "U111",
+      baseUrl: "https://fi.example",
+      token: "test-token",
+    });
+    expect(readThread).toHaveBeenCalledWith("C123", "1700000000.000001");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const payload = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body))[0];
+    expect(payload.source).toMatchObject({ memberSenderIds: ["U111"] });
+    expect(payload.snapshot.messages[1]).toMatchObject({
+      agentId: "cellect-fi-admin",
+      role: "assistant",
+      senderId: "U222",
+    });
+    expect(payload.snapshot.messages[2]).not.toHaveProperty("agentId");
+  });
+  it("revokes existing readers on source failure without treating it as message deletion", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    const api = {
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: () => ({
+              workspaceId: "T123",
+              readThread: async () => {
+                throw new Error("not_in_channel");
+              },
+            }),
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    await expect(
+      projectSlackChannelThread({
+        api,
+        sessionKey: "agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001",
+        accountId: "fi-admin",
+        baseUrl: "https://fi.example",
+        token: "test-token",
+        reconcile: true,
+      }),
+    ).rejects.toThrow("not_in_channel");
+    const payload = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body))[0];
+    expect(payload.source.memberSenderIds).toEqual([]);
+    expect(payload.reconcile).toBe(true);
+    expect(payload).not.toHaveProperty("snapshot");
+  });
+  it("keeps both bot authors identical when the same thread is read through different accounts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    const readThread = async () => ({
+      workspaceId: "T123",
+      channelId: "C123",
+      rootMessageId: "1700000000.000001",
+      memberSenderIds: ["U111"],
+      messages: [
+        { messageId: "1700000000.000001", senderId: "U111", content: "hi", bot: false },
+        { messageId: "1700000000.000002", senderId: "U222", content: "admin", bot: true },
+        { messageId: "1700000000.000003", senderId: "U333", content: "user", bot: true },
+      ],
+    });
+    const api = {
+      config: {
+        bindings: [
+          { agentId: "cellect-fi-admin", match: { channel: "slack", accountId: "fi-admin" } },
+          { agentId: "cellect-fi-user", match: { channel: "slack", accountId: "fi-user" } },
+        ],
+      },
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: ({ accountId }: { accountId: string }) => ({
+              workspaceId: "T123",
+              botUserId: accountId === "fi-admin" ? "U222" : "U333",
+              readThread,
+            }),
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    for (const accountId of ["fi-admin", "fi-user"]) {
+      await projectSlackChannelThread({
+        api,
+        sessionKey: `agent:cellect-${accountId}:slack:channel:c123:thread:1700000000.000001`,
+        accountId,
+        requesterSenderId: "U111",
+        baseUrl: "https://fi.example",
+        token: "test-token",
+      });
+    }
+    const snapshots = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body).snapshot);
+    expect(snapshots[0]).toEqual(snapshots[1]);
+    expect(snapshots[0].messages.map((message: { agentId?: string }) => message.agentId)).toEqual([
+      undefined,
+      "cellect-fi-admin",
+      "cellect-fi-user",
+    ]);
+  });
+  it.each([false, true])(
+    "rediscovers durable projections after restart, revoking orphaned=%s without an agent turn",
+    async (orphaned) => {
+      vi.useFakeTimers();
+      const sessionKey = "agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001";
+      discovery.entry.mockReturnValue(orphaned ? undefined : {});
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal("fetch", fetchMock);
+      let service: { start: () => void; stop: () => void } | undefined;
+      const api = {
+        logger: { warn: vi.fn() },
+        registerService: (value: typeof service) => {
+          service = value;
+        },
+        runtime: {
+          channel: {
+            runtimeContexts: {
+              get: ({ channelId }: { channelId: string }) =>
+                channelId === "matrix"
+                  ? { list: async () => [{ sessionKey, roomId: "!room" }] }
+                  : {
+                      workspaceId: "T123",
+                      botUserId: "U222",
+                      readThread: async () => ({
+                        workspaceId: "T123",
+                        channelId: "C123",
+                        rootMessageId: "1700000000.000001",
+                        memberSenderIds: [],
+                        messages: [],
+                      }),
+                    },
+            },
+          },
+        },
+      } as unknown as OpenClawPluginApi;
+      registerSlackProjectionReconciler(api, () => ({
+        baseUrl: "https://fi.example",
+        token: "test-token",
+      }));
+      if (!service) {
+        throw new Error("Missing registered reconciler");
+      }
+      service.start();
+      await vi.advanceTimersByTimeAsync(5000);
+      service.stop();
+      service.start();
+      await vi.advanceTimersByTimeAsync(5000);
+      service.stop();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const payload = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body))[1];
+      expect(payload).toMatchObject(
+        orphaned
+          ? { reconcile: true, unavailable: true, projectionRoomId: "!room" }
+          : {
+              reconcile: true,
+              source: { memberSenderIds: [] },
+              snapshot: { complete: true, messages: [] },
+            },
+      );
+      if (orphaned) {
+        expect(payload).not.toHaveProperty("snapshot");
+      }
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+});

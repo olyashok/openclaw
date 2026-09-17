@@ -12,10 +12,29 @@ import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runti
 import type { CoreConfig } from "../types.js";
 import { resolveDefaultMatrixAccountId } from "./accounts.js";
 import { sendMessageMatrix } from "./send.js";
-import { getMatrixThreadBindingManager } from "./thread-bindings-shared.js";
+import {
+  projectionText,
+  reconcileMatrixProjectionSnapshot,
+  MATRIX_SESSION_PROJECTION_CONTENT_KEY,
+  type SourceProjectionSnapshot,
+} from "./session-projection-snapshot.js";
+import {
+  getMatrixThreadBindingManager,
+  toSessionBindingRecord,
+  listAllBindings,
+} from "./thread-bindings-shared.js";
 
 export const MATRIX_SESSION_PROJECTION_BOUND_BY = "session-projection";
-export const MATRIX_SESSION_PROJECTION_CONTENT_KEY = "com.openclaw.session_projection";
+export { MATRIX_SESSION_PROJECTION_CONTENT_KEY } from "./session-projection-snapshot.js";
+
+/** Native inventory remains available after its source session is pruned. */
+export function listReadOnlyMatrixSessionProjections() {
+  return listAllBindings().flatMap((binding) =>
+    binding.boundBy === "session-projection-read-only" && binding.parentConversationId
+      ? [{ sessionKey: binding.targetSessionKey, roomId: binding.parentConversationId }]
+      : [],
+  );
+}
 
 const projectionCreationQueue = new KeyedAsyncQueue();
 // The initial source message can be supplied by an authorized product bridge
@@ -81,19 +100,10 @@ function isProjectionBinding(binding: {
 }): boolean {
   return (
     binding.conversation.channel === "matrix" &&
-    clean(binding.metadata?.boundBy) === MATRIX_SESSION_PROJECTION_BOUND_BY
+    [MATRIX_SESSION_PROJECTION_BOUND_BY, "session-projection-read-only"].includes(
+      clean(binding.metadata?.boundBy),
+    )
   );
-}
-
-function sourceLabel(channel: string): string {
-  return channel === "webchat"
-    ? "OpenClaw"
-    : `${channel.slice(0, 1).toUpperCase()}${channel.slice(1)}`;
-}
-
-function projectionText(params: { channel: string; role: ProjectionRole; text: string }): string {
-  const speaker = params.role === "user" ? "User" : "Assistant";
-  return `**${sourceLabel(params.channel)} · ${speaker}**\n${params.text}`;
 }
 
 function resolveDeliveryIdentity(params: {
@@ -121,6 +131,8 @@ async function projectToMatrix(params: {
   messageId?: string;
   runId?: string;
   bindings?: ProjectionBinding[];
+  senderId?: string;
+  agentId?: string;
 }): Promise<void> {
   const sourceChannel = normalizeChannel(params.sourceChannel);
   if (!sourceChannel || sourceChannel === "matrix") {
@@ -135,7 +147,14 @@ async function projectToMatrix(params: {
 
   const bindingService = getSessionBindingService();
   const bindings =
-    params.bindings ?? bindingService.listBySession(sessionKey).filter(isProjectionBinding);
+    params.bindings ??
+    bindingService
+      .listBySession(sessionKey)
+      .filter(
+        (binding) =>
+          isProjectionBinding(binding) &&
+          binding.metadata?.boundBy !== "session-projection-read-only",
+      );
   await Promise.all(
     bindings.map(async (binding) => {
       const roomId = binding.conversation.parentConversationId;
@@ -143,7 +162,9 @@ async function projectToMatrix(params: {
       if (!roomId || !threadId) {
         return;
       }
-      const projectionKey = `${binding.bindingId}:${identity}`;
+      const deliveryScope =
+        binding.metadata?.boundBy === "session-projection-read-only" ? roomId : binding.bindingId;
+      const projectionKey = `${deliveryScope}:${identity}`;
       if (projectedDeliveryKeys.has(projectionKey)) {
         return;
       }
@@ -154,12 +175,18 @@ async function projectToMatrix(params: {
       try {
         await sendMessageMatrix(
           `room:${roomId}`,
-          projectionText({ channel: sourceChannel, role: params.role, text }),
+          projectionText({
+            channel: sourceChannel,
+            role: params.role,
+            text,
+            senderId: params.senderId,
+            agentId: params.agentId,
+          }),
           {
             cfg: params.cfg,
             accountId: binding.conversation.accountId,
             threadId,
-            deliveryQueueId: `matrix-session-projection:${binding.bindingId}:${identity}`,
+            deliveryQueueId: `matrix-session-projection:${deliveryScope}:${identity}`,
             // Each content-addressed projection is one durable payload part;
             // sendMessageMatrix owns any wire-event splitting within that part.
             deliveryPartIndex: 0,
@@ -169,6 +196,8 @@ async function projectToMatrix(params: {
                 version: 1,
                 role: params.role,
                 sourceChannel,
+                ...(params.senderId ? { senderId: params.senderId } : {}),
+                ...(params.agentId ? { agentId: params.agentId } : {}),
                 ...(clean(params.messageId) ? { messageId: clean(params.messageId) } : {}),
                 ...(clean(params.runId) ? { runId: clean(params.runId) } : {}),
               },
@@ -194,6 +223,9 @@ async function projectInitialMessage(params: {
     content?: string;
     messageId?: string;
     runId?: string;
+    role?: ProjectionRole;
+    senderId?: string;
+    agentId?: string;
   };
   binding?: ProjectionBinding;
 }): Promise<void> {
@@ -205,7 +237,9 @@ async function projectInitialMessage(params: {
     cfg: params.cfg,
     sessionKey: params.targetSessionKey,
     sourceChannel: clean(initial.sourceChannel),
-    role: "user",
+    role: initial.role ?? "user",
+    senderId: initial.senderId,
+    agentId: initial.agentId,
     text: clean(initial.content),
     messageId: clean(initial.messageId) || undefined,
     runId: clean(initial.runId) || undefined,
@@ -295,7 +329,22 @@ function resolveProjectionTarget(params: ProjectionTarget) {
   return { targetSessionKey, accountId, agentId, roomId };
 }
 
-function findProjectionBinding(target: ReturnType<typeof resolveProjectionTarget>) {
+function findProjectionBinding(
+  target: ReturnType<typeof resolveProjectionTarget>,
+  readOnly = false,
+) {
+  if (readOnly) {
+    const shared = getMatrixThreadBindingManager(target.accountId)
+      ?.listBindings?.()
+      .find(
+        (binding) =>
+          binding.parentConversationId === target.roomId &&
+          binding.boundBy === "session-projection-read-only",
+      );
+    if (shared) {
+      return toSessionBindingRecord(shared, { idleTimeoutMs: 0, maxAgeMs: 0 });
+    }
+  }
   return getSessionBindingService()
     .listBySession(target.targetSessionKey)
     .find(
@@ -328,11 +377,16 @@ export async function createMatrixSessionProjection(params: {
   roomId: string;
   accountId?: string;
   label?: string;
+  readOnly?: boolean;
+  sourceSnapshot?: SourceProjectionSnapshot;
   initialMessage?: {
     sourceChannel?: string;
     content?: string;
     messageId?: string;
     runId?: string;
+    role?: ProjectionRole;
+    senderId?: string;
+    agentId?: string;
   };
 }): Promise<{
   status: "created" | "existing";
@@ -345,12 +399,21 @@ export async function createMatrixSessionProjection(params: {
   const { targetSessionKey, accountId, agentId, roomId } = target;
 
   const label = (clean(params.label) || `${agentId} session`).slice(0, 160);
+  if (params.sourceSnapshot && !params.readOnly) {
+    throw new Error("Source snapshots require a read-only projection");
+  }
   return await projectionCreationQueue.enqueue(
-    `${accountId}\u0000${roomId}\u0000${targetSessionKey}`,
+    `${accountId}\u0000${roomId}\u0000${params.readOnly ? "read-only" : targetSessionKey}`,
     async () => {
       const bindingService = getSessionBindingService();
-      const existing = findProjectionBinding(target);
+      const existing = findProjectionBinding(target, params.readOnly);
       if (existing) {
+        if (
+          params.readOnly === true &&
+          existing.metadata?.boundBy !== "session-projection-read-only"
+        ) {
+          throw new Error("Existing projection is writable");
+        }
         const result = {
           status: "existing" as const,
           accountId,
@@ -365,7 +428,17 @@ export async function createMatrixSessionProjection(params: {
           cfg: params.cfg,
           targetSessionKey,
           initialMessage: params.initialMessage,
+          binding: existing,
         });
+        if (params.sourceSnapshot) {
+          await reconcileMatrixProjectionSnapshot({
+            cfg: params.cfg,
+            accountId,
+            roomId,
+            threadId: result.threadRootEventId,
+            snapshot: params.sourceSnapshot,
+          });
+        }
         return result;
       }
 
@@ -381,7 +454,9 @@ export async function createMatrixSessionProjection(params: {
         metadata: {
           agentId,
           label,
-          boundBy: MATRIX_SESSION_PROJECTION_BOUND_BY,
+          boundBy: params.readOnly
+            ? "session-projection-read-only"
+            : MATRIX_SESSION_PROJECTION_BOUND_BY,
           introText: `OpenClaw session mirror · ${label}`,
           // Session projections follow the canonical session lifecycle, not the
           // shorter subagent-thread defaults used by ordinary Matrix bindings.
@@ -403,6 +478,15 @@ export async function createMatrixSessionProjection(params: {
         initialMessage: params.initialMessage,
         binding,
       });
+      if (params.sourceSnapshot) {
+        await reconcileMatrixProjectionSnapshot({
+          cfg: params.cfg,
+          accountId,
+          roomId,
+          threadId: result.threadRootEventId,
+          snapshot: params.sourceSnapshot,
+        });
+      }
       return result;
     },
   );
@@ -420,6 +504,8 @@ export async function handleMatrixSessionProjectionCreate({
       roomId: clean(params?.roomId),
       accountId: clean(params?.accountId) || undefined,
       label: clean(params?.label) || undefined,
+      readOnly: params?.readOnly === true,
+      sourceSnapshot: params?.sourceSnapshot as SourceProjectionSnapshot | undefined,
       initialMessage:
         params?.initialMessage && typeof params.initialMessage === "object"
           ? {
@@ -429,6 +515,12 @@ export async function handleMatrixSessionProjectionCreate({
               content: clean((params.initialMessage as Record<string, unknown>).content),
               messageId: clean((params.initialMessage as Record<string, unknown>).messageId),
               runId: clean((params.initialMessage as Record<string, unknown>).runId),
+              role:
+                (params.initialMessage as Record<string, unknown>).role === "assistant"
+                  ? "assistant"
+                  : "user",
+              senderId: clean((params.initialMessage as Record<string, unknown>).senderId),
+              agentId: clean((params.initialMessage as Record<string, unknown>).agentId),
             }
           : undefined,
     });

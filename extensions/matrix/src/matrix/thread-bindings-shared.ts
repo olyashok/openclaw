@@ -52,6 +52,15 @@ type MatrixThreadBindingManagerCacheEntry = {
 const MANAGERS_BY_ACCOUNT_ID = new Map<string, MatrixThreadBindingManagerCacheEntry>();
 const BINDINGS_BY_ACCOUNT_CONVERSATION = new Map<string, MatrixThreadBindingRecord>();
 
+export function isMatrixReadOnlyProjectionRoom(accountId: string, roomId: string): boolean {
+  return [...BINDINGS_BY_ACCOUNT_CONVERSATION.values()].some(
+    (record) =>
+      record.accountId === accountId &&
+      record.boundBy === "session-projection-read-only" &&
+      (record.parentConversationId === roomId || record.conversationId === roomId),
+  );
+}
+
 export function resolveBindingKey(params: {
   accountId: string;
   conversationId: string;
