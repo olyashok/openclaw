@@ -89,30 +89,37 @@ describe("resolveMatrixConversationRouteOwner", () => {
     ).toEqual({ kind: "unavailable" });
   });
 
-  it("denies both room and thread continuation for a read-only Slack projection", () => {
-    const binding = {
-      accountId: "default",
-      conversationId: "$projection",
-      parentConversationId: "!projected:example.org",
-      targetKind: "acp" as const,
-      targetSessionKey: "agent:finance:slack:channel:c123:thread:1.000001",
-      boundBy: "session-projection-read-only",
-      boundAt: 1,
-      lastActivityAt: 1,
-    };
-    setBindingRecord(binding);
-    try {
-      for (const threadId of [undefined, "$projection"]) {
-        expect(
-          resolveMatrixConversationRouteOwner({
-            cfg: {},
-            accountId: "default",
-            conversation: { kind: "channel", peerId: "!projected:example.org", threadId },
-          }),
-        ).toEqual({ kind: "unavailable" });
+  it.each(["session-projection-read-only", "session-projection-slack-direct"])(
+    "applies native Matrix continuation permission for %s",
+    (boundBy) => {
+      const binding = {
+        accountId: "default",
+        conversationId: "$projection",
+        parentConversationId: "!projected:example.org",
+        targetKind: "acp" as const,
+        targetSessionKey: "agent:finance:slack:channel:c123:thread:1.000001",
+        boundBy,
+        boundAt: 1,
+        lastActivityAt: 1,
+      };
+      setBindingRecord(binding);
+      try {
+        for (const threadId of [undefined, "$projection"]) {
+          expect(
+            resolveMatrixConversationRouteOwner({
+              cfg: {},
+              accountId: "default",
+              conversation: { kind: "channel", peerId: "!projected:example.org", threadId },
+            }),
+          ).toEqual(
+            boundBy === "session-projection-read-only"
+              ? { kind: "unavailable" }
+              : { kind: "agent", agentId: "finance" },
+          );
+        }
+      } finally {
+        removeBindingRecord(binding);
       }
-    } finally {
-      removeBindingRecord(binding);
-    }
-  });
+    },
+  );
 });

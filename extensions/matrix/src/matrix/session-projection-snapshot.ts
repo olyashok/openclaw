@@ -79,20 +79,8 @@ async function readProjectionHistory(
   throw new Error("Matrix projection history exceeds reconciliation bound");
 }
 
-export async function reconcileMatrixProjectionSnapshot(params: {
-  cfg: CoreConfig;
-  accountId: string;
-  roomId: string;
-  threadId: string;
-  snapshot: unknown;
-}) {
-  const deadline = Date.now() + 45_000;
-  const checkDeadline = () => {
-    if (Date.now() > deadline) {
-      throw new Error("Matrix snapshot reconciliation deadline exceeded");
-    }
-  };
-  const rawSnapshot = object(params.snapshot);
+export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionSnapshot {
+  const rawSnapshot = object(value);
   if (
     rawSnapshot?.complete !== true ||
     !Array.isArray(rawSnapshot.messages) ||
@@ -125,7 +113,26 @@ export async function reconcileMatrixProjectionSnapshot(params: {
       agentId: message.agentId,
     });
   }
-  const snapshot: SourceProjectionSnapshot = { complete: true, messages };
+  return { complete: true, messages };
+}
+
+export async function reconcileMatrixProjectionSnapshot(params: {
+  cfg: CoreConfig;
+  accountId: string;
+  roomId: string;
+  threadId: string;
+  snapshot: unknown;
+  retireThreadId?: string;
+  retireLegacyDirectReplies?: boolean;
+}) {
+  const deadline = Date.now() + 45_000;
+  const checkDeadline = () => {
+    if (Date.now() > deadline) {
+      throw new Error("Matrix snapshot reconciliation deadline exceeded");
+    }
+  };
+  const snapshot = parseSourceProjectionSnapshot(params.snapshot);
+  const sourceIds = new Set(snapshot.messages.map((message) => message.messageId));
   await withResolvedMatrixSendClient(
     { cfg: params.cfg, accountId: params.accountId, timeoutMs: 10_000 },
     async (client) => {
@@ -170,6 +177,10 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         if (object(content?.["m.relates_to"])?.rel_type === "m.replace") {
           continue;
         }
+        const relation = object(content?.["m.relates_to"]);
+        if (relation?.rel_type !== "m.thread" || relation.event_id !== params.threadId) {
+          continue;
+        }
         const current = latestEdits.get(event.event_id) ?? content;
         const metadata = object(current?.[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
         if (
@@ -212,7 +223,7 @@ export async function reconcileMatrixProjectionSnapshot(params: {
             client,
             threadId: params.threadId,
             extraContent,
-            deliveryQueueId: `matrix-slack-source:${params.roomId}:${message.messageId}`,
+            deliveryQueueId: `matrix-slack-source:${params.roomId}:${params.threadId}:${message.messageId}`,
             deliveryPartIndex: 0,
             deliveryPartCount: 1,
           });
@@ -225,10 +236,13 @@ export async function reconcileMatrixProjectionSnapshot(params: {
             client,
             extraContent,
           });
-          for (const duplicate of existing.slice(1)) {
-            for (const eventId of [...(editIds.get(duplicate.eventId) ?? []), duplicate.eventId]) {
-              await client.redactEvent(params.roomId, eventId, "Reconciled source message edit");
-            }
+        }
+        // A pre-snapshot hook can race canonical replay without changing content.
+        // These candidates are already restricted to this sender, source ID, and thread.
+        for (const duplicate of existing.slice(1)) {
+          for (const eventId of [...(editIds.get(duplicate.eventId) ?? []), duplicate.eventId]) {
+            checkDeadline();
+            await client.redactEvent(params.roomId, eventId, "Reconciled duplicate source message");
           }
         }
       }
@@ -240,6 +254,67 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         for (const original of originalsForMessage) {
           for (const eventId of [...(editIds.get(original.eventId) ?? []), original.eventId]) {
             await client.redactEvent(params.roomId, eventId, "Deleted in Slack");
+          }
+        }
+      }
+      if (params.retireLegacyDirectReplies) {
+        for (const event of events) {
+          const content = object(event.content);
+          const relation = object(content?.["m.relates_to"]);
+          const metadata = object(content?.[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
+          if (
+            event.sender !== self ||
+            event.unsigned?.redacted_because ||
+            relation?.rel_type !== "m.thread" ||
+            relation.event_id !== params.threadId ||
+            metadata?.sourceChannel !== "slack" ||
+            metadata.role !== "assistant" ||
+            typeof metadata.runId !== "string" ||
+            metadata.messageId !== undefined
+          ) {
+            continue;
+          }
+          const matched = snapshot.messages.some(
+            (message) =>
+              message.role === "assistant" &&
+              content?.body ===
+                projectionText({
+                  channel: "slack",
+                  role: "assistant",
+                  text: message.content,
+                  senderId: typeof metadata.senderId === "string" ? metadata.senderId : undefined,
+                  agentId: typeof metadata.agentId === "string" ? metadata.agentId : undefined,
+                }),
+          );
+          if (!matched) {
+            continue;
+          }
+          for (const id of [...(editIds.get(event.event_id) ?? []), event.event_id]) {
+            checkDeadline();
+            await client.redactEvent(params.roomId, id, "Reconciled canonical Slack DM history");
+          }
+        }
+      }
+      // Only after the complete new generation is present may hidden legacy
+      // mirrors be retired. Replays retry redaction without duplicating messages.
+      if (params.retireThreadId && params.retireThreadId !== params.threadId) {
+        for (const event of events) {
+          if (event.sender !== self || event.unsigned?.redacted_because) {
+            continue;
+          }
+          const content = object(event.content);
+          const relation = object(content?.["m.relates_to"]);
+          const metadata = object(content?.[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
+          const oldSource =
+            relation?.rel_type === "m.thread" &&
+            relation.event_id === params.retireThreadId &&
+            metadata?.sourceChannel === "slack";
+          if (!oldSource && event.event_id !== params.retireThreadId) {
+            continue;
+          }
+          for (const eventId of [...(editIds.get(event.event_id) ?? []), event.event_id]) {
+            checkDeadline();
+            await client.redactEvent(params.roomId, eventId, "Rebased shared projection history");
           }
         }
       }
