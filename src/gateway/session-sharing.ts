@@ -470,6 +470,7 @@ export function resolveSessionMutationAuthorization(params: {
     }
   }
   const targetRefs = resolveSessionMutationTargets({
+    client: params.client,
     method: params.method,
     requestParams: params.requestParams,
     context: params.context,

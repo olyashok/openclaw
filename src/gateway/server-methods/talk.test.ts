@@ -15,8 +15,10 @@ import {
   noteClientVoiceConfirmationUtterance,
 } from "../../talk/client-voice-confirmation.js";
 import { resetClientVoiceConfirmationStateForTest } from "../../talk/client-voice-confirmation.test-support.js";
+import type { ensureClientVoiceAgentSessionEntry } from "../../talk/client-voice-session.js";
 import { REALTIME_VOICE_DESCRIBE_VIEW_TOOL_NAME } from "../../talk/describe-view-tool.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { relaySessions, type RelaySession } from "../talk-realtime-relay-state.js";
 import { buildTalkRealtimeConfig } from "./talk-shared.js";
 import { talkHandlers } from "./talk.js";
 
@@ -86,7 +88,9 @@ const mocks = vi.hoisted(() => ({
   ]),
   closeStaleClientVoiceSessions: vi.fn(async () => 0),
   createOrResumeClientVoiceSession: vi.fn(() => "voice-test"),
-  ensureClientVoiceAgentSessionEntry: vi.fn(async () => "session-main"),
+  ensureClientVoiceAgentSessionEntry: vi.fn<typeof ensureClientVoiceAgentSessionEntry>(
+    async () => "session-main",
+  ),
   resolveClientVoiceAgentSessionId: vi.fn<() => string | undefined>(() => "session-main"),
   assertClientVoiceSessionOpen: vi.fn(),
   registerClientVoiceConsultRun: vi.fn(),
@@ -224,6 +228,12 @@ vi.mock("../talk-realtime-relay.js", async (importOriginal) => {
     createTalkRealtimeRelaySession: mocks.createTalkRealtimeRelaySession,
     ensureTalkRealtimeRelayVoiceSession: mocks.ensureTalkRealtimeRelayVoiceSession,
     flushTalkRealtimeRelayVoiceWrites: mocks.flushTalkRealtimeRelayVoiceWrites,
+    prepareTalkRealtimeRelayAgentRunRegistration:
+      (params: { relaySessionId: string; connId: string; sessionKey: string; callId?: string }) =>
+      (runId: string) => {
+        mocks.registerTalkRealtimeRelayAgentRun({ ...params, runId });
+        return "registered";
+      },
     registerTalkRealtimeRelayAgentRun: mocks.registerTalkRealtimeRelayAgentRun,
     sendTalkRealtimeRelayAudio: mocks.sendTalkRealtimeRelayAudio,
     steerTalkRealtimeRelayAgentRun: mocks.steerTalkRealtimeRelayAgentRun,
@@ -2589,6 +2599,12 @@ describe("talk.session unified handlers", () => {
 
 describe("talk.client.toolCall handler", () => {
   beforeEach(() => {
+    relaySessions.set("relay-1", {
+      id: "relay-1",
+      connId: "conn-1",
+      sessionKey: "main",
+      expiresAtMs: Date.now() + 60_000,
+    } as RelaySession);
     vi.clearAllMocks();
     mocks.chatSend.mockImplementation(
       async ({
@@ -2599,6 +2615,65 @@ describe("talk.client.toolCall handler", () => {
         respond(true, { runId: "run-voice-1" }, undefined);
       },
     );
+  });
+
+  afterEach(() => relaySessions.delete("relay-1"));
+
+  it.each(["closed", "replaced"])(
+    "does not commit or consult when the relay is %s while its session write is pending",
+    async (state) => {
+      const relay = relaySessions.get("relay-1")!;
+      const pendingWrite = createDeferred<void>();
+      const writeStarted = createDeferred<void>();
+      mocks.ensureClientVoiceAgentSessionEntry.mockImplementationOnce(async (params) => {
+        writeStarted.resolve();
+        await pendingWrite.promise;
+        params.assertCommitAllowed?.();
+        return "session-main";
+      });
+      const respond = vi.fn();
+      const request = callTalkHandler("talk.client.toolCall", {
+        params: {
+          relaySessionId: "relay-1",
+          callId: "call-relay-write-race",
+          name: "openclaw_agent_consult",
+          args: { question: "Continue" },
+        },
+        respond,
+        context: { getRuntimeConfig: () => ({}) as OpenClawConfig },
+      });
+      await writeStarted.promise;
+      if (state === "closed") {
+        relaySessions.delete("relay-1");
+      } else {
+        relaySessions.set("relay-1", { ...relay });
+      }
+      pendingWrite.resolve();
+      await request;
+      expect(mocks.chatSend).not.toHaveBeenCalled();
+      expectRespondError(respond, {
+        code: ErrorCodes.INVALID_REQUEST,
+        message: "Error: Talk relay is unavailable",
+      });
+    },
+  );
+
+  it("carries the live relay fence to the chat user-turn commit owner", async () => {
+    const respond = vi.fn();
+    await callTalkHandler("talk.client.toolCall", {
+      params: {
+        relaySessionId: "relay-1",
+        callId: "call-relay-commit-fence",
+        name: "openclaw_agent_consult",
+        args: { question: "Continue" },
+      },
+      respond,
+      context: { getRuntimeConfig: () => ({}) as OpenClawConfig },
+    });
+    const input = mockCallArg(mocks.chatSend) as { sessionMutationCommitGuard: () => void };
+    expect(() => input.sessionMutationCommitGuard()).not.toThrow();
+    relaySessions.delete("relay-1");
+    expect(() => input.sessionMutationCommitGuard()).toThrow("Talk relay is unavailable");
   });
 
   it("implicitly creates a voice session for consults without a binding", async () => {

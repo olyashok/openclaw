@@ -279,6 +279,15 @@ export type TalkRealtimeRelaySessionResult = {
 };
 
 export const relaySessions = new Map<string, RelaySession>();
+
+/** Resolve browser capabilities only against their live connection-owned relay. */
+export function resolveOwnedTalkRealtimeRelaySession(
+  relaySessionId: string,
+  connId: string | undefined,
+): RelaySession | undefined {
+  const relay = relaySessions.get(relaySessionId);
+  return connId && relay?.connId === connId && relay.expiresAtMs >= Date.now() ? relay : undefined;
+}
 // Closed relays leave the active map immediately so late provider/client events
 // are ignored, but their accepted transcript prefix still owns bounded memory
 // until durable close settles. Session limits count both maps.

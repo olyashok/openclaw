@@ -3,7 +3,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import { isIncognitoSessionKey } from "../shared/incognito-session-key.js";
 import { resolveAuthorizedBoardViewTicketClaims } from "./board-view-ticket.js";
-import type { GatewayRequestContext } from "./server-methods/types.js";
+import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 import {
   listSessionGroups,
   normalizeGroupNames,
@@ -11,6 +11,7 @@ import {
 } from "./session-groups.js";
 import type { SessionMutationTarget } from "./session-mutation-authorization-error.js";
 import { canonicalizeSessionKeyForAgent } from "./session-store-key.js";
+import { resolveOwnedTalkRealtimeRelaySession } from "./talk-realtime-relay-state.js";
 
 export type { SessionMutationTarget } from "./session-mutation-authorization-error.js";
 
@@ -276,11 +277,24 @@ function resolveApprovalSessionTarget(
 }
 
 export function resolveSessionMutationTargets(params: {
+  client: GatewayClient | null;
   method: string;
   requestParams: unknown;
   context: GatewayRequestContext;
   getCfg: () => OpenClawConfig;
 }): SessionMutationTarget[] | undefined {
+  if (params.method === "talk.client.toolCall") {
+    const relaySessionId = readSessionSharingStringParam(params.requestParams, "relaySessionId");
+    if (relaySessionId) {
+      // Matrix browsers hold a relay capability, not the private canonical key.
+      // Resolve it before the sharing fence using the same owner as the handler.
+      const relay = resolveOwnedTalkRealtimeRelaySession(relaySessionId, params.client?.connId);
+      const requestedKey = readSessionSharingStringParam(params.requestParams, "sessionKey");
+      return relay?.sessionKey && (!requestedKey || requestedKey === relay.sessionKey)
+        ? [{ sessionKey: relay.sessionKey }]
+        : undefined;
+    }
+  }
   if (params.method === "sessions.patchMany") {
     const targets =
       params.requestParams &&

@@ -80,6 +80,7 @@ export async function startTalkRealtimeAgentConsult(params: {
     accountId: string;
   };
   onRunStarted?: (runId: string) => void;
+  assertCommitAllowed?: () => void;
 }): Promise<
   { ok: true; runId: string; idempotencyKey: string } | { ok: false; error: ErrorShape }
 > {
@@ -128,6 +129,7 @@ export async function startTalkRealtimeAgentConsult(params: {
       client: params.client,
       isWebchatConnect: params.isWebchatConnect,
       context: params.context,
+      sessionMutationCommitGuard: params.assertCommitAllowed,
       params: {
         sessionKey: params.sessionKey,
         message,
