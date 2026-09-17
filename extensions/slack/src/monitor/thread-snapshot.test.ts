@@ -1,12 +1,13 @@
 import type { WebClient } from "@slack/web-api";
 import { describe, expect, it, vi } from "vitest";
-import { readSlackThreadSnapshot } from "./thread-snapshot.js";
+import { readSlackThreadSnapshot, readSlackProjectionChannel } from "./thread-snapshot.js";
 
 describe("Slack projection source snapshot", () => {
   function client() {
     return {
       auth: { test: vi.fn().mockResolvedValue({ ok: true, team_id: "T123" }) },
       conversations: {
+        history: vi.fn().mockResolvedValue({ ok: true, messages: [] }),
         members: vi
           .fn()
           .mockResolvedValueOnce({
@@ -49,6 +50,34 @@ describe("Slack projection source snapshot", () => {
       limit: 200,
       cursor: "more",
     });
+  });
+  it("shares one verified roster across thread reads in a bounded channel scope", async () => {
+    const slack = client();
+    const scope = await readSlackProjectionChannel(slack as unknown as WebClient, "T123", "C123");
+    await scope.readThread("1700000000.000001");
+    await scope.readThread("1700000000.000002");
+    expect(slack.auth.test).toHaveBeenCalledTimes(1);
+    expect(slack.conversations.members).toHaveBeenCalledTimes(2);
+    expect(slack.conversations.replies).toHaveBeenCalledTimes(2);
+  });
+  it("discovers real history roots with paginated progress and refuses partial pages", async () => {
+    const slack = client();
+    slack.conversations.history.mockResolvedValueOnce({
+      ok: true,
+      messages: [
+        { ts: "1.000001", reply_count: 2 },
+        { ts: "1.000002", bot_id: "B123" },
+        { ts: "1.000003", text: "not a bot conversation" },
+      ],
+      response_metadata: { next_cursor: "older" },
+    });
+    const scope = await readSlackProjectionChannel(slack as unknown as WebClient, "T123", "C123");
+    expect(await scope.readHistoryPage()).toEqual({
+      roots: ["1.000001", "1.000002"],
+      nextCursor: "older",
+    });
+    slack.conversations.history.mockResolvedValueOnce({ ok: true, messages: [], has_more: true });
+    await expect(scope.readHistoryPage("older")).rejects.toThrow("Incomplete");
   });
   it("rejects a mismatched workspace before reading private channel data", async () => {
     const slack = client();
