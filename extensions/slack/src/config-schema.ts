@@ -68,6 +68,12 @@ const SlackThreadSchema = z
   })
   .strict();
 
+const SlackThreadOwnershipSchema = z
+  .object({
+    preferredAccounts: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
 const ReplyToModeByChatTypeSchema = z
   .object({
     direct: ReplyToModeSchema.optional(),
@@ -209,6 +215,7 @@ export const SlackConfigSchema = SlackAccountSchema.safeExtend({
   webhookPath: z.string().optional().default("/slack/events"),
   accounts: z.record(z.string(), SlackAccountSchema.optional()).optional(),
   defaultAccount: z.string().optional(),
+  threadOwnership: SlackThreadOwnershipSchema.optional(),
 }).superRefine((value, ctx) => {
   if (value.enabled === false) {
     return;

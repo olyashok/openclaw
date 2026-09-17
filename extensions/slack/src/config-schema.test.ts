@@ -604,6 +604,17 @@ describe("slack config schema", () => {
     });
   });
 
+  it("accepts a root-only cross-account thread owner preference", () => {
+    expectSlackConfigValid({
+      threadOwnership: { preferredAccounts: ["fi-admin", "fi-user"] },
+      accounts: { "fi-admin": {}, "fi-user": {} },
+    });
+    expectSlackConfigIssue(
+      { accounts: { "fi-admin": { threadOwnership: { preferredAccounts: ["fi-admin"] } } } },
+      "accounts.fi-admin",
+    );
+  });
+
   it("rejects the retired thread requireExplicitMention runtime key", () => {
     expectSlackConfigIssue({ thread: { requireExplicitMention: true } }, "thread");
   });

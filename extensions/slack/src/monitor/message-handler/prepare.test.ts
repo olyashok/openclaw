@@ -5684,6 +5684,7 @@ describe("slack implicit mention policy", () => {
     ctx: SlackMonitorContext;
     message?: Partial<SlackMessageEvent>;
     eventScope?: SlackEventScope;
+    account?: ResolvedSlackAccount;
   }) {
     const { storePath } = storeFixture.makeTmpStorePath();
     vi.spyOn(
@@ -5692,7 +5693,7 @@ describe("slack implicit mention policy", () => {
     ).mockReturnValue(storePath);
     return await prepareSlackMessage({
       ctx: params.ctx,
-      account: createSlackTestAccount(),
+      account: params.account ?? createSlackTestAccount(),
       message: {
         type: "message",
         channel: "C123",
@@ -5741,6 +5742,85 @@ describe("slack implicit mention policy", () => {
       message: { thread_ts: threadTs },
     });
     expect(result).toBeNull();
+  });
+
+  it("admits only the preferred participating account in a shared unmentioned thread", async () => {
+    const threadTs = "1700000000.000000";
+    const cfg = {
+      channels: {
+        slack: {
+          enabled: true,
+          implicitMentions: { threadParticipation: true },
+          threadOwnership: { preferredAccounts: ["fi-admin", "fi-user"] },
+          accounts: { "fi-admin": {}, "fi-user": {} },
+        },
+      },
+      session: {},
+    } as OpenClawConfig;
+    const fiAdminContext = createInboundSlackTestContext({ cfg, accountId: "fi-admin" });
+    const fiUserContext = createInboundSlackTestContext({ cfg, accountId: "fi-user" });
+    fiAdminContext.resolveUserName = async () => ({ name: "Alice" });
+    fiUserContext.resolveUserName = async () => ({ name: "Alice" });
+    const fiAdminAccount = { ...createSlackTestAccount(), accountId: "fi-admin" };
+    const fiUserAccount = { ...createSlackTestAccount(), accountId: "fi-user" };
+    recordSlackThreadParticipation("fi-admin", "C123", threadTs);
+    recordSlackThreadParticipation("fi-user", "C123", threadTs);
+
+    const fiUser = await prepareThreadMessage({
+      ctx: fiUserContext,
+      account: fiUserAccount,
+      message: { thread_ts: threadTs },
+    });
+    const fiAdmin = await prepareThreadMessage({
+      ctx: fiAdminContext,
+      account: fiAdminAccount,
+      message: { thread_ts: threadTs },
+    });
+
+    expect(fiUser).toBeNull();
+    expect(fiAdmin?.ctxPayload.MentionSource).toBe("implicit_thread");
+  });
+
+  it("transfers shared-thread ownership when another bot is explicitly mentioned", async () => {
+    const threadTs = "1700000000.000000";
+    const cfg = {
+      channels: {
+        slack: {
+          enabled: true,
+          implicitMentions: { threadParticipation: true },
+          threadOwnership: { preferredAccounts: ["fi-admin", "fi-user"] },
+          accounts: { "fi-admin": {}, "fi-user": {} },
+        },
+      },
+      session: {},
+    } as OpenClawConfig;
+    const fiAdminContext = createInboundSlackTestContext({ cfg, accountId: "fi-admin" });
+    const fiUserContext = createInboundSlackTestContext({ cfg, accountId: "fi-user" });
+    fiAdminContext.resolveUserName = async () => ({ name: "Alice" });
+    fiUserContext.resolveUserName = async () => ({ name: "Alice" });
+    const fiAdminAccount = { ...createSlackTestAccount(), accountId: "fi-admin" };
+    const fiUserAccount = { ...createSlackTestAccount(), accountId: "fi-user" };
+    recordSlackThreadParticipation("fi-admin", "C123", threadTs);
+    recordSlackThreadParticipation("fi-user", "C123", threadTs);
+
+    await prepareThreadMessage({
+      ctx: fiAdminContext,
+      account: fiAdminAccount,
+      message: { thread_ts: threadTs },
+    });
+    const explicitFiUser = await prepareThreadMessage({
+      ctx: fiUserContext,
+      account: fiUserAccount,
+      message: { thread_ts: threadTs, text: "<@B1> continue" },
+    });
+    const nextFiAdmin = await prepareThreadMessage({
+      ctx: fiAdminContext,
+      account: fiAdminAccount,
+      message: { thread_ts: threadTs },
+    });
+
+    expect(explicitFiUser?.ctxPayload.MentionSource).toBe("explicit_bot");
+    expect(nextFiAdmin).toBeNull();
   });
 
   it("accepts an unmentioned reply more than 24 hours after joining a required-mention thread", async () => {

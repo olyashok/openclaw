@@ -115,6 +115,16 @@ export type SlackThreadConfig = {
   initialHistoryLimit?: number;
 };
 
+/**
+ * Coordinates unmentioned channel-thread follow-ups when more than one Slack
+ * account receives the same workspace event. The first eligible account owns
+ * the thread; preferred accounts win when they have both participated.
+ */
+export type SlackThreadOwnershipConfig = {
+  /** Account IDs in descending preference order for already-participating bots. */
+  preferredAccounts: string[];
+};
+
 export type SlackRelayConfig = {
   /** Full relay websocket URL, including the route path. */
   url?: string;
@@ -195,4 +205,6 @@ export type SlackConfig = {
   accounts?: Record<string, SlackAccountConfig>;
   /** Optional default account id when multiple accounts are configured. */
   defaultAccount?: string;
+  /** Optional cross-account owner policy for unmentioned channel-thread follow-ups. */
+  threadOwnership?: SlackThreadOwnershipConfig;
 } & SlackAccountConfig;
