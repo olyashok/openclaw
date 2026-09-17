@@ -77,6 +77,7 @@ export async function startTalkRealtimeAgentConsult(
       accountId: string;
     };
     onRunStarted?: (runId: string) => void;
+    assertCommitAllowed?: () => void;
   },
 ): Promise<{ ok: true; runId: string; idempotencyKey: string } | { ok: false; error: ErrorShape }> {
   let message: string;
@@ -138,6 +139,7 @@ export async function startTalkRealtimeAgentConsult(
         id: `${request.req.id}:talk-tool-call`,
         method: "chat.send",
       },
+      sessionMutationCommitGuard: params.assertCommitAllowed,
       params: {
         sessionKey: params.sessionTarget.canonicalKey,
         agentId: params.sessionTarget.agentId,

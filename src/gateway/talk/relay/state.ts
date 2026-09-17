@@ -361,6 +361,15 @@ export type TalkRealtimeRelaySessionResult = {
 export const relaySessions = new Map<string, RelaySession>();
 // Closing relays reject new work but retain bounded final transcripts until
 // provider finalization and durable close settle. Session limits count both sets.
+
+/** Resolve browser capabilities only against their live connection-owned relay. */
+export function resolveOwnedTalkRealtimeRelaySession(
+  relaySessionId: string,
+  connId: string | undefined,
+): RelaySession | undefined {
+  const relay = relaySessions.get(relaySessionId);
+  return connId && relay?.connId === connId && relay.expiresAtMs >= Date.now() ? relay : undefined;
+}
 export const drainingRelaySessions = new Set<RelaySession>();
 
 export function assertRelaySessionCapacity(connId: string): void {

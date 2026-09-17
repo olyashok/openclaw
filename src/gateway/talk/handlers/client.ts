@@ -32,7 +32,10 @@ import {
   resolveOpenClientVoiceSessionId,
 } from "../../../talk/client-voice-session.js";
 import { isUnauthorizedRawMatrixBrowserSession } from "../../matrix-browser-session-authorization.js";
-import { resolveSandboxedSessionCreation } from "../../operator-role-policy.js";
+import {
+  authorizeGatewaySessionCreation,
+  resolveSandboxedSessionCreation,
+} from "../../operator-role-policy.js";
 import type { GatewayRequestHandlers } from "../../server-methods/types.js";
 import { assertValidParams } from "../../server-methods/validation.js";
 import { SessionMutationAuthorizationChangedError } from "../../session-mutation-authorization-error.js";
@@ -48,7 +51,7 @@ import {
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
 } from "../relay/index.js";
-import { relaySessions } from "../relay/state.js";
+import { relaySessions, resolveOwnedTalkRealtimeRelaySession } from "../relay/state.js";
 import { resolveOwnedActiveTalkRunTarget } from "../run-ownership.js";
 import { prepareTalkSessionTarget, requirePreparedTalkSessionTarget } from "../session-target.js";
 import { unregisterTalkVoiceSession } from "../voice-selection.js";
@@ -86,22 +89,16 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     const relaySessionId = normalizeOptionalString(params.relaySessionId);
     const connId = normalizeOptionalString(request.client?.connId);
     const providedSessionKey = normalizeOptionalString(params.sessionKey);
-    const relay = relaySessionId ? relaySessions.get(relaySessionId) : undefined;
+    const relay = relaySessionId
+      ? resolveOwnedTalkRealtimeRelaySession(relaySessionId, connId)
+      : undefined;
     if (
-      providedSessionKey &&
-      relay &&
-      (!connId ||
-        relay.connId !== connId ||
-        relay.sessionTarget.canonicalKey !== providedSessionKey)
+      relaySessionId &&
+      (!relay ||
+        (providedSessionKey && relay.sessionTarget.canonicalKey !== providedSessionKey) ||
+        !connId ||
+        relay.connId !== connId)
     ) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "Talk relay belongs to another session"),
-      );
-      return;
-    }
-    if (!providedSessionKey && relaySessionId && (!relay || relay.connId !== connId)) {
       respond(
         false,
         undefined,
@@ -152,6 +149,25 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       return;
     }
     const agentId = target.agentId;
+    const assertCommitAllowed = () => {
+      request.sessionMutationCommitGuard?.();
+      request.sessionMutationAuthorization?.assertCurrent();
+      if (
+        relaySessionId &&
+        resolveOwnedTalkRealtimeRelaySession(relaySessionId, connId) !== relay
+      ) {
+        throw new Error("Talk relay is unavailable");
+      }
+    };
+    const creationError = authorizeGatewaySessionCreation({
+      cfg: config,
+      client: request.client,
+      agentId,
+    });
+    if (creationError) {
+      respond(false, undefined, creationError);
+      return;
+    }
     const explicitVoiceSessionId = normalizeOptionalString(params.voiceSessionId);
     if (relaySessionId && explicitVoiceSessionId && explicitVoiceSessionId !== relaySessionId) {
       respond(
@@ -182,7 +198,9 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           agentId,
           sessionKey,
           creation: resolveSandboxedSessionCreation(request.client, config),
+          assertCommitAllowed,
         });
+        assertCommitAllowed();
         ensureTalkRealtimeRelayVoiceSession({
           relaySessionId,
           connId,
@@ -219,6 +237,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
 
     const result = await startTalkRealtimeAgentConsult(request, {
       sessionTarget: target,
+      assertCommitAllowed,
       callId: params.callId,
       args: params.args ?? {},
       relaySessionId: normalizeOptionalString(params.relaySessionId),
