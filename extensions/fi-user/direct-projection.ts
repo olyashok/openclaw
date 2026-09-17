@@ -17,11 +17,101 @@ type DirectReader = {
   }>;
 };
 
+/** Operator recovery uses a canonical app source hint, never an inferred DM channel. */
+export async function recoverSlackDirectProjection(
+  api: OpenClawPluginApi,
+  connection: { baseUrl: string; token: string },
+  sessionKey: string,
+  hint: unknown,
+) {
+  const [, agentId, peer] = DIRECT_SESSION.exec(sessionKey) ?? [];
+  if (
+    !agentId ||
+    !peer ||
+    !hint ||
+    typeof hint !== "object" ||
+    !("workspaceId" in hint) ||
+    !("channelId" in hint) ||
+    !("peerSenderId" in hint) ||
+    typeof hint.workspaceId !== "string" ||
+    typeof hint.channelId !== "string" ||
+    hint.peerSenderId !== peer.toUpperCase()
+  ) {
+    throw new Error("Exact canonical direct source required");
+  }
+  const directSource = {
+    workspaceId: hint.workspaceId,
+    channelId: hint.channelId,
+    peerSenderId: peer.toUpperCase(),
+  };
+  const guard = api.runtime.channel.runtimeContexts.get<{
+    resolveSource: (params: {
+      targetSessionKey: string;
+      externalSource: typeof directSource & { provider: string; rootMessageId: string };
+    }) => Promise<{ sourceAccountId: string }>;
+  }>({ channelId: "matrix", capability: "source-session-authorization" });
+  if (!guard) {
+    throw new Error("Source authorization is unavailable");
+  }
+  const verified = await guard.resolveSource({
+    targetSessionKey: sessionKey,
+    externalSource: { provider: "slack", ...directSource, rootMessageId: sessionKey },
+  });
+  const reader = api.runtime.channel.runtimeContexts.get<DirectReader>({
+    channelId: "slack",
+    accountId: verified.sourceAccountId,
+    capability: "thread-read-projection",
+  });
+  if (!reader) {
+    throw new Error("Direct source reader unavailable");
+  }
+  const source = await reader.readDirect(directSource.channelId, directSource.peerSenderId);
+  const response = await fetch(`${connection.baseUrl}/api/openclaw-session-projection`, {
+    method: "POST",
+    signal: AbortSignal.timeout(70_000),
+    headers: { authorization: `Bearer ${connection.token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      discover: true,
+      agentId,
+      sessionKey,
+      directSource: source.directSource,
+      snapshot: {
+        complete: true,
+        messages: source.messages.map((message) => ({
+          messageId: message.messageId,
+          senderId: message.senderId,
+          content: message.content,
+          role: message.bot ? "assistant" : "user",
+          agentId: message.bot && message.senderId === reader.botUserId ? agentId : undefined,
+        })),
+      },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Fi direct recovery failed (${response.status})`);
+  }
+  const result: unknown = await response.json();
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !("status" in result) ||
+    !["created", "existing", "skipped"].includes(String(result.status))
+  ) {
+    throw new Error("Invalid Fi direct recovery result");
+  }
+  return { status: result.status };
+}
+
 /** Native direct sessions remain one conversation per agent/account/peer, not per message. */
 export async function reconcileSlackDirectProjections(
   api: OpenClawPluginApi,
   connection: { baseUrl: string; token: string },
-  bindings: Array<{ sessionKey: string; roomId: string }>,
+  bindings: Array<{
+    sessionKey: string;
+    roomId: string;
+    sourceAccountId?: string;
+    externalSource?: { channelId: string; peerSenderId?: string };
+  }>,
   signal: AbortSignal,
 ) {
   const config = api.runtime.config?.current?.() ?? api.config;
@@ -76,8 +166,10 @@ export async function reconcileSlackDirectProjections(
     try {
       const entry = getSessionEntry({ agentId, sessionKey, readConsistency: "latest" });
       const origin = sessionDeliveryOrigin(entry);
-      const accountId = origin?.accountId;
-      const channelId = origin?.nativeChannelId;
+      const accountId = binding?.sourceAccountId ?? origin?.accountId;
+      const channelId = binding?.sourceAccountId
+        ? binding.externalSource?.channelId
+        : origin?.nativeChannelId;
       const allowed = configured.some(
         (candidate) =>
           candidate.agentId === agentId &&

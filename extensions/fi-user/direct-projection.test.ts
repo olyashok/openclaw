@@ -1,6 +1,9 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { reconcileSlackDirectProjections } from "./direct-projection.js";
+import {
+  reconcileSlackDirectProjections,
+  recoverSlackDirectProjection,
+} from "./direct-projection.js";
 const mocks = vi.hoisted(() => ({ entry: vi.fn(), list: vi.fn() }));
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
   getSessionEntry: mocks.entry,
@@ -9,6 +12,53 @@ vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
 }));
 const sessionKey = "agent:cellect-fi-admin:slack:direct:u111";
 describe("Fi direct projection discovery", () => {
+  it("recovers only a complete native snapshot and never seeds empty history on read failure", async () => {
+    const directSource = { workspaceId: "T123", channelId: "D123", peerSenderId: "U111" };
+    const readDirect = vi.fn().mockResolvedValue({
+      directSource,
+      messages: [
+        {
+          messageId: "1700000000.000001",
+          senderId: "U111",
+          content: "Existing history",
+          bot: false,
+        },
+      ],
+    });
+    const resolveSource = vi.fn().mockResolvedValue({ sourceAccountId: "configured-admin" });
+    const api = {
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: ({ channelId }: { channelId: string }) =>
+              channelId === "matrix" ? { resolveSource } : { readDirect, botUserId: "U222" },
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    const request = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: true, json: async () => ({ status: "existing" }) } as Response);
+    const connection = { baseUrl: "https://fi.example", token: "test" };
+    await expect(
+      recoverSlackDirectProjection(api, connection, sessionKey, directSource),
+    ).resolves.toEqual({ status: "existing" });
+    const body = request.mock.calls[0]?.[1]?.body;
+    if (typeof body !== "string") {
+      throw new Error("Expected body");
+    }
+    expect(JSON.parse(body)).toMatchObject({
+      directSource,
+      sessionKey,
+      snapshot: { complete: true, messages: [{ content: "Existing history" }] },
+    });
+    readDirect.mockRejectedValueOnce(new Error("partial source"));
+    await expect(
+      recoverSlackDirectProjection(api, connection, sessionKey, directSource),
+    ).rejects.toThrow("partial source");
+    expect(request).toHaveBeenCalledTimes(1);
+    request.mockRestore();
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     mocks.list.mockReturnValue([{ sessionKey, entry: {} }]);

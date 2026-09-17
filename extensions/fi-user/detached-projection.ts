@@ -11,6 +11,7 @@ export type ProjectionInventoryBinding = {
   sessionKey: string;
   roomId: string;
   externalSource?: Source;
+  sourceAccountId?: string;
 };
 type Scope = NonNullable<ChannelProjectionParams["channelScope"]> & {
   readHistoryPage: (cursor?: string) => Promise<{ roots: string[]; nextCursor?: string }>;
@@ -25,6 +26,42 @@ const safeError = (error: unknown) =>
     .replace(/xox[baprs]-\S+/g, "[redacted]")
     .replace(/\s+/g, " ")
     .slice(0, 240);
+
+export async function verifyDetachedProjectionOrigin(
+  params: ChannelProjectionParams,
+  sourceIdentity: { agentId: string; channelId: string },
+  readerWorkspaceId?: string,
+) {
+  if (!params.detachedSource) {
+    throw new Error("Detached source required");
+  }
+  const entry = getSessionEntry({
+    agentId: sourceIdentity.agentId,
+    sessionKey: params.sessionKey,
+    readConsistency: "latest",
+  });
+  const origin = sessionDeliveryOrigin(entry);
+  const inventory = params.api.runtime.channel.runtimeContexts.get<{
+    list: () => Promise<ProjectionInventoryBinding[]>;
+  }>({ channelId: "matrix", capability: "session-read-projections" });
+  const persisted = (await inventory?.list())?.find(
+    (binding) =>
+      binding.sessionKey === params.sessionKey &&
+      binding.sourceAccountId === params.accountId &&
+      binding.externalSource?.channelId === sourceIdentity.channelId &&
+      binding.externalSource.workspaceId === params.detachedSource?.workspaceId,
+  );
+  if (
+    !entry ||
+    (!persisted &&
+      (origin?.accountId !== params.accountId ||
+        origin.nativeChannelId?.toUpperCase() !== sourceIdentity.channelId)) ||
+    params.detachedSource.channelId !== sourceIdentity.channelId ||
+    readerWorkspaceId !== params.detachedSource.workspaceId
+  ) {
+    throw new Error("Detached Slack source does not match native parent origin");
+  }
+}
 
 /** Cursor state is only a bounded scheduler; durable source/room identity makes restart replay safe. */
 export function createDetachedProjectionReconciler(
@@ -75,10 +112,17 @@ export function createDetachedProjectionReconciler(
           continue;
         }
         const origin = sessionDeliveryOrigin(entry);
-        const accountId = origin?.accountId;
+        const persisted = bindings.find(
+          (binding) =>
+            binding.sessionKey === sessionKey &&
+            binding.sourceAccountId &&
+            binding.externalSource?.channelId === channelId,
+        );
+        const accountId = persisted?.sourceAccountId ?? origin?.accountId;
         const allowed =
           accountId &&
-          origin.nativeChannelId?.toUpperCase() === channelId &&
+          (persisted?.externalSource?.channelId ?? origin?.nativeChannelId)?.toUpperCase() ===
+            channelId &&
           configured.some(
             (binding) =>
               binding.agentId === agentId &&
@@ -149,7 +193,7 @@ export function createDetachedProjectionReconciler(
       const entry = agentId
         ? getSessionEntry({ agentId, sessionKey: binding.sessionKey, readConsistency: "latest" })
         : undefined;
-      const accountId = sessionDeliveryOrigin(entry)?.accountId;
+      const accountId = binding.sourceAccountId ?? sessionDeliveryOrigin(entry)?.accountId;
       const allowed = configured.some(
         (candidate) =>
           candidate.agentId === agentId &&

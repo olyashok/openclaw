@@ -56,7 +56,10 @@ describe("Fi Slack channel publisher", () => {
         runtime: {
           channel: {
             runtimeContexts: {
-              get: () => ({ workspaceId: "T123", botUserId: "U222", readThread }),
+              get: ({ channelId }: { channelId: string }) =>
+                channelId === "slack"
+                  ? { workspaceId: "T123", botUserId: "U222", readThread }
+                  : undefined,
             },
           },
         },

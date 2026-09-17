@@ -1,0 +1,166 @@
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerSourceReplyAuthorization } from "./source-reply-authorization.js";
+
+const entry = vi.hoisted(() => vi.fn());
+vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
+  getSessionEntry: entry,
+  sessionDeliveryOrigin: (value: unknown) => value,
+}));
+
+describe("source reply authorization", () => {
+  it("recovers a legacy Matrix-continued DM only with one explicit account and exact live peer proof", async () => {
+    entry.mockReturnValue({
+      provider: "matrix",
+      accountId: "fiuserprod",
+      nativeChannelId: "!room:example.test",
+    });
+    const sessionKey = "agent:cellect-fi-user:slack:direct:u123";
+    const source = {
+      provider: "slack",
+      workspaceId: "T123",
+      channelId: "D123",
+      rootMessageId: sessionKey,
+      peerSenderId: "U123",
+    };
+    const readDirectIdentity = vi
+      .fn()
+      .mockResolvedValue({ workspaceId: "T123", channelId: "D123", peerSenderId: "U123" });
+    const bindings = [
+      { agentId: "cellect-fi-user", match: { channel: "slack", accountId: "fi-user" } },
+    ];
+    let guard:
+      | {
+          resolveSource: (params: {
+            targetSessionKey: string;
+            externalSource?: typeof source;
+          }) => Promise<{ sourceAccountId: string }>;
+        }
+      | undefined;
+    const api = {
+      config: { bindings },
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: () => ({ workspaceId: "T123", readDirectIdentity }),
+            register: (params: { context: typeof guard }) => {
+              guard = params.context;
+            },
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    registerSourceReplyAuthorization(api, () => ({
+      baseUrl: "https://fi.example.test",
+      token: "test-bridge",
+    }));
+    if (!guard) {
+      throw new Error("Expected source guard");
+    }
+    await expect(
+      guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
+    ).resolves.toMatchObject({ sourceAccountId: "fi-user" });
+    expect(readDirectIdentity).toHaveBeenCalledWith("D123", "U123");
+    await expect(guard.resolveSource({ targetSessionKey: sessionKey })).rejects.toThrow(
+      "not authorized",
+    );
+    await expect(
+      guard.resolveSource({
+        targetSessionKey: sessionKey,
+        externalSource: { ...source, peerSenderId: "U456" },
+      }),
+    ).rejects.toThrow("identity mismatch");
+    readDirectIdentity.mockRejectedValueOnce(new Error("Slack DM peer mismatch"));
+    await expect(
+      guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
+    ).rejects.toThrow("peer mismatch");
+    bindings.push({
+      agentId: "cellect-fi-user",
+      match: { channel: "slack", accountId: "other-account" },
+    });
+    await expect(
+      guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
+    ).rejects.toThrow("not authorized");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    entry.mockReset();
+  });
+  it("rechecks Slack and Fi on every send, preserving native identity after Matrix continuation", async () => {
+    const source = {
+      provider: "slack",
+      workspaceId: "T123",
+      channelId: "C123",
+      rootMessageId: "1700000000.000001",
+    };
+    const binding = {
+      targetSessionKey: "agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001",
+      sourceAccountId: "fi-admin",
+      externalSource: source,
+    };
+    entry.mockReturnValue({
+      provider: "matrix",
+      accountId: "fiuserprod",
+      nativeChannelId: "!room:example.test",
+    });
+    const readChannel = vi
+      .fn()
+      .mockResolvedValue({ workspaceId: "T123", channelId: "C123", memberSenderIds: ["U123"] });
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ allowed: true }) })
+      .mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({ allowed: false }) });
+    vi.stubGlobal("fetch", request);
+    let guard:
+      | {
+          authorize: (params: {
+            binding: typeof binding;
+            matrixRoomId: string;
+            matrixSenderId: string;
+          }) => Promise<"allowed" | "denied" | "unavailable">;
+        }
+      | undefined;
+    const api = {
+      config: {
+        bindings: [
+          { agentId: "cellect-fi-admin", match: { channel: "slack", accountId: "fi-admin" } },
+        ],
+      },
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: () => ({ workspaceId: "T123", readChannel }),
+            register: (params: { context: typeof guard }) => {
+              guard = params.context;
+            },
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    registerSourceReplyAuthorization(api, () => ({
+      baseUrl: "https://fi.example.test",
+      token: "test-bridge",
+    }));
+    if (!guard) {
+      throw new Error("Expected source guard registration");
+    }
+    const send = {
+      binding,
+      matrixRoomId: "!room:example.test",
+      matrixSenderId: "@member:example.test",
+    };
+    await expect(guard.authorize(send)).resolves.toBe("allowed");
+    await expect(guard.authorize(send)).resolves.toBe("denied");
+    expect(readChannel).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(request.mock.calls[0]?.[1].body ?? "null")).toMatchObject({
+      sessionKey: binding.targetSessionKey,
+      agentId: "cellect-fi-admin",
+      matrixSenderId: send.matrixSenderId,
+      source: { memberSenderIds: ["U123"] },
+    });
+    await expect(
+      guard.authorize({ ...send, binding: { ...binding, sourceAccountId: "other-account" } }),
+    ).rejects.toThrow("not authorized");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+});
