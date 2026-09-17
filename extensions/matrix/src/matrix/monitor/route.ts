@@ -8,6 +8,8 @@ import {
 } from "openclaw/plugin-sdk/routing";
 import { inspectSessionBindingByConversation } from "openclaw/plugin-sdk/session-binding-runtime";
 import type { CoreConfig } from "../../types.js";
+import { getSourceAuthorizedProjection } from "../projection-reply-authorization.js";
+import { toSessionBindingRecord } from "../thread-bindings-shared.js";
 import { resolveMatrixThreadSessionKeys } from "./threads.js";
 
 type MatrixResolvedRoute = ReturnType<PluginRuntime["channel"]["routing"]["resolveAgentRoute"]>;
@@ -82,8 +84,12 @@ export function resolveMatrixInboundRoute(params: {
     parentConversationId: bindingParentConversationId,
   };
   const bindingInspection = inspectSessionBindingByConversation(bindingRef);
-  const runtimeBinding =
-    bindingInspection.status === "available" ? bindingInspection.binding : null;
+  const sourceProjection = getSourceAuthorizedProjection(params.accountId, params.roomId);
+  const runtimeBinding = sourceProjection
+    ? toSessionBindingRecord(sourceProjection, { idleTimeoutMs: 0, maxAgeMs: 0 })
+    : bindingInspection.status === "available"
+      ? bindingInspection.binding
+      : null;
   const boundSessionKey = runtimeBinding?.targetSessionKey?.trim();
 
   if (runtimeBinding && boundSessionKey) {

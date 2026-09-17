@@ -1,4 +1,13 @@
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { listAllBindings } from "./thread-bindings-shared.js";
+
+export function parseProjectionBindingMetadata(value: Record<string, unknown> | undefined) {
+  return {
+    externalSource: parseProjectionExternalSource(value?.externalSource),
+    sourceReplyAuthorization: normalizeOptionalString(value?.sourceReplyAuthorization) || undefined,
+    sourceAccountId: normalizeOptionalString(value?.sourceAccountId) || undefined,
+  };
+}
 
 /** Native inventory remains available after its source session is pruned. */
 export function listReadOnlyMatrixSessionProjections() {
@@ -18,9 +27,46 @@ export function listReadOnlyMatrixSessionProjections() {
       }
       rooms.add(roomId);
       return [
-        { sessionKey: binding.targetSessionKey, roomId, externalSource: binding.externalSource },
+        {
+          sessionKey: binding.targetSessionKey,
+          roomId,
+          externalSource: binding.externalSource,
+          sourceAccountId: binding.sourceAccountId,
+        },
       ];
     });
+}
+
+/** Persisted owner facts; no session mutation or source replay. */
+export function getMatrixProjectionStatus(roomId: string, accountId?: string) {
+  if (!roomId.startsWith("!") || roomId.length > 255) {
+    throw new Error("A Matrix room id is required");
+  }
+  const bindings = listAllBindings()
+    .filter(
+      (binding) =>
+        binding.parentConversationId === roomId &&
+        (!accountId || binding.accountId === accountId) &&
+        binding.boundBy?.startsWith("session-projection"),
+    )
+    .toSorted((left, right) => right.boundAt - left.boundAt);
+  if (new Set(bindings.map((binding) => binding.accountId)).size > 1) {
+    throw new Error("Projection account is ambiguous; specify accountId");
+  }
+  const binding = bindings[0];
+  if (!binding) {
+    return { status: "missing" as const, roomId };
+  }
+  return {
+    status: "existing" as const,
+    roomId,
+    accountId: binding.accountId,
+    agentId: binding.agentId,
+    threadRootEventId: binding.conversationId,
+    targetSessionKey: binding.targetSessionKey,
+    sourceReplyAuthorization: binding.sourceReplyAuthorization,
+    externalSource: binding.externalSource,
+  };
 }
 
 export type ProjectionExternalSource = {
@@ -28,12 +74,14 @@ export type ProjectionExternalSource = {
   workspaceId: string;
   channelId: string;
   rootMessageId: string;
+  peerSenderId?: string;
 };
 
 export function resolveDetachedProjectionSource(params: {
   sourceDetached?: boolean;
   sourceDirect?: boolean;
   readOnly?: boolean;
+  sourceReplyAuthorization?: string;
   externalSource?: unknown;
   targetSessionKey: string;
 }) {
@@ -43,7 +91,7 @@ export function resolveDetachedProjectionSource(params: {
       params.targetSessionKey,
     );
     if (
-      !params.readOnly ||
+      (!params.readOnly && !params.sourceReplyAuthorization) ||
       params.sourceDirect ||
       !source ||
       source.provider !== "slack" ||
@@ -78,5 +126,6 @@ export function parseProjectionExternalSource(
     workspaceId,
     channelId,
     rootMessageId,
+    ...(field("peerSenderId") ? { peerSenderId: field("peerSenderId") } : {}),
   };
 }

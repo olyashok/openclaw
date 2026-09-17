@@ -380,31 +380,57 @@ describe("matrix thread bindings", () => {
     }
   });
 
-  it("persists provider-neutral source identity for read-only parent-session projections", async () => {
-    await createBindingManager({ idleTimeoutMs: 0, maxAgeMs: 0 });
-    const externalSource = {
-      provider: "slack",
-      workspaceId: "T123",
-      channelId: "C123",
-      rootMessageId: "1700000000.000001",
-    };
-    const binding = await getSessionBindingService().bind({
-      targetSessionKey: "agent:ops:slack:channel:c123",
-      targetKind: "session",
-      conversation: {
-        channel: "matrix",
-        accountId: "ops",
-        conversationId: "$source",
-        parentConversationId: "!source:example",
-      },
-      placement: "current",
-      metadata: { boundBy: "session-projection-read-only", externalSource },
-    });
-    expect(binding.metadata?.externalSource).toEqual(externalSource);
-    expect(await readPersistedBindings(resolveBindingsFilePath())).toMatchObject({
-      bindings: [expect.objectContaining({ externalSource })],
-    });
-  });
+  it.each([false, true])(
+    "persists provider-neutral source identity and authorization across restart (authorized=%s)",
+    async (authorized) => {
+      await createBindingManager({ idleTimeoutMs: 0, maxAgeMs: 0 });
+      const externalSource = {
+        provider: "slack",
+        workspaceId: "T123",
+        channelId: "C123",
+        rootMessageId: "1700000000.000001",
+      };
+      const binding = await getSessionBindingService().bind({
+        targetSessionKey: "agent:ops:slack:channel:c123",
+        targetKind: "session",
+        conversation: {
+          channel: "matrix",
+          accountId: "ops",
+          conversationId: "$source",
+          parentConversationId: "!source:example",
+        },
+        placement: "current",
+        metadata: {
+          boundBy: "session-projection-read-only",
+          externalSource,
+          ...(authorized
+            ? { sourceReplyAuthorization: "fi-v1", sourceAccountId: "slack-source" }
+            : {}),
+        },
+      });
+      expect(binding.metadata?.externalSource).toEqual(externalSource);
+      expect(await readPersistedBindings(resolveBindingsFilePath())).toMatchObject({
+        bindings: [
+          expect.objectContaining({
+            externalSource,
+            ...(authorized
+              ? { sourceReplyAuthorization: "fi-v1", sourceAccountId: "slack-source" }
+              : {}),
+          }),
+        ],
+      });
+      await resetThreadBindingAdapters();
+      const restarted = await createBindingManager({ idleTimeoutMs: 0, maxAgeMs: 0 });
+      expect(restarted.listBindings()).toEqual([
+        expect.objectContaining({
+          externalSource,
+          ...(authorized
+            ? { sourceReplyAuthorization: "fi-v1", sourceAccountId: "slack-source" }
+            : {}),
+        }),
+      ]);
+    },
+  );
 
   it.each([false, true])(
     "handles farewell suppression for rebased projections (%s)",
