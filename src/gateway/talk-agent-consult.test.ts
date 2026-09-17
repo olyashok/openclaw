@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   handleChatSendWithRuntimeTools: vi.fn(),
   handleTrustedInternalChatSend: vi.fn(),
   handleTrustedInternalChatSendWithRuntimeTools: vi.fn(),
-  registerRelayRun: vi.fn(() => "registered" as const),
+  registerRelayRun: vi.fn<(runId: string) => "registered" | "detached">(() => "registered"),
   prepareRelayRun: vi.fn(),
   abortChatRunById: vi.fn(),
   resolveAuthority: vi.fn(() => ({ senderIsOwner: false, toolsAllow: ["read"] })),
