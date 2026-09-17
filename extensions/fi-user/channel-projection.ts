@@ -1,5 +1,14 @@
 import { KeyedAsyncQueue, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { getSessionEntry, sessionDeliveryOrigin } from "openclaw/plugin-sdk/session-store-runtime";
+import {
+  getSessionEntry,
+  listSessionEntries,
+  sessionDeliveryOrigin,
+} from "openclaw/plugin-sdk/session-store-runtime";
+import {
+  createDetachedProjectionReconciler,
+  type ProjectionInventoryBinding,
+} from "./detached-projection.js";
+import { reconcileSlackDirectProjections } from "./direct-projection.js";
 
 type SlackSnapshot = {
   workspaceId: string;
@@ -32,9 +41,13 @@ type SlackThreadReader = {
   workspaceId: string;
   botUserId: string;
   readThread: (channelId: string, rootMessageId: string) => Promise<SlackSnapshot>;
+  readChannel: (channelId: string) => Promise<SlackChannelScope>;
+};
+type SlackChannelScope = Omit<SlackSnapshot, "rootMessageId" | "messages"> & {
+  readThread: (rootMessageId: string) => Promise<SlackSnapshot>;
 };
 
-type ChannelProjectionParams = {
+export type ChannelProjectionParams = {
   api: OpenClawPluginApi;
   sessionKey: string;
   accountId: string;
@@ -42,14 +55,29 @@ type ChannelProjectionParams = {
   baseUrl: string;
   token: string;
   reconcile?: boolean;
+  discover?: boolean;
   projectionRoomId?: string;
   signal?: AbortSignal;
   unavailable?: boolean;
+  detachedSource?: {
+    provider: "slack";
+    workspaceId: string;
+    channelId: string;
+    rootMessageId: string;
+  };
+  channelScope?: SlackChannelScope;
+  membershipOnly?: boolean;
+  onResult?: (status: "created" | "existing" | "skipped") => void;
 };
 
 export async function projectSlackChannelThread(params: ChannelProjectionParams): Promise<boolean> {
-  const match = CHANNEL_SESSION.exec(params.sessionKey);
-  const [, rawAgentId, rawChannelId, rootMessageId] = match ?? [];
+  const match = params.detachedSource
+    ? /^agent:(cellect-fi-user|cellect-fi-admin):slack:(?:channel|group):([cg][a-z0-9]+)$/i.exec(
+        params.sessionKey,
+      )
+    : CHANNEL_SESSION.exec(params.sessionKey);
+  const [, rawAgentId, rawChannelId, nativeRoot] = match ?? [];
+  const rootMessageId = params.detachedSource?.rootMessageId ?? nativeRoot;
   if (!rawAgentId || !rawChannelId || !rootMessageId) {
     return false;
   }
@@ -65,6 +93,23 @@ export async function projectSlackChannelThread(params: ChannelProjectionParams)
         accountId: params.accountId,
         capability: "thread-read-projection",
       });
+  if (params.detachedSource && !params.unavailable) {
+    const entry = getSessionEntry({
+      agentId: sourceIdentity.agentId,
+      sessionKey: params.sessionKey,
+      readConsistency: "latest",
+    });
+    const origin = sessionDeliveryOrigin(entry);
+    if (
+      !entry ||
+      origin?.accountId !== params.accountId ||
+      origin.nativeChannelId?.toUpperCase() !== sourceIdentity.channelId ||
+      params.detachedSource.channelId !== sourceIdentity.channelId ||
+      reader?.workspaceId !== params.detachedSource.workspaceId
+    ) {
+      throw new Error("Detached Slack source does not match native parent origin");
+    }
+  }
   // Serialize the read as well as delivery: an older snapshot must never arrive
   // after a newer one and delete its replies or restore revoked membership.
   return snapshotQueue.enqueue(
@@ -83,12 +128,28 @@ async function publishSlackThreadSnapshot(
   const post = async (body: unknown) => {
     const response = await fetch(`${params.baseUrl}/api/openclaw-session-projection`, {
       method: "POST",
-      signal: params.signal ?? AbortSignal.timeout(70_000),
+      signal: params.signal
+        ? AbortSignal.any([params.signal, AbortSignal.timeout(70_000)])
+        : AbortSignal.timeout(70_000),
       headers: { authorization: `Bearer ${params.token}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        ...(body as Record<string, unknown>),
+        ...(params.detachedSource ? { sourceDetached: true } : {}),
+      }),
     });
     if (!response.ok) {
       throw new Error(`Fi channel projection failed (${response.status})`);
+    }
+    if (params.onResult) {
+      const result = (await response.json()) as { status?: unknown };
+      if (
+        result.status !== "created" &&
+        result.status !== "existing" &&
+        result.status !== "skipped"
+      ) {
+        throw new Error("Invalid Fi projection response status");
+      }
+      params.onResult(result.status);
     }
   };
   let snapshot: SlackSnapshot;
@@ -96,7 +157,19 @@ async function publishSlackThreadSnapshot(
     if (!reader) {
       throw new Error("Slack thread reader unavailable for this account");
     }
-    snapshot = await reader.readThread(channelId, rootMessageId);
+    if (params.membershipOnly && params.channelScope) {
+      const { readThread: _readThread, ...source } = params.channelScope;
+      await post({
+        reconcile: true,
+        agentId,
+        sessionKey: params.sessionKey,
+        source: { ...source, rootMessageId },
+      });
+      return true;
+    }
+    snapshot = params.channelScope
+      ? await params.channelScope.readThread(rootMessageId)
+      : await reader.readThread(channelId, rootMessageId);
   } catch (error) {
     if (params.reconcile) {
       // Loss of source access removes readers, but must never be interpreted
@@ -117,6 +190,9 @@ async function publishSlackThreadSnapshot(
             : {}),
         agentId,
         sessionKey: params.sessionKey,
+        ...(params.detachedSource
+          ? { source: { ...params.detachedSource, memberSenderIds: [] } }
+          : {}),
       });
     }
     throw error;
@@ -125,6 +201,7 @@ async function publishSlackThreadSnapshot(
     params.requesterSenderId ?? snapshot.messages.find((message) => !message.bot)?.senderId;
   if (
     !params.reconcile &&
+    !params.discover &&
     (!requesterSenderId || !snapshot.memberSenderIds.includes(requesterSenderId))
   ) {
     throw new Error("Slack requester is not a current channel member");
@@ -159,9 +236,24 @@ async function publishSlackThreadSnapshot(
   if (reader && !botAgents.has(reader.botUserId)) {
     botAgents.set(reader.botUserId, new Set([agentId]));
   }
+  if (
+    params.detachedSource &&
+    !params.reconcile &&
+    !messages.some(
+      (message) =>
+        (message.bot && botAgents.get(message.senderId)?.size === 1) ||
+        [...botAgents].some(
+          ([botId, agents]) => agents.size === 1 && message.content.includes(`<@${botId}>`),
+        ),
+    )
+  ) {
+    params.onResult?.("skipped");
+    return true;
+  }
   await post({
     requesterSenderId,
     ...(params.reconcile ? { reconcile: true } : {}),
+    ...(params.discover ? { discover: true } : {}),
     agentId,
     sessionKey: params.sessionKey,
     source,
@@ -186,7 +278,7 @@ export function registerSlackChannelProjection(
   api: OpenClawPluginApi,
   connection: () => { baseUrl: string; token?: string },
 ) {
-  registerSlackProjectionReconciler(api, connection);
+  const reconciler = registerSlackProjectionReconciler(api, connection);
   api.registerGatewayMethod(
     "fi.slackProjection.sync",
     async ({ params, respond }) => {
@@ -229,12 +321,17 @@ export function registerSlackChannelProjection(
     if (!sessionKey || !token) {
       return;
     }
+    if (/^agent:[^:]+:slack:(channel|group):[cg][a-z0-9]+$/i.test(sessionKey)) {
+      reconciler.wake(sessionKey);
+      return;
+    }
     void projectSlackChannelThread({
       api,
       token,
       baseUrl,
       sessionKey,
       accountId: context.accountId,
+      discover: true,
     }).catch(() => {
       api.logger.warn("fi-user: channel projection failed after Slack delivery");
     });
@@ -249,33 +346,209 @@ export function registerSlackProjectionReconciler(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let stopped = true;
+  let running = false;
+  let wakeRequested = false;
+  let discoveryCursor = "";
+  let contentCursor = "";
+  const outcomes = new Map<string, "created" | "existing" | "skipped" | "error">();
+  let report = {
+    scanned: 0,
+    pending: 0,
+    created: 0,
+    existing: 0,
+    skipped: 0,
+    error: 0,
+    unavailable: 0,
+    historyDiscoveryPending: 0,
+    complete: false,
+  };
+  let directReport = { scanned: 0, created: 0, existing: 0, skipped: 0, error: 0 };
+  let detachedReport = {
+    channels: 0,
+    pending: 0,
+    unavailable: 0,
+    error: 0,
+    created: 0,
+    existing: 0,
+    skipped: 0,
+  };
+  const reconcileDetached = createDetachedProjectionReconciler(api, projectSlackChannelThread);
+  api.registerGatewayMethod(
+    "fi.slackProjection.status",
+    async ({ respond }) => {
+      respond(true, { ...report, direct: directReport, detached: detachedReport });
+    },
+    { scope: "operator.admin" },
+  );
   const reconcile = async () => {
     const generation = controller;
-    if (!generation) {
+    if (!generation || running) {
       return;
     }
+    running = true;
     try {
+      report = { ...report, complete: false };
       const config = connection();
       if (!config.token) {
         return;
       }
       const inventory = api.runtime.channel.runtimeContexts.get<{
-        list: () => Promise<Array<{ sessionKey: string; roomId: string }>>;
+        list: () => Promise<ProjectionInventoryBinding[]>;
       }>({ channelId: "matrix", capability: "session-read-projections" });
       if (!inventory) {
         throw new Error("Matrix projection inventory unavailable");
       }
-      for (const { sessionKey, roomId } of await inventory.list()) {
-        if (stopped || controller !== generation) {
-          return;
-        }
-        const agentId = CHANNEL_SESSION.exec(sessionKey)?.[1];
-        if (!agentId) {
+      const bindings = await inventory.list();
+      const runtimeConfig = api.runtime.config?.current?.() ?? api.config;
+      const configuredBindings = (runtimeConfig?.bindings ?? []).filter(
+        (binding) =>
+          binding.match.channel === "slack" &&
+          Boolean(binding.match.accountId && binding.match.accountId !== "*") &&
+          ["cellect-fi-user", "cellect-fi-admin"].includes(binding.agentId),
+      );
+      const resolveAccount = (agentId: string, channelId: string, stored?: string) => {
+        const accounts = new Set(
+          configuredBindings
+            .filter(
+              (binding) =>
+                binding.agentId === agentId &&
+                (!binding.match.peer ||
+                  binding.match.peer.id.toUpperCase() === channelId.toUpperCase()),
+            )
+            .map((binding) => binding.match.accountId),
+        );
+        return stored && accounts.has(stored)
+          ? stored
+          : accounts.size === 1
+            ? [...accounts][0]
+            : undefined;
+      };
+      const discovered = new Map<string, { sessionKey: string; accountId: string }>();
+      const knownRoots = new Set<string>();
+      const unavailableSessions = new Set<string>();
+      const rootIdentity = (sessionKey: string, accountId: string) => {
+        const match = CHANNEL_SESSION.exec(sessionKey);
+        const reader = api.runtime.channel.runtimeContexts.get<SlackThreadReader>({
+          channelId: "slack",
+          accountId,
+          capability: "thread-read-projection",
+        });
+        return match && reader
+          ? `${reader.workspaceId}:${match[2]?.toUpperCase()}:${match[3]}`
+          : undefined;
+      };
+      for (const { sessionKey } of bindings) {
+        const [, agentId, channelId] = CHANNEL_SESSION.exec(sessionKey) ?? [];
+        if (!agentId || !channelId) {
           continue;
         }
         const entry = getSessionEntry({ agentId, sessionKey, readConsistency: "latest" });
-        const accountId = sessionDeliveryOrigin(entry)?.accountId;
+        const accountId = resolveAccount(
+          agentId,
+          channelId,
+          sessionDeliveryOrigin(entry)?.accountId,
+        );
+        const identity = accountId && rootIdentity(sessionKey, accountId);
+        if (identity) {
+          knownRoots.add(identity);
+        } else {
+          unavailableSessions.add(sessionKey);
+        }
+      }
+      for (const agentId of new Set(configuredBindings.map((binding) => binding.agentId))) {
+        for (const { sessionKey, entry } of listSessionEntries({ agentId, readOnly: true })) {
+          const [, sourceAgentId, channelId] = CHANNEL_SESSION.exec(sessionKey) ?? [];
+          if (sourceAgentId !== agentId || !channelId) {
+            continue;
+          }
+          const accountId = resolveAccount(
+            agentId,
+            channelId,
+            sessionDeliveryOrigin(entry)?.accountId,
+          );
+          if (!accountId) {
+            unavailableSessions.add(sessionKey);
+            continue;
+          }
+          const identity = rootIdentity(sessionKey, accountId);
+          if (identity && !knownRoots.has(identity) && !discovered.has(identity)) {
+            discovered.set(identity, { sessionKey, accountId });
+          } else if (!identity) {
+            unavailableSessions.add(sessionKey);
+          }
+        }
+      }
+      // Restart re-enumerates durable sessions. Only scheduling position is transient;
+      // Fi/source identity makes replay idempotent and opt-outs remain authoritative.
+      const keys = [...discovered.keys()].toSorted();
+      const ordered = [
+        ...keys.filter((key) => key > discoveryCursor),
+        ...keys.filter((key) => key <= discoveryCursor),
+      ];
+      const batch = ordered.slice(0, 10).flatMap((key) => {
+        const candidate = discovered.get(key);
+        if (!candidate) {
+          return [];
+        }
+        discoveryCursor = key;
+        return [{ ...candidate, roomId: undefined }];
+      });
+      const contentKeys = bindings
+        .filter((binding) => CHANNEL_SESSION.test(binding.sessionKey))
+        .map((binding) => binding.sessionKey)
+        .toSorted();
+      const contentBatch = new Set(
+        [
+          ...contentKeys.filter((key) => key > contentCursor),
+          ...contentKeys.filter((key) => key <= contentCursor),
+        ].slice(0, 10),
+      );
+      contentCursor = [...contentBatch].at(-1) ?? contentCursor;
+      const channelScopes = new Map<
+        string,
+        { createdAt: number; scope: Promise<SlackChannelScope> }
+      >();
+      const projects = [...bindings, ...batch];
+      // ACLs are reconciled for every existing room, but source history is bounded
+      // separately. Sharing one roster per channel avoids N Slack member reads.
+      for (const { sessionKey, roomId } of projects) {
+        if (stopped || controller !== generation) {
+          return;
+        }
+        const [, agentId, channelId] = CHANNEL_SESSION.exec(sessionKey) ?? [];
+        if (!agentId || !channelId) {
+          continue;
+        }
+        const entry = getSessionEntry({ agentId, sessionKey, readConsistency: "latest" });
+        const accountId = resolveAccount(
+          agentId,
+          channelId,
+          sessionDeliveryOrigin(entry)?.accountId,
+        );
+        const identity = accountId && rootIdentity(sessionKey, accountId);
+        let enteredPublisher = false;
         try {
+          let channelScope: SlackChannelScope | undefined;
+          if (entry && accountId) {
+            const reader = api.runtime.channel.runtimeContexts.get<SlackThreadReader>({
+              channelId: "slack",
+              accountId,
+              capability: "thread-read-projection",
+            });
+            if (reader) {
+              const scopeKey = `${accountId}:${reader.workspaceId}:${channelId.toUpperCase()}`;
+              let cached = channelScopes.get(scopeKey);
+              if (!cached || Date.now() - cached.createdAt > 20_000) {
+                cached = {
+                  createdAt: Date.now(),
+                  scope: reader.readChannel(channelId.toUpperCase()),
+                };
+                channelScopes.set(scopeKey, cached);
+              }
+              channelScope = await cached.scope;
+            }
+          }
+          enteredPublisher = true;
           await projectSlackChannelThread({
             api,
             ...config,
@@ -283,11 +556,39 @@ export function registerSlackProjectionReconciler(
             sessionKey,
             accountId: accountId ?? "unavailable",
             unavailable: !entry || !accountId,
-            reconcile: true,
+            reconcile: Boolean(roomId),
+            discover: !roomId,
             projectionRoomId: roomId,
+            channelScope,
+            membershipOnly: Boolean(roomId) && !contentBatch.has(sessionKey),
+            onResult: (status) => {
+              if (identity) {
+                outcomes.set(identity, status);
+              }
+            },
             signal: AbortSignal.any([generation.signal, AbortSignal.timeout(90_000)]),
           });
         } catch (error) {
+          if (identity) {
+            outcomes.set(identity, "error");
+          }
+          if (roomId && !enteredPublisher) {
+            await projectSlackChannelThread({
+              api,
+              ...config,
+              token: config.token,
+              sessionKey,
+              accountId: accountId ?? "unavailable",
+              unavailable: true,
+              reconcile: true,
+              projectionRoomId: roomId,
+              signal: AbortSignal.any([generation.signal, AbortSignal.timeout(70_000)]),
+            }).catch(() => {
+              api.logger.warn(
+                `fi-user: failed to revoke unavailable projection session=${sessionKey}`,
+              );
+            });
+          }
           const detail =
             error instanceof Error
               ? error.message
@@ -300,11 +601,59 @@ export function registerSlackProjectionReconciler(
           );
         }
       }
+      const candidates = new Set([...knownRoots, ...discovered.keys()]);
+      for (const identity of outcomes.keys()) {
+        if (!candidates.has(identity)) {
+          outcomes.delete(identity);
+        }
+      }
+      const counts = { created: 0, existing: 0, skipped: 0, error: 0 };
+      for (const identity of candidates) {
+        const outcome = outcomes.get(identity);
+        if (outcome) {
+          counts[outcome]++;
+        }
+      }
+      const pending =
+        [...candidates].filter((identity) => !outcomes.has(identity)).length +
+        unavailableSessions.size;
+      // Existing channel ACLs run first; slower historical/direct hydration cannot delay them.
+      detachedReport = await reconcileDetached.reconcile(
+        { ...config, token: config.token },
+        bindings,
+        generation.signal,
+        knownRoots,
+      );
+      directReport = await reconcileSlackDirectProjections(
+        api,
+        { ...config, token: config.token },
+        bindings,
+        generation.signal,
+      );
+      report = {
+        scanned: candidates.size,
+        pending,
+        ...counts,
+        unavailable: unavailableSessions.size,
+        historyDiscoveryPending: detachedReport.pending,
+        complete:
+          pending === 0 &&
+          counts.error === 0 &&
+          unavailableSessions.size === 0 &&
+          directReport.error === 0 &&
+          detachedReport.pending === 0 &&
+          detachedReport.error === 0 &&
+          detachedReport.unavailable === 0,
+      };
+      api.logger.info(`fi-user: Slack discovery ${JSON.stringify(report)}`);
     } catch {
+      report = { ...report, complete: false, error: report.error + 1 };
       api.logger.warn("fi-user: Slack projection reconciliation scan failed");
     } finally {
+      running = false;
       if (!stopped && controller === generation) {
-        timer = setTimeout(() => void reconcile(), 60_000);
+        timer = setTimeout(() => void reconcile(), wakeRequested ? 1_000 : 60_000);
+        wakeRequested = false;
         timer.unref();
       }
     }
@@ -329,4 +678,21 @@ export function registerSlackProjectionReconciler(
       controller = undefined;
     },
   });
+  return {
+    wake: (sessionKey: string) => {
+      reconcileDetached.invalidate(sessionKey);
+      if (stopped) {
+        return;
+      }
+      if (running) {
+        wakeRequested = true;
+        return;
+      }
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => void reconcile(), 1_000);
+      timer.unref();
+    },
+  };
 }
