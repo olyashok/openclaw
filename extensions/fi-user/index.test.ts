@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AnyAgentTool, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import type {
+  AnyAgentTool,
+  OpenClawPluginToolContext,
+  OpenClawPluginApi,
+} from "openclaw/plugin-sdk/core";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -40,6 +44,9 @@ function registeredTools(context: OpenClawPluginToolContext): AnyAgentTool[] {
       id: "fi-user",
       name: "Fi User Delegation",
       config: runtimeConfig,
+      runtime: {
+        channel: { runtimeContexts: { register: vi.fn() } },
+      } as unknown as OpenClawPluginApi["runtime"],
       registerTool: (tool) => registrations.push(tool as AnyAgentTool | ToolFactory),
     }),
   );
@@ -58,6 +65,9 @@ function registeredMessageReceivedHook(config = runtimeConfig) {
       id: "fi-user",
       name: "Fi User Delegation",
       config,
+      runtime: {
+        channel: { runtimeContexts: { register: vi.fn() } },
+      } as unknown as OpenClawPluginApi["runtime"],
       on: (name, handler) => {
         if (name === "message_received") {
           hooks.push(handler as (event: never, context: never) => Promise<void> | void);

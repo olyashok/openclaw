@@ -6,9 +6,13 @@ import {
 } from "openclaw/plugin-sdk/session-store-runtime";
 import {
   createDetachedProjectionReconciler,
+  verifyDetachedProjectionOrigin,
   type ProjectionInventoryBinding,
 } from "./detached-projection.js";
-import { reconcileSlackDirectProjections } from "./direct-projection.js";
+import {
+  reconcileSlackDirectProjections,
+  recoverSlackDirectProjection,
+} from "./direct-projection.js";
 
 type SlackSnapshot = {
   workspaceId: string;
@@ -94,21 +98,7 @@ export async function projectSlackChannelThread(params: ChannelProjectionParams)
         capability: "thread-read-projection",
       });
   if (params.detachedSource && !params.unavailable) {
-    const entry = getSessionEntry({
-      agentId: sourceIdentity.agentId,
-      sessionKey: params.sessionKey,
-      readConsistency: "latest",
-    });
-    const origin = sessionDeliveryOrigin(entry);
-    if (
-      !entry ||
-      origin?.accountId !== params.accountId ||
-      origin.nativeChannelId?.toUpperCase() !== sourceIdentity.channelId ||
-      params.detachedSource.channelId !== sourceIdentity.channelId ||
-      reader?.workspaceId !== params.detachedSource.workspaceId
-    ) {
-      throw new Error("Detached Slack source does not match native parent origin");
-    }
+    await verifyDetachedProjectionOrigin(params, sourceIdentity, reader?.workspaceId);
   }
   // Serialize the read as well as delivery: an older snapshot must never arrive
   // after a newer one and delete its replies or restore revoked membership.
@@ -284,6 +274,18 @@ export function registerSlackChannelProjection(
     async ({ params, respond }) => {
       const { baseUrl, token } = connection();
       try {
+        if (token && typeof params?.sessionKey === "string" && params.directSource) {
+          respond(
+            true,
+            await recoverSlackDirectProjection(
+              api,
+              { baseUrl, token },
+              params.sessionKey,
+              params.directSource,
+            ),
+          );
+          return;
+        }
         if (
           !token ||
           typeof params?.sessionKey !== "string" ||
@@ -406,7 +408,12 @@ export function registerSlackProjectionReconciler(
           Boolean(binding.match.accountId && binding.match.accountId !== "*") &&
           ["cellect-fi-user", "cellect-fi-admin"].includes(binding.agentId),
       );
-      const resolveAccount = (agentId: string, channelId: string, stored?: string) => {
+      const resolveAccount = (
+        agentId: string,
+        channelId: string,
+        sessionKey: string,
+        stored?: string,
+      ) => {
         const accounts = new Set(
           configuredBindings
             .filter(
@@ -417,6 +424,12 @@ export function registerSlackProjectionReconciler(
             )
             .map((binding) => binding.match.accountId),
         );
+        const durable = bindings.find(
+          (binding) => binding.sessionKey === sessionKey,
+        )?.sourceAccountId;
+        if (durable) {
+          return accounts.has(durable) ? durable : undefined;
+        }
         return stored && accounts.has(stored)
           ? stored
           : accounts.size === 1
@@ -446,6 +459,7 @@ export function registerSlackProjectionReconciler(
         const accountId = resolveAccount(
           agentId,
           channelId,
+          sessionKey,
           sessionDeliveryOrigin(entry)?.accountId,
         );
         const identity = accountId && rootIdentity(sessionKey, accountId);
@@ -464,6 +478,7 @@ export function registerSlackProjectionReconciler(
           const accountId = resolveAccount(
             agentId,
             channelId,
+            sessionKey,
             sessionDeliveryOrigin(entry)?.accountId,
           );
           if (!accountId) {
@@ -523,6 +538,7 @@ export function registerSlackProjectionReconciler(
         const accountId = resolveAccount(
           agentId,
           channelId,
+          sessionKey,
           sessionDeliveryOrigin(entry)?.accountId,
         );
         const identity = accountId && rootIdentity(sessionKey, accountId);

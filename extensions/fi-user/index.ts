@@ -19,6 +19,7 @@ import {
   type SlackProjectionMessage,
   type SlackProjectionContext,
 } from "./channel-projection.js";
+import { registerSourceReplyAuthorization } from "./source-reply-authorization.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 512 * 1024;
@@ -586,9 +587,11 @@ async function delegatedFetch(
   pathname: string,
   init: RequestInit = {},
 ) {
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${delegation.fi.token}`);
   return fetch(`${config.baseUrl}${pathname}`, {
     ...init,
-    headers: { authorization: `Bearer ${delegation.fi.token}`, ...init.headers },
+    headers,
   });
 }
 
@@ -715,10 +718,12 @@ export default definePluginEntry({
   name: "Fi User Delegation",
   description: "Requester-bound Gmail, Google Drive, and Fi data-room operations",
   register(api) {
-    registerSlackChannelProjection(api, () => {
+    const projectionConnection = () => {
       const config = configFromRuntime(api);
       return { baseUrl: config.baseUrl, token: brokerToken(config) };
-    });
+    };
+    registerSourceReplyAuthorization(api, projectionConnection);
+    registerSlackChannelProjection(api, projectionConnection);
     api.on("message_received", async (event, context) => {
       // Keep source-channel delivery independent of Fi/Matrix latency.
       void projectVerifiedSlackMessage(api, event, context);
