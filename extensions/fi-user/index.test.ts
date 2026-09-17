@@ -188,7 +188,7 @@ describe("Fi user requester-bound Google Drive", () => {
     );
   });
 
-  it("never projects Slack channels or another agent's session", async () => {
+  it("never projects an unthreaded channel or another agent's DM", async () => {
     const hook = registeredMessageReceivedHook();
     await hook(
       {

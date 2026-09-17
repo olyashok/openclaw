@@ -41,6 +41,19 @@ vi.mock("./accounts.js", () => ({
 vi.mock("./send.js", () => ({ sendMessageMatrix: mocks.sendMessageMatrix }));
 vi.mock("./thread-bindings-shared.js", () => ({
   getMatrixThreadBindingManager: mocks.getThreadBindingManager,
+  toSessionBindingRecord: (record: {
+    conversationId: string;
+    parentConversationId: string;
+    boundBy: string;
+  }) => ({
+    ...projectionBinding,
+    conversation: {
+      ...projectionBinding.conversation,
+      conversationId: record.conversationId,
+      parentConversationId: record.parentConversationId,
+    },
+    metadata: { boundBy: record.boundBy },
+  }),
 }));
 
 const cfg = {} as never;
@@ -119,6 +132,52 @@ describe("Matrix session projection", () => {
     expect(mocks.sendMessageMatrix).not.toHaveBeenCalled();
   });
 
+  it("keeps channel mirrors read-only and delivers only source-identified snapshots", async () => {
+    const binding = { ...projectionBinding, metadata: { boundBy: "session-projection-read-only" } };
+    mocks.bind.mockResolvedValue(binding);
+    await createMatrixSessionProjection({
+      cfg,
+      targetSessionKey: sessionKey,
+      roomId: "!room",
+      readOnly: true,
+      initialMessage: {
+        sourceChannel: "slack",
+        role: "assistant",
+        senderId: "U123",
+        agentId: "agent-example",
+        content: "Source answer",
+        messageId: "snapshot-1",
+      },
+    });
+    expect(mocks.bind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ boundBy: "session-projection-read-only" }),
+      }),
+    );
+    expect(mocks.sendMessageMatrix).toHaveBeenCalledWith(
+      "room:!room",
+      "**Slack · agent-example**\nSource answer",
+      expect.objectContaining({
+        extraContent: {
+          [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: expect.objectContaining({
+            role: "assistant",
+            senderId: "U123",
+            agentId: "agent-example",
+            messageId: "snapshot-1",
+          }),
+        },
+      }),
+    );
+    mocks.sendMessageMatrix.mockClear();
+    mocks.listBySession.mockReturnValue([binding]);
+    await handleMatrixSessionProjectionReplyPayloadSending(
+      { kind: "final", payload: { text: "Source answer" }, sessionKey, runId: "run-other" },
+      { channelId: "slack" },
+      cfg,
+    );
+    expect(mocks.sendMessageMatrix).not.toHaveBeenCalled();
+  });
+
   it("reads an existing projection without touching or replaying it", () => {
     mocks.listBySession.mockReturnValue([projectionBinding]);
     expect(
@@ -163,6 +222,38 @@ describe("Matrix session projection", () => {
       createMatrixSessionProjection({ cfg, targetSessionKey: sessionKey, roomId: "!room" }),
     ).resolves.toMatchObject({ status: "existing", threadRootEventId: "$root" });
     expect(mocks.bind).not.toHaveBeenCalled();
+  });
+  it("shares one canonical read-only room root across concurrent agent sessions", async () => {
+    const records: Array<{
+      conversationId: string;
+      parentConversationId: string;
+      boundBy: string;
+    }> = [];
+    mocks.getThreadBindingManager.mockReturnValue({ listBindings: () => records });
+    mocks.bind.mockImplementation(async () => {
+      records.push({
+        conversationId: "$root",
+        parentConversationId: "!room",
+        boundBy: "session-projection-read-only",
+      });
+      return { ...projectionBinding, metadata: { boundBy: "session-projection-read-only" } };
+    });
+    const results = await Promise.all([
+      createMatrixSessionProjection({
+        cfg,
+        targetSessionKey: sessionKey,
+        roomId: "!room",
+        readOnly: true,
+      }),
+      createMatrixSessionProjection({
+        cfg,
+        targetSessionKey: sessionKey.replace("cellect-fi-user", "cellect-fi-admin"),
+        roomId: "!room",
+        readOnly: true,
+      }),
+    ]);
+    expect(mocks.bind).toHaveBeenCalledTimes(1);
+    expect(results.map((result) => result.threadRootEventId)).toEqual(["$root", "$root"]);
   });
 
   it("projects the triggering source message as part of binding creation", async () => {

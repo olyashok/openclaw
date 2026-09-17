@@ -13,6 +13,12 @@ import { extractDocumentContent } from "openclaw/plugin-sdk/document-extractor";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { jsonResult, type AgentToolResult } from "openclaw/plugin-sdk/tool-results";
 import { Type } from "typebox";
+import {
+  projectSlackChannelThread,
+  registerSlackChannelProjection,
+  type SlackProjectionMessage,
+  type SlackProjectionContext,
+} from "./channel-projection.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 512 * 1024;
@@ -37,8 +43,6 @@ const FI_USER_AGENT_ID = "cellect-fi-user";
 const DIRECT_SLACK_SESSION = /^agent:cellect-fi-user:slack:direct:[^\s]{1,480}$/;
 const SLACK_USER_ID = /^U[A-Z0-9]{8,}$/i;
 const ENVIRONMENT_VARIABLE_NAME = /^[A-Z_][A-Z0-9_]*$/;
-const projectedDirectSessions = new Set<string>();
-const MAX_PROJECTED_DIRECT_SESSIONS = 10_000;
 
 function configFromRuntime(api: OpenClawPluginApi): Required<PluginConfig> {
   const cfg = api.runtime.config?.current?.() ?? api.config;
@@ -85,47 +89,42 @@ function brokerToken(config: Required<PluginConfig>): string | undefined {
 }
 
 /**
- * Mirror only an active member's canonical Slack DM session into the private
- * Matrix room Fi provisions for that exact member. This is best-effort
+ * Mirror verified Slack DMs and explicitly mapped channel threads into the
+ * Matrix room Fi authorizes for their readers. This is best-effort
  * secondary delivery: an unavailable Fi or Matrix path never delays Slack.
  */
-async function projectVerifiedDirectSlackMessage(
+async function projectVerifiedSlackMessage(
   api: OpenClawPluginApi,
-  event: {
-    content: string;
-    sessionKey?: string;
-    messageId?: string;
-    runId?: string;
-    senderId?: string;
-  },
-  context: {
-    channelId: string;
-    sessionKey?: string;
-    messageId?: string;
-    runId?: string;
-    senderId?: string;
-  },
+  event: SlackProjectionMessage,
+  context: SlackProjectionContext,
 ): Promise<void> {
   const sessionKey = event.sessionKey ?? context.sessionKey;
   const senderId = (event.senderId ?? context.senderId ?? "").trim().toUpperCase();
-  if (
-    context.channelId !== "slack" ||
-    !sessionKey ||
-    !DIRECT_SLACK_SESSION.test(sessionKey) ||
-    !SLACK_USER_ID.test(senderId) ||
-    projectedDirectSessions.has(sessionKey)
-  ) {
+  if (context.channelId !== "slack" || !sessionKey || !SLACK_USER_ID.test(senderId)) {
     return;
   }
 
   const config = configFromRuntime(api);
   const token = brokerToken(config);
   if (!token) {
-    api.logger.warn("fi-user: direct-session projection skipped; broker is not configured");
+    api.logger.warn("fi-user: Slack projection skipped; broker is not configured");
     return;
   }
 
   try {
+    if (!DIRECT_SLACK_SESSION.test(sessionKey)) {
+      if (context.accountId) {
+        await projectSlackChannelThread({
+          api,
+          sessionKey,
+          accountId: context.accountId,
+          requesterSenderId: senderId,
+          baseUrl: config.baseUrl,
+          token,
+        });
+      }
+      return;
+    }
     const response = await fetch(`${config.baseUrl}/api/openclaw-session-projection`, {
       method: "POST",
       headers: {
@@ -146,17 +145,11 @@ async function projectVerifiedDirectSlackMessage(
     // A caller without an active Fi membership simply has no Matrix mirror.
     // A Matrix-disabled environment likewise stays quiet.
     if (response.ok || response.status === 404 || response.status === 409) {
-      if (response.ok) {
-        if (projectedDirectSessions.size >= MAX_PROJECTED_DIRECT_SESSIONS) {
-          projectedDirectSessions.clear();
-        }
-        projectedDirectSessions.add(sessionKey);
-      }
       return;
     }
-    api.logger.warn(`fi-user: direct-session projection failed (${response.status})`);
+    api.logger.warn(`fi-user: Slack projection failed (${response.status})`);
   } catch {
-    api.logger.warn("fi-user: direct-session projection failed");
+    api.logger.warn("fi-user: Slack projection failed");
   }
 }
 
@@ -722,9 +715,13 @@ export default definePluginEntry({
   name: "Fi User Delegation",
   description: "Requester-bound Gmail, Google Drive, and Fi data-room operations",
   register(api) {
+    registerSlackChannelProjection(api, () => {
+      const config = configFromRuntime(api);
+      return { baseUrl: config.baseUrl, token: brokerToken(config) };
+    });
     api.on("message_received", async (event, context) => {
       // Keep source-channel delivery independent of Fi/Matrix latency.
-      void projectVerifiedDirectSlackMessage(api, event, context);
+      void projectVerifiedSlackMessage(api, event, context);
     });
     api.registerTool((context: OpenClawPluginToolContext) => {
       if (

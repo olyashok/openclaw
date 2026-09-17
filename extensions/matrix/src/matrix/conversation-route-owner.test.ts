@@ -11,6 +11,7 @@ import {
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveMatrixConversationRouteOwner } from "./conversation-route-owner.js";
+import { setBindingRecord, removeBindingRecord } from "./thread-bindings-shared.js";
 
 describe("resolveMatrixConversationRouteOwner", () => {
   let adapter: SessionBindingAdapter;
@@ -86,5 +87,32 @@ describe("resolveMatrixConversationRouteOwner", () => {
         conversation: { kind: "channel", peerId: "!room:example.org" },
       }),
     ).toEqual({ kind: "unavailable" });
+  });
+
+  it("denies both room and thread continuation for a read-only Slack projection", () => {
+    const binding = {
+      accountId: "default",
+      conversationId: "$projection",
+      parentConversationId: "!projected:example.org",
+      targetKind: "acp" as const,
+      targetSessionKey: "agent:finance:slack:channel:c123:thread:1.000001",
+      boundBy: "session-projection-read-only",
+      boundAt: 1,
+      lastActivityAt: 1,
+    };
+    setBindingRecord(binding);
+    try {
+      for (const threadId of [undefined, "$projection"]) {
+        expect(
+          resolveMatrixConversationRouteOwner({
+            cfg: {},
+            accountId: "default",
+            conversation: { kind: "channel", peerId: "!projected:example.org", threadId },
+          }),
+        ).toEqual({ kind: "unavailable" });
+      }
+    } finally {
+      removeBindingRecord(binding);
+    }
   });
 });

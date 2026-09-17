@@ -99,6 +99,7 @@ import {
 } from "./reconnect-policy.js";
 import { setSlackDefaultSendIdentity } from "./send.runtime.js";
 import { registerSlackMonitorSlashCommands } from "./slash.js";
+import { readSlackThreadSnapshot } from "./thread-snapshot.js";
 import type { MonitorSlackOpts } from "./types.js";
 
 let slackBoltInterop: SlackBoltResolvedExports | undefined;
@@ -876,6 +877,27 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
   }
 
   async function installSlackRuntimeForIdentity(identity: SlackInstallationIdentity) {
+    if (identity.kind === "workspace") {
+      const readClient = createSlackWebClient(account.userToken || token, {
+        ...clientOptions,
+        timeout: 10_000,
+        retryConfig: { retries: 0 },
+        rejectRateLimitedCalls: true,
+      });
+      registerChannelRuntimeContext({
+        channelRuntime: opts.channelRuntime,
+        channelId: "slack",
+        accountId: account.accountId,
+        capability: "thread-read-projection",
+        context: {
+          workspaceId: identity.teamId,
+          botUserId: ctx.botUserId,
+          readThread: (channelId: string, rootMessageId: string) =>
+            readSlackThreadSnapshot(readClient, identity.teamId, channelId, rootMessageId),
+        },
+        abortSignal: opts.abortSignal,
+      });
+    }
     installSlackApprovalRuntime(identity);
     installSlackPresenceRuntime(identity);
     if (identity.kind === "workspace") {
