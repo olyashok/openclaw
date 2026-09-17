@@ -8,6 +8,11 @@ export type RealtimeVoiceProviderId = string;
 
 export type RealtimeVoiceRole = "user" | "assistant";
 
+export type RealtimeVoiceTranscriptUpdate = {
+  itemId?: string;
+  textMode: "delta" | "snapshot";
+};
+
 export type RealtimeVoiceCloseReason = "completed" | "error";
 
 export type RealtimeVoiceAudioFormat =
@@ -175,7 +180,12 @@ export type RealtimeVoiceBridgeCallbacks = {
   onAudio: (audio: Buffer) => void;
   onClearAudio: (reason?: RealtimeVoiceAudioClearReason) => void;
   onMark?: (markName: string) => void;
-  onTranscript?: (role: RealtimeVoiceRole, text: string, isFinal: boolean) => void;
+  onTranscript?: (
+    role: RealtimeVoiceRole,
+    text: string,
+    isFinal: boolean,
+    update?: RealtimeVoiceTranscriptUpdate,
+  ) => void;
   onEvent?: (event: RealtimeVoiceBridgeEvent) => void;
   onResponseDone?: (outcome: RealtimeVoiceResponseOutcome) => void;
   onToolCall?: (event: RealtimeVoiceToolCallEvent) => void;

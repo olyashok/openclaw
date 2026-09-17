@@ -320,6 +320,13 @@ export function createTalkRealtimeRelaySession(
       if (event.type === "session.created") {
         continuityResetActive = false;
       }
+      if (event.type === "input_audio_buffer.speech_started" && event.itemId) {
+        broadcastToOwner(params.context, params.connId, {
+          relaySessionId,
+          type: "inputAudioStart",
+          itemId: event.itemId,
+        });
+      }
       if (
         (event.type === "response.done" || event.type === "response.cancelled") &&
         outputOwnership.finish(event.responseId, true) === "cancelled"
@@ -390,7 +397,7 @@ export function createTalkRealtimeRelaySession(
         });
       }
     },
-    onTranscript: (role, text, final) => {
+    onTranscript: (role, text, final, update) => {
       const relay = getActiveRelay();
       if (!relay) {
         return;
@@ -416,7 +423,7 @@ export function createTalkRealtimeRelaySession(
             : "transcript.delta";
       const payload = role === "assistant" ? { text } : { role, text };
       emit(
-        { relaySessionId, type: "transcript", role, text, final },
+        { relaySessionId, type: "transcript", role, text, final, ...update },
         {
           type: eventType,
           turnId,

@@ -12,6 +12,7 @@ import type {
   RealtimeVoiceProviderConfig,
   RealtimeVoiceResponseOutcome,
   RealtimeVoiceRole,
+  RealtimeVoiceTranscriptUpdate,
   RealtimeVoiceTool,
   RealtimeVoiceToolCallEvent,
   RealtimeVoiceToolResultOptions,
@@ -71,7 +72,12 @@ export type RealtimeVoiceBridgeSessionParams = {
   markStrategy?: RealtimeVoiceMarkStrategy;
   triggerGreetingOnReady?: boolean;
   tools?: RealtimeVoiceTool[];
-  onTranscript?: (role: RealtimeVoiceRole, text: string, isFinal: boolean) => void;
+  onTranscript?: (
+    role: RealtimeVoiceRole,
+    text: string,
+    isFinal: boolean,
+    update?: RealtimeVoiceTranscriptUpdate,
+  ) => void;
   onEvent?: (event: RealtimeVoiceBridgeEvent) => void;
   onResponseDone?: (outcome: RealtimeVoiceResponseOutcome) => void;
   onToolCall?: (

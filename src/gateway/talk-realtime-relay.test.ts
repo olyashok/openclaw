@@ -2995,6 +2995,46 @@ describe("talk realtime gateway relay", () => {
     expect(broadcastToConnIds).not.toHaveBeenCalled();
   });
 
+  it("forwards input transcript item identity and delta semantics through the session harness", () => {
+    let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
+    const provider = createIdleRelayProvider();
+    provider.createBridge = (request) => {
+      bridgeRequest = request;
+      return makeRelayTransport();
+    };
+    const broadcastToConnIds = vi.fn();
+    createTalkRealtimeRelaySession({
+      context: { broadcastToConnIds } as never,
+      connId: "conn-1",
+      provider,
+      providerConfig: {},
+      instructions: "brief",
+      tools: [],
+    });
+    bridgeRequest?.onEvent?.({
+      direction: "server",
+      type: "input_audio_buffer.speech_started",
+      itemId: "input-1",
+    });
+    bridgeRequest?.onTranscript?.("user", "cription", false, {
+      itemId: "input-1",
+      textMode: "delta",
+    });
+    expect(broadcastToConnIds.mock.calls.map(([, payload]) => payload)).toContainEqual(
+      expect.objectContaining({
+        type: "transcript",
+        role: "user",
+        text: "cription",
+        final: false,
+        itemId: "input-1",
+        textMode: "delta",
+      }),
+    );
+    expect(broadcastToConnIds.mock.calls.map(([, payload]) => payload)).toContainEqual(
+      expect.objectContaining({ type: "inputAudioStart", itemId: "input-1" }),
+    );
+  });
+
   it("keeps the completed response owner for terminal tool callbacks", () => {
     let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
     const provider = createIdleRelayProvider();

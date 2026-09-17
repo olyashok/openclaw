@@ -156,7 +156,7 @@ function buildOpenAIRealtimeBrowserSessionConfig(
             ? { silence_duration_ms: req.silenceDurationMs ?? config.silenceDurationMs }
             : {}),
         },
-        transcription: { model: OPENAI_REALTIME_INPUT_TRANSCRIPTION_MODEL },
+        transcription: { model: OPENAI_REALTIME_INPUT_TRANSCRIPTION_MODEL, delay: "low" },
       },
       output: { voice },
     },

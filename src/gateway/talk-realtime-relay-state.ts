@@ -11,6 +11,7 @@ import type {
   RealtimeVoiceProviderConfig,
   RealtimeVoiceTool,
   RealtimeVoiceToolResultOptions,
+  RealtimeVoiceTranscriptUpdate,
 } from "../talk/provider-types.js";
 import type { RealtimeVoiceSessionHarness } from "../talk/realtime-session-harness.js";
 import type { RealtimeVoiceBridgeSession } from "../talk/session-runtime.js";
@@ -31,6 +32,7 @@ export const noFallbackRelayOutputFlush = () => {};
 export type TalkRealtimeRelayEventPayload =
   | { relaySessionId: string; type: "ready" }
   | { relaySessionId: string; type: "inputAudio"; byteLength: number }
+  | { relaySessionId: string; type: "inputAudioStart"; itemId: string }
   | {
       relaySessionId: string;
       type: "audio";
@@ -41,13 +43,13 @@ export type TalkRealtimeRelayEventPayload =
   | { relaySessionId: string; type: "audioDone"; itemId?: string; responseId?: string }
   | { relaySessionId: string; type: "clear"; reason?: RealtimeVoiceAudioClearReason }
   | { relaySessionId: string; type: "mark"; markName: string }
-  | {
+  | ({
       relaySessionId: string;
       type: "transcript";
       role: "user" | "assistant";
       text: string;
       final: boolean;
-    }
+    } & Partial<RealtimeVoiceTranscriptUpdate>)
   | {
       relaySessionId: string;
       type: "toolCall";
