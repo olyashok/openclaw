@@ -9,6 +9,21 @@ const loadSessionProjectionModule = createLazyRuntimeModule(
 );
 
 export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
+  api.registerGatewayMethod(
+    "matrix.sessionProjection.status",
+    async ({ params, respond }) => {
+      try {
+        const { getMatrixProjectionStatus } = await import("./src/matrix/projection-source.js");
+        const roomId = typeof params?.roomId === "string" ? params.roomId.trim() : "";
+        const accountId =
+          typeof params?.accountId === "string" ? params.accountId.trim() : undefined;
+        respond(true, getMatrixProjectionStatus(roomId, accountId));
+      } catch (error) {
+        respond(false, { error: formatErrorMessage(error) });
+      }
+    },
+    { scope: "operator.admin" },
+  );
   api.runtime.channel.runtimeContexts.register({
     channelId: "matrix",
     capability: "session-read-projections",

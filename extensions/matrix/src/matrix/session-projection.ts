@@ -1,20 +1,27 @@
 // Projects an existing canonical OpenClaw session into a Matrix room thread.
 import { createHash } from "node:crypto";
-import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
-import { resolveSessionAgentIdStrict } from "openclaw/plugin-sdk/agent-scope-runtime";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/core";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
 import { isSilentReplyPayloadText } from "openclaw/plugin-sdk/reply-chunking";
-import { getSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import {
   normalizeOptionalString,
   asNonArrayRecord,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CoreConfig } from "../types.js";
-import { resolveDefaultMatrixAccountId } from "./accounts.js";
+import {
+  SOURCE_AUTHORIZED_PROJECTION,
+  resolveProjectionReplyUpgrade,
+} from "./projection-reply-authorization.js";
 import { resolveDetachedProjectionSource } from "./projection-source.js";
+import {
+  findProjectionBinding,
+  isProjectionBinding,
+  MATRIX_SESSION_PROJECTION_BOUND_BY,
+  resolveProjectionTarget,
+  type ProjectionTarget,
+} from "./projection-target.js";
 import { sendMessageMatrix } from "./send.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
 import {
@@ -26,7 +33,7 @@ import {
 } from "./session-projection-snapshot.js";
 import { getMatrixThreadBindingManager, toSessionBindingRecord } from "./thread-bindings-shared.js";
 
-export const MATRIX_SESSION_PROJECTION_BOUND_BY = "session-projection";
+export { MATRIX_SESSION_PROJECTION_BOUND_BY } from "./projection-target.js";
 export { MATRIX_SESSION_PROJECTION_CONTENT_KEY } from "./session-projection-snapshot.js";
 
 export { listReadOnlyMatrixSessionProjections } from "./projection-source.js";
@@ -89,20 +96,6 @@ function normalizeChannel(value: unknown): string {
   return clean(value).toLowerCase();
 }
 
-function isProjectionBinding(binding: {
-  metadata?: Record<string, unknown>;
-  conversation: { channel: string };
-}): boolean {
-  return (
-    binding.conversation.channel === "matrix" &&
-    [
-      MATRIX_SESSION_PROJECTION_BOUND_BY,
-      "session-projection-read-only",
-      "session-projection-slack-direct",
-    ].includes(clean(binding.metadata?.boundBy))
-  );
-}
-
 function resolveDeliveryIdentity(params: {
   role: ProjectionRole;
   text: string;
@@ -154,7 +147,10 @@ async function projectToMatrix(params: {
       );
   await Promise.all(
     bindings.map(async (binding) => {
-      if (binding.metadata?.boundBy === "session-projection-slack-direct") {
+      if (
+        binding.metadata?.boundBy === "session-projection-slack-direct" ||
+        binding.metadata?.sourceReplyAuthorization
+      ) {
         return;
       }
       const roomId = binding.conversation.parentConversationId;
@@ -295,65 +291,6 @@ export async function handleMatrixSessionProjectionReplyPayloadSending(
     text: clean(event.payload.text),
     runId: event.runId ?? context.runId,
   });
-}
-
-type ProjectionTarget = {
-  cfg: CoreConfig;
-  targetSessionKey: string;
-  roomId: string;
-  accountId?: string;
-};
-
-function resolveProjectionTarget(params: ProjectionTarget) {
-  const targetSessionKey = clean(params.targetSessionKey);
-  const roomId = clean(params.roomId);
-  if (!targetSessionKey || !roomId) {
-    throw new Error("targetSessionKey and roomId are required");
-  }
-  if (!roomId.startsWith("!")) {
-    throw new Error("roomId must be a Matrix room id");
-  }
-  if (targetSessionKey.length > 512 || roomId.length > 255) {
-    throw new Error("targetSessionKey or roomId is too long");
-  }
-  const accountId = normalizeAccountId(
-    clean(params.accountId) || resolveDefaultMatrixAccountId(params.cfg),
-  );
-  if (!getMatrixThreadBindingManager(accountId)) {
-    throw new Error(`Matrix account ${accountId} is not running`);
-  }
-  const agentId = resolveSessionAgentIdStrict({ config: params.cfg, sessionKey: targetSessionKey });
-  if (!getSessionEntry({ sessionKey: targetSessionKey, agentId })) {
-    throw new Error("target OpenClaw session does not exist");
-  }
-  return { targetSessionKey, accountId, agentId, roomId };
-}
-
-function findProjectionBinding(
-  target: ReturnType<typeof resolveProjectionTarget>,
-  readOnly = false,
-) {
-  if (readOnly) {
-    const shared = getMatrixThreadBindingManager(target.accountId)
-      ?.listBindings?.()
-      .toSorted((left, right) => right.boundAt - left.boundAt)
-      .find(
-        (binding) =>
-          binding.parentConversationId === target.roomId &&
-          binding.boundBy === "session-projection-read-only",
-      );
-    if (shared) {
-      return toSessionBindingRecord(shared, { idleTimeoutMs: 0, maxAgeMs: 0 });
-    }
-  }
-  return getSessionBindingService()
-    .listBySession(target.targetSessionKey)
-    .find(
-      (binding) =>
-        isProjectionBinding(binding) &&
-        binding.conversation.accountId === target.accountId &&
-        binding.conversation.parentConversationId === target.roomId,
-    );
 }
 
 /** Explicit operator repair for pre-shared history; never an implicit room-policy change. */
@@ -508,6 +445,7 @@ export async function createMatrixSessionProjection(params: {
   readOnly?: boolean;
   sourceDirect?: boolean;
   sourceDetached?: boolean;
+  sourceReplyAuthorization?: string;
   externalSource?: unknown;
   sourceSnapshot?: SourceProjectionSnapshot;
   initialMessage?: {
@@ -525,6 +463,8 @@ export async function createMatrixSessionProjection(params: {
   agentId: string;
   roomId: string;
   threadRootEventId: string;
+  targetSessionKey: string;
+  sourceReplyAuthorization?: string;
 }> {
   const target = resolveProjectionTarget(params);
   const { targetSessionKey, accountId, agentId, roomId } = target;
@@ -540,14 +480,53 @@ export async function createMatrixSessionProjection(params: {
     }
     parseSourceProjectionSnapshot(params.sourceSnapshot);
   }
-  if (params.sourceSnapshot && !params.readOnly && !params.sourceDirect) {
+  if (
+    params.sourceSnapshot &&
+    !params.readOnly &&
+    !params.sourceDirect &&
+    !params.sourceReplyAuthorization
+  ) {
     throw new Error("Source snapshots require a read-only projection");
   }
   return await projectionCreationQueue.enqueue(
-    `${accountId}\u0000${roomId}\u0000${params.readOnly ? "read-only" : targetSessionKey}`,
+    `${accountId}\u0000${roomId}\u0000${params.readOnly || params.sourceReplyAuthorization ? "read-only" : targetSessionKey}`,
     async () => {
       const bindingService = getSessionBindingService();
-      let existing = findProjectionBinding(target, params.readOnly);
+      let existing = findProjectionBinding(
+        target,
+        params.readOnly || Boolean(params.sourceReplyAuthorization),
+      );
+      let authorizedSource: Awaited<ReturnType<typeof resolveProjectionReplyUpgrade>> | undefined;
+      if (params.sourceReplyAuthorization) {
+        authorizedSource = await resolveProjectionReplyUpgrade({
+          targetSessionKey,
+          externalSource,
+          protocol: params.sourceReplyAuthorization,
+          readOnly: params.readOnly,
+          existing,
+        });
+        if (
+          existing &&
+          (existing.metadata?.boundBy !== SOURCE_AUTHORIZED_PROJECTION ||
+            existing.metadata?.sourceReplyAuthorization !== params.sourceReplyAuthorization)
+        ) {
+          existing = await bindingService.bind({
+            targetSessionKey,
+            targetKind: "session",
+            placement: "current",
+            conversation: existing.conversation,
+            metadata: {
+              ...existing.metadata,
+              agentId,
+              label,
+              boundBy: SOURCE_AUTHORIZED_PROJECTION,
+              ...authorizedSource,
+              idleTimeoutMs: 0,
+              maxAgeMs: 0,
+            },
+          });
+        }
+      }
       if (existing) {
         if (
           params.sourceDetached &&
@@ -558,6 +537,7 @@ export async function createMatrixSessionProjection(params: {
         if (
           params.sourceDirect &&
           !params.readOnly &&
+          !params.sourceReplyAuthorization &&
           existing.metadata?.boundBy === "session-projection-read-only"
         ) {
           throw new Error("Read-only direct projection cannot become writable");
@@ -565,6 +545,7 @@ export async function createMatrixSessionProjection(params: {
         if (
           params.sourceDirect &&
           !params.readOnly &&
+          !params.sourceReplyAuthorization &&
           existing.metadata?.boundBy !== "session-projection-slack-direct"
         ) {
           existing = await bindingService.bind({
@@ -594,6 +575,11 @@ export async function createMatrixSessionProjection(params: {
           agentId,
           roomId,
           threadRootEventId: existing.conversation.conversationId,
+          targetSessionKey,
+          sourceReplyAuthorization:
+            typeof existing.metadata?.sourceReplyAuthorization === "string"
+              ? existing.metadata.sourceReplyAuthorization
+              : undefined,
         };
         // Retry callers may race the original hook or arrive after a prior
         // bind. The narrow in-process reservation and durable delivery key
@@ -630,11 +616,20 @@ export async function createMatrixSessionProjection(params: {
           agentId,
           label,
           externalSource: params.sourceDetached ? externalSource : undefined,
-          boundBy: params.readOnly
-            ? "session-projection-read-only"
-            : params.sourceDirect
-              ? "session-projection-slack-direct"
-              : MATRIX_SESSION_PROJECTION_BOUND_BY,
+          ...(authorizedSource
+            ? {
+                externalSource: authorizedSource.externalSource,
+                sourceAccountId: authorizedSource.sourceAccountId,
+              }
+            : {}),
+          sourceReplyAuthorization: params.sourceReplyAuthorization,
+          boundBy: authorizedSource
+            ? SOURCE_AUTHORIZED_PROJECTION
+            : params.readOnly
+              ? "session-projection-read-only"
+              : params.sourceDirect
+                ? "session-projection-slack-direct"
+                : MATRIX_SESSION_PROJECTION_BOUND_BY,
           introText: `OpenClaw session mirror · ${label}`,
           // Session projections follow the canonical session lifecycle, not the
           // shorter subagent-thread defaults used by ordinary Matrix bindings.
@@ -649,6 +644,8 @@ export async function createMatrixSessionProjection(params: {
         agentId,
         roomId,
         threadRootEventId: binding.conversation.conversationId,
+        targetSessionKey,
+        sourceReplyAuthorization: params.sourceReplyAuthorization,
       };
       await projectInitialMessage({
         cfg: params.cfg,
@@ -686,6 +683,7 @@ export async function handleMatrixSessionProjectionCreate({
       readOnly: params?.readOnly === true,
       sourceDirect: params?.sourceDirect === true,
       sourceDetached: params?.sourceDetached === true,
+      sourceReplyAuthorization: clean(params?.sourceReplyAuthorization) || undefined,
       externalSource: params?.externalSource,
       sourceSnapshot: params?.sourceSnapshot as SourceProjectionSnapshot | undefined,
       initialMessage:

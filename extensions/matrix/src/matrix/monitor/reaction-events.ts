@@ -10,6 +10,7 @@ import {
 } from "../../approval-reactions.js";
 import type { CoreConfig } from "../../types.js";
 import { resolveMatrixAccountConfig } from "../account-config.js";
+import { authorizeProjectionReply } from "../projection-reply-authorization.js";
 import { extractMatrixReactionAnnotation } from "../reaction-common.js";
 import { resolveMatrixThreadRootId } from "../relations.js";
 import type { MatrixClient } from "../sdk.js";
@@ -191,6 +192,17 @@ export async function handleInboundMatrixReaction(params: {
   if (params.senderId === params.selfUserId) {
     return;
   }
+  if (
+    isMatrixReadOnlyProjectionRoom(params.accountId, params.roomId) ||
+    (await authorizeProjectionReply({
+      core: params.core,
+      accountId: params.accountId,
+      roomId: params.roomId,
+      senderId: params.senderId,
+    })) !== "allowed"
+  ) {
+    return;
+  }
   const approvalTarget = await resolveMatrixApprovalReactionTargetWithPersistence({
     accountId: params.accountId,
     roomId: params.roomId,
@@ -252,9 +264,6 @@ export async function handleInboundMatrixReaction(params: {
     messageId: reaction.eventId,
     threadRootId,
   });
-  if (isMatrixReadOnlyProjectionRoom(params.accountId, params.roomId)) {
-    return;
-  }
   const { route, runtimeBindingId } = resolveMatrixInboundRoute({
     cfg: params.cfg,
     accountId: params.accountId,

@@ -20,6 +20,11 @@ const mocks = vi.hoisted(() => ({
     roomId: "!room",
   })),
   touch: vi.fn(),
+  sourceGuard: vi.fn(),
+}));
+
+vi.mock("../runtime.js", () => ({
+  getMatrixRuntime: () => ({ channel: { runtimeContexts: { get: mocks.sourceGuard } } }),
 }));
 
 vi.mock("openclaw/plugin-sdk/agent-scope-runtime", () => ({
@@ -96,6 +101,8 @@ describe("Matrix session projection", () => {
       agentId: "cellect-fi-user",
       roomId: "!room",
       threadRootEventId: "$root",
+      targetSessionKey: sessionKey,
+      sourceReplyAuthorization: undefined,
     });
 
     expect(mocks.bind).toHaveBeenCalledWith(
@@ -113,6 +120,60 @@ describe("Matrix session projection", () => {
           label: "Slack invoice thread",
           idleTimeoutMs: 0,
           maxAgeMs: 0,
+        }),
+      }),
+    );
+  });
+
+  it("converts the same root only with an installed guard and durable source identity", async () => {
+    const source = {
+      provider: "slack",
+      workspaceId: "T123",
+      channelId: "C1",
+      rootMessageId: "1700000000.000001",
+    };
+    const readonly = {
+      ...projectionBinding,
+      metadata: { boundBy: "session-projection-read-only" },
+    };
+    mocks.listBySession.mockReturnValue([readonly]);
+    const params = {
+      cfg,
+      targetSessionKey: sessionKey,
+      roomId: "!room",
+      externalSource: source,
+      sourceReplyAuthorization: "fi-v1",
+    };
+    mocks.sourceGuard.mockReturnValue(undefined);
+    await expect(createMatrixSessionProjection(params)).rejects.toThrow("unavailable");
+    expect(mocks.bind).not.toHaveBeenCalled();
+    mocks.sourceGuard.mockReturnValue({
+      protocol: "fi-v1",
+      resolveSource: async () => ({ externalSource: source, sourceAccountId: "fi-user" }),
+    });
+    mocks.bind.mockImplementation(async (input) => {
+      const converted = { ...projectionBinding, metadata: input.metadata };
+      mocks.listBySession.mockReturnValue([converted]);
+      return converted;
+    });
+    await expect(createMatrixSessionProjection(params)).resolves.toMatchObject({
+      threadRootEventId: "$root",
+      targetSessionKey: sessionKey,
+      sourceReplyAuthorization: "fi-v1",
+    });
+    await expect(createMatrixSessionProjection(params)).resolves.toMatchObject({
+      threadRootEventId: "$root",
+      sourceReplyAuthorization: "fi-v1",
+    });
+    expect(mocks.bind).toHaveBeenCalledTimes(1);
+    expect(mocks.bind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        placement: "current",
+        targetSessionKey: sessionKey,
+        metadata: expect.objectContaining({
+          boundBy: "session-projection-read-only",
+          externalSource: source,
+          sourceAccountId: "fi-user",
         }),
       }),
     );

@@ -3,6 +3,7 @@ import type {
   SessionBindingRecord,
 } from "openclaw/plugin-sdk/thread-bindings-session-runtime";
 import { resolveThreadBindingLifecycle } from "openclaw/plugin-sdk/thread-bindings-session-runtime";
+import { getOptionalMatrixRuntime } from "../runtime.js";
 import type { ProjectionExternalSource } from "./projection-source.js";
 
 type MatrixThreadBindingTargetKind = "subagent" | "acp";
@@ -17,6 +18,8 @@ export type MatrixThreadBindingRecord = {
   label?: string;
   boundBy?: string;
   externalSource?: ProjectionExternalSource;
+  sourceReplyAuthorization?: string;
+  sourceAccountId?: string;
   boundAt: number;
   lastActivityAt: number;
   idleTimeoutMs?: number;
@@ -55,10 +58,15 @@ const MANAGERS_BY_ACCOUNT_ID = new Map<string, MatrixThreadBindingManagerCacheEn
 const BINDINGS_BY_ACCOUNT_CONVERSATION = new Map<string, MatrixThreadBindingRecord>();
 
 export function isMatrixReadOnlyProjectionRoom(accountId: string, roomId: string): boolean {
+  const protocol = getOptionalMatrixRuntime()?.channel.runtimeContexts?.get<{ protocol: string }>({
+    channelId: "matrix",
+    capability: "source-session-authorization",
+  })?.protocol;
   return [...BINDINGS_BY_ACCOUNT_CONVERSATION.values()].some(
     (record) =>
       record.accountId === accountId &&
       record.boundBy === "session-projection-read-only" &&
+      (!record.sourceReplyAuthorization || record.sourceReplyAuthorization !== protocol) &&
       (record.parentConversationId === roomId || record.conversationId === roomId),
   );
 }
@@ -120,6 +128,8 @@ export function toSessionBindingRecord(
       label: record.label,
       boundBy: record.boundBy,
       externalSource: record.externalSource,
+      sourceReplyAuthorization: record.sourceReplyAuthorization,
+      sourceAccountId: record.sourceAccountId,
       lastActivityAt: record.lastActivityAt,
       idleTimeoutMs,
       maxAgeMs,

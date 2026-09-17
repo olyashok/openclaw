@@ -15,7 +15,7 @@ import {
 import { getMatrixRuntime } from "../runtime.js";
 import { claimCurrentTokenStorageState, resolveMatrixStateFilePath } from "./client/storage.js";
 import type { MatrixAuth } from "./client/types.js";
-import { parseProjectionExternalSource } from "./projection-source.js";
+import { parseProjectionBindingMetadata } from "./projection-source.js";
 import type { MatrixClient } from "./sdk.js";
 import { sendMessageMatrix } from "./send.js";
 import { resolveMatrixSqliteStateEnv, resolveMatrixSqliteStateKey } from "./sqlite-state.js";
@@ -149,7 +149,7 @@ function normalizeBindingRecord(
     agentId: normalizeOptionalString(record.agentId) || undefined,
     label: normalizeOptionalString(record.label) || undefined,
     boundBy: normalizeOptionalString(record.boundBy) || undefined,
-    externalSource: parseProjectionExternalSource(record.externalSource),
+    ...parseProjectionBindingMetadata(record),
     boundAt,
     lastActivityAt: Math.max(lastActivityAt, boundAt),
     idleTimeoutMs:
@@ -607,7 +607,7 @@ export async function createMatrixThreadBindingManager(params: {
           resolveSessionAgentIdStrict({ config: params.cfg, sessionKey: targetSessionKey }),
         label: normalizeOptionalString(input.metadata?.label) || undefined,
         boundBy: normalizeOptionalString(input.metadata?.boundBy) || "system",
-        externalSource: parseProjectionExternalSource(input.metadata?.externalSource),
+        ...parseProjectionBindingMetadata(input.metadata),
         boundAt: now,
         lastActivityAt: now,
         idleTimeoutMs:
