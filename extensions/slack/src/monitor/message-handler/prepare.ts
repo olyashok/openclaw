@@ -22,6 +22,7 @@ import { resolveChannelMessageSourceReplyDeliveryMode } from "openclaw/plugin-sd
 import { hasControlCommand } from "openclaw/plugin-sdk/command-detection";
 import { isAbortRequestText } from "openclaw/plugin-sdk/command-primitives-runtime";
 import { shouldHandleTextCommands } from "openclaw/plugin-sdk/command-surface";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { ensureConfiguredBindingRouteReady } from "openclaw/plugin-sdk/conversation-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import {
@@ -1022,6 +1023,13 @@ export async function prepareSlackMessage(params: {
     return drop("unauthorized-sender");
   }
   const threadOwnerPreference = resolveSlackThreadOwnershipPreference(cfg, account.accountId);
+  // Slack message events always carry a channel, but keep this boundary explicit
+  // because the ownership cache cannot form a stable key without one.
+  const threadOwnershipChannelId = message.channel ?? "";
+  const threadOwnershipThreadTs = threadTs ?? "";
+  if (!threadOwnershipChannelId || !threadOwnershipThreadTs) {
+    return null;
+  }
   const hasReplyToCurrentBot =
     implicitMentionKinds.includes("reply_to_bot") && implicitMentions.replyToBot;
   const hasCurrentThreadParticipation =
@@ -1030,7 +1038,7 @@ export async function prepareSlackMessage(params: {
     threadOwnerPreference &&
     isRoom &&
     isThreadReply &&
-    threadTs &&
+    threadOwnershipThreadTs &&
     (explicitlyMentioned || hasReplyToCurrentBot || hasCurrentThreadParticipation)
   ) {
     const candidateAccountIds =
@@ -1052,8 +1060,8 @@ export async function prepareSlackMessage(params: {
                 }
                 return (await hasSlackThreadParticipationWithPersistence({
                   accountId: candidateAccountId,
-                  channelId: message.channel,
-                  threadTs,
+                  channelId: threadOwnershipChannelId,
+                  threadTs: threadOwnershipThreadTs,
                   teamId: opts.eventScope?.teamId,
                 }))
                   ? candidateAccountId
@@ -1064,8 +1072,8 @@ export async function prepareSlackMessage(params: {
             Boolean(candidateAccountId),
           );
     const ownerAccountId = await claimSlackThreadOwner({
-      channelId: message.channel,
-      threadTs,
+      channelId: threadOwnershipChannelId,
+      threadTs: threadOwnershipThreadTs,
       candidateAccountIds,
       teamId: opts.eventScope?.teamId,
       force: explicitlyMentioned,
