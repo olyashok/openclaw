@@ -10,11 +10,12 @@ type Page = {
 };
 
 /** Native DM identity and complete visible history, never an inferred channel roster. */
-export async function readSlackDirectSnapshot(
+export async function readSlackDirectIdentity(
   client: WebClient,
   workspaceId: string,
   channelId: string,
   peerSenderId: string,
+  read = createProjectionDeadline(),
 ) {
   if (
     !/^T[A-Z0-9]+$/.test(workspaceId) ||
@@ -23,7 +24,6 @@ export async function readSlackDirectSnapshot(
   ) {
     throw new Error("Invalid Slack direct identity");
   }
-  const read = createProjectionDeadline();
   const identity = await read(() => client.auth.test());
   if (!identity.ok || identity.team_id !== workspaceId) {
     throw new Error("Slack reader workspace mismatch");
@@ -38,6 +38,23 @@ export async function readSlackDirectSnapshot(
   ) {
     throw new Error("Slack DM peer mismatch");
   }
+  return { workspaceId, channelId, peerSenderId };
+}
+
+export async function readSlackDirectSnapshot(
+  client: WebClient,
+  workspaceId: string,
+  channelId: string,
+  peerSenderId: string,
+) {
+  const read = createProjectionDeadline();
+  const directSource = await readSlackDirectIdentity(
+    client,
+    workspaceId,
+    channelId,
+    peerSenderId,
+    read,
+  );
   const messages = new Map<string, Message>();
   const collect = async (fetchPage: (cursor?: string) => Promise<Page>) => {
     const cursors = new Set<string>();
@@ -77,7 +94,7 @@ export async function readSlackDirectSnapshot(
     }
   }
   return {
-    directSource: { workspaceId, channelId, peerSenderId },
+    directSource,
     messages: [...messages.values()]
       .flatMap((message) =>
         message.ts && message.user && typeof message.text === "string"

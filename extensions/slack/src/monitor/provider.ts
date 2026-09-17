@@ -34,7 +34,7 @@ import {
 import { resolveSlackSlashCommandConfig } from "./commands.js";
 import { getRuntimeConfig, resolveOpenProviderRuntimeGroupPolicy } from "./config.runtime.js";
 import { createSlackMonitorContext, type SlackMonitorContext } from "./context.js";
-import { readSlackDirectSnapshot } from "./direct-snapshot.js";
+import { readSlackDirectIdentity, readSlackDirectSnapshot } from "./direct-snapshot.js";
 import {
   assertEnterpriseSlackBindingsAreWorkspaceQualified,
   assertEnterpriseSlackPolicyConfig,
@@ -650,6 +650,8 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
         context: {
           workspaceId: identity.teamId,
           botUserId: ctx.botUserId,
+          readDirectIdentity: (channelId: string, peerSenderId: string) =>
+            readSlackDirectIdentity(readClient, identity.teamId, channelId, peerSenderId),
           readDirect: (channelId: string, peerSenderId: string) =>
             readSlackDirectSnapshot(readClient, identity.teamId, channelId, peerSenderId),
           readChannel: (channelId: string) =>
