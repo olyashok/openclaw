@@ -3000,8 +3000,8 @@ describe("talk.client.toolCall handler", () => {
     "does not commit or consult when the relay is %s while its session write is pending",
     async (state) => {
       const relay = relaySessions.get("relay-1")!;
-      const pendingWrite = createDeferred<void>();
-      const writeStarted = createDeferred<void>();
+      const pendingWrite = createDeferred();
+      const writeStarted = createDeferred();
       mocks.ensureClientVoiceAgentSessionEntry.mockImplementationOnce(async (params) => {
         writeStarted.resolve();
         await pendingWrite.promise;
