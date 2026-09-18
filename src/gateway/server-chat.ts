@@ -36,6 +36,7 @@ import {
 } from "../sessions/session-key-utils.js";
 import { resolveAssistantEventPhase } from "../shared/chat-message-content.js";
 import { setSafeTimeout } from "../utils/timer-delay.js";
+import { hasChatTerminalObserver, publishChatTerminal } from "./chat-terminal-observer.js";
 import {
   projectLiveAssistantBufferedText,
   resolveAssistantLiveChatInput,
@@ -723,9 +724,10 @@ export function createAgentEventHandler({
       sessionKey &&
       (isControlUiVisible ||
         (projectSessionMessages &&
-          deliverySessionKeys.some(
-            (deliverySessionKey) => sessionMessageSubscribers.get(deliverySessionKey).size > 0,
-          )))
+          (hasChatTerminalObserver(clientRunId, sessionKey) ||
+            deliverySessionKeys.some(
+              (deliverySessionKey) => sessionMessageSubscribers.get(deliverySessionKey).size > 0,
+            ))))
     ) {
       if (!isAborted) {
         // peek() (chatLink) and this shift() run in one synchronous frame, so
@@ -1167,6 +1169,7 @@ export function createAgentEventHandler({
               }
             : undefined,
       };
+      publishChatTerminal(payload);
       sendChatPayload(sessionKey, payload, opts);
       return;
     }
@@ -1181,6 +1184,7 @@ export function createAgentEventHandler({
       ...(errorKind && { errorKind }),
       ...(stopReason && { stopReason }),
     };
+    publishChatTerminal(payload);
     sendChatPayload(sessionKey, payload, opts);
   };
 
@@ -1676,7 +1680,14 @@ export function createAgentEventHandler({
       }
     }
 
-    if ((isControlUiVisible || hasSessionMessageSubscribers) && sessionKey) {
+    // Private terminal consumers need accumulated text, not socket subscription
+    // rights. sendChatPayload still applies the original recipient policy.
+    if (
+      sessionKey &&
+      (isControlUiVisible ||
+        hasSessionMessageSubscribers ||
+        (projectSessionMessages && hasChatTerminalObserver(clientRunId, sessionKey)))
+    ) {
       // Send tool events to node/channel subscribers only when verbose is enabled;
       // WS clients already received the event above via broadcastToConnIds.
       if (

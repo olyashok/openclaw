@@ -2,6 +2,7 @@ import { getReplyPayloadMetadata, type ReplyPayload } from "../../auto-reply/rep
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { projectChatDisplayMessage } from "../chat-display-projection.js";
+import { publishChatTerminal } from "../chat-terminal-observer.js";
 import { tryResolveSessionCompatibilityOwnerAgentId } from "../session-request-agent.js";
 import type { GatewayRequestContext } from "./types.js";
 
@@ -119,6 +120,7 @@ export function broadcastChatTerminal(params: ChatBroadcastParams & ChatTerminal
     seq,
     ...terminal,
   };
+  publishChatTerminal(payload);
   params.context.broadcast("chat", payload, {
     sessionKeys: resolveChatSessionKeys({
       context: params.context,

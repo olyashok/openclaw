@@ -13,6 +13,7 @@ import type {
 import type { TalkEvent } from "../talk/talk-session-controller.js";
 import { abortChatRunById } from "./chat-abort.js";
 import { formatError } from "./server-utils.js";
+import { registerRelayChatTerminal } from "./talk-realtime-relay-chat-results.js";
 import {
   submitForcedTalkRealtimeRelayToolResult,
   submitRelayAgentControlProviderResults,
@@ -73,6 +74,7 @@ export function ensureTalkRealtimeRelayVoiceSession(params: {
 }
 
 function abortRelayAgentRuns(session: RelaySession, reason: string): void {
+  releaseRelayTerminalSubscriptions(session);
   for (const [runId, sessionKey] of session.activeAgentRuns) {
     abortChatRunById(session.context, {
       runId,
@@ -86,8 +88,16 @@ function abortRelayAgentRuns(session: RelaySession, reason: string): void {
 
 /** Releases relay-local correlation without cancelling durable voice-bound agent runs. */
 function detachRelayAgentRuns(session: RelaySession): void {
+  releaseRelayTerminalSubscriptions(session);
   session.activeAgentRuns.clear();
   session.activeAgentToolCalls.clear();
+}
+
+function releaseRelayTerminalSubscriptions(session: RelaySession): void {
+  for (const release of session.agentToolCallTerminalSubscriptions?.values() ?? []) {
+    release();
+  }
+  session.agentToolCallTerminalSubscriptions?.clear();
 }
 
 export function pruneInactiveRelayAgentRuns(session: RelaySession): number {
@@ -98,7 +108,7 @@ export function pruneInactiveRelayAgentRuns(session: RelaySession): number {
   }
   for (const [callId, runId] of session.activeAgentToolCalls) {
     if (!session.activeAgentRuns.has(runId)) {
-      session.activeAgentToolCalls.delete(callId);
+      clearRelayAgentToolCall(session, callId);
     }
   }
   return session.activeAgentRuns.size;
@@ -417,6 +427,15 @@ export function prepareTalkRealtimeRelayAgentRunRegistration(params: {
       voiceSessionId: session.id,
       runId,
     });
+    if (callId && session.matrixRoute) {
+      registerRelayChatTerminal(
+        session,
+        runId,
+        callId,
+        sessionKey,
+        submitTalkRealtimeRelayToolResult,
+      );
+    }
     return "registered";
   };
 }
