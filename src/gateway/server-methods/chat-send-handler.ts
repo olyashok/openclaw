@@ -34,6 +34,7 @@ import {
   SessionMutationAuthorizationChangedError,
 } from "../session-sharing.js";
 import { loadSessionEntry } from "../session-utils.js";
+import type { TalkRelayConsultAdmission } from "../talk-relay-consult-admission.js";
 import {
   prepareGatewaySkillAuthoring,
   invalidateSkillAuthoringForOtherRequester,
@@ -67,6 +68,7 @@ import type { GatewayRequestHandlerOptions, SessionMutationAuthorization } from 
 
 type ChatSendInternalOptions = {
   providerReviewAcknowledgment?: ProviderReviewAcknowledgment;
+  talkRelayAdmission?: TalkRelayConsultAdmission;
   goalResume?: SessionGoalOperation & { action: "resume" };
   trustedSystemInput?: boolean;
   transcript?: Parameters<typeof createGatewayChatUserTurnController>[0]["transcript"];
@@ -699,10 +701,12 @@ export async function handleChatSendWithRuntimeTools(
 export async function handleTrustedInternalChatSendWithRuntimeTools(
   options: GatewayRequestHandlerOptions,
   toolsAllow: string[],
+  talkRelayAdmission?: TalkRelayConsultAdmission,
 ): Promise<void> {
   await handleChatSendWithOptions(options, undefined, undefined, {
     trustedSystemInput: true,
     toolsAllow,
+    talkRelayAdmission,
   });
 }
 /** Dispatches an operator-requested proposal revision with its reviewed revision bound to the run. */
@@ -722,11 +726,12 @@ export async function handleTrustedInternalChatSend(
   onAdmissionOwned?: () => Promise<boolean>,
   inputOptions?: Pick<
     ChatSendInternalOptions,
-    "transcript" | "toolsAllow" | "prepareAssistantTranscriptMessage"
+    "transcript" | "toolsAllow" | "prepareAssistantTranscriptMessage" | "talkRelayAdmission"
   >,
 ): Promise<void> {
   await handleChatSendWithOptions(options, onAdmissionOwned, undefined, {
     ...inputOptions,
     trustedSystemInput: true,
+    talkRelayAdmission: inputOptions?.talkRelayAdmission,
   });
 }

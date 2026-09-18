@@ -22,6 +22,10 @@ import { formatForLog } from "../ws-log.js";
 import { prepareTalkAgentConsultTranscript } from "./agent-consult-transcript.js";
 import { resolveTalkAgentConsultAuthority } from "./client-gateway-control.js";
 import { prepareTalkRealtimeRelayAgentRunRegistration } from "./relay/index.js";
+import {
+  prepareTalkRelayConsultAdmission,
+  type TalkRelayConsultAdmission,
+} from "../talk-relay-consult-admission.js";
 import type { PreparedTalkSessionTarget } from "./session-target.types.js";
 
 type TalkChatSendAckStatus = "started" | "in_flight" | "ok" | "timeout" | "error";
@@ -101,7 +105,20 @@ export async function startTalkRealtimeAgentConsult(
     request.client,
   );
   let registerRelayRun: ((runId: string) => "registered" | "detached") | undefined;
+  let talkRelayAdmission: TalkRelayConsultAdmission | undefined;
   try {
+    if (params.matrixRoute) {
+      if (!params.relaySessionId || !params.connId) {
+        throw new Error("Matrix Talk consultation requires its owning relay");
+      }
+      talkRelayAdmission = prepareTalkRelayConsultAdmission({
+        relaySessionId: params.relaySessionId,
+        connId: params.connId,
+        sessionKey: params.sessionTarget.canonicalKey,
+        callId: params.callId,
+        matrixRoute: params.matrixRoute,
+      });
+    }
     registerRelayRun =
       params.relaySessionId && params.connId
         ? prepareTalkRealtimeRelayAgentRunRegistration({
@@ -217,6 +234,7 @@ export async function startTalkRealtimeAgentConsult(
       toolsAllow: authority.toolsAllow,
       transcript: { display: false, excludeFromContext: true },
       prepareAssistantTranscriptMessage: prepareTalkAgentConsultTranscript,
+      talkRelayAdmission,
     });
     void Promise.resolve(chatSendResult).then(
       () => {

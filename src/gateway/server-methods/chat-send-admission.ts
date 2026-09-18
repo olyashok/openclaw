@@ -88,6 +88,7 @@ export async function admitChatSend(params: {
   hasCurrentClientAuthority?: GatewayRequestHandlerOptions["hasCurrentClientAuthority"];
   onAdmissionOwned?: () => Promise<boolean>;
   assertCurrent?: () => void;
+  assertDelegatedAdmission?: () => void;
 }) {
   params.assertCurrent?.();
   const { request, session, respond, context, client } = params;
@@ -248,6 +249,7 @@ export async function admitChatSend(params: {
     if (retainedRequestConflict) {
       throw new Error(retainedRequestConflict.message);
     }
+    params.assertDelegatedAdmission?.();
     if (context.chatRunState.hasAbortMarker(clientRunId)) {
       return;
     }
@@ -654,6 +656,9 @@ export async function admitChatSend(params: {
       return { ok: false as const };
     }
     params.assertCurrent?.();
+    // Relay authority is needed until admission, not for the lifetime of an
+    // accepted Matrix run: closing its audio side channel must still detach.
+    params.assertDelegatedAdmission?.();
   } catch (error) {
     cleanupPreDispatchAdmission();
     throw error;

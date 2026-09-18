@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
   prepareRelayRun: vi.fn(),
   registerRelayRun: vi.fn(() => "registered" as const),
   abortChatRunById: vi.fn(),
+  relayAdmission: { assertCurrent: vi.fn() },
+}));
+
+vi.mock("./talk-relay-consult-admission.js", () => ({
+  prepareTalkRelayConsultAdmission: () => mocks.relayAdmission,
 }));
 
 vi.mock("./server-methods/chat-send-handler.js", () => ({
@@ -100,7 +105,10 @@ describe("Talk Matrix consult delivery", () => {
         }),
       }),
       undefined,
-      expect.objectContaining({ toolsAllow: ["read"] }),
+      expect.objectContaining({
+        toolsAllow: ["read"],
+        talkRelayAdmission: mocks.relayAdmission,
+      }),
     );
   });
 
