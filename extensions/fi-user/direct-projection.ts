@@ -13,7 +13,13 @@ type DirectReader = {
     peerSenderId: string,
   ) => Promise<{
     directSource: { workspaceId: string; channelId: string; peerSenderId: string };
-    messages: Array<{ messageId: string; senderId: string; content: string; bot: boolean }>;
+    messages: Array<{
+      messageId: string;
+      senderId: string;
+      displayName?: string;
+      content: string;
+      bot: boolean;
+    }>;
   }>;
 };
 
@@ -80,6 +86,7 @@ export async function recoverSlackDirectProjection(
         messages: source.messages.map((message) => ({
           messageId: message.messageId,
           senderId: message.senderId,
+          displayName: message.displayName,
           content: message.content,
           role: message.bot ? "assistant" : "user",
           agentId: message.bot && message.senderId === reader.botUserId ? agentId : undefined,
@@ -198,6 +205,7 @@ export async function reconcileSlackDirectProjections(
           messages: source.messages.map((message) => ({
             messageId: message.messageId,
             senderId: message.senderId,
+            displayName: message.displayName,
             content: message.content,
             role: message.bot ? "assistant" : "user",
             agentId: message.bot && message.senderId === reader.botUserId ? agentId : undefined,

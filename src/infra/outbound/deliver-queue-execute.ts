@@ -141,6 +141,42 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
       },
       params.deliveryQueueStateContext,
     );
+  const ackOwnedQueue = async (options?: {
+    suppressCompletionReceipt?: boolean;
+    completionReceipt?: Readonly<{ platformMessageId: string }>;
+  }) => {
+    throwIfProducerLeaseLost();
+    if (!queueOwner) {
+      throw new Error("Queued delivery acknowledgement requires a queue id");
+    }
+    const accepted =
+      params.preparedBatch?.entries.filter((entry) => entry.status === "accepted") ?? [];
+    const acceptedEntry = accepted.length === 1 ? accepted[0] : undefined;
+    const publication =
+      acceptedEntry?.status === "accepted"
+        ? (acceptedEntry.publication ??
+          (await import("../../auto-reply/reply-publication.js")).preparedReplyPublication(
+            acceptedEntry.payload,
+          ))
+        : undefined;
+    const lastResult = deliveredResults.at(-1);
+    const finalEventId =
+      options?.completionReceipt?.platformMessageId ??
+      (messageSentEvents.some((event) => event.success)
+        ? lastResult?.messageId.trim()
+        : undefined);
+    if (publication && finalEventId) {
+      const { emitStoredReplyPublicationAccepted } =
+        await import("../../auto-reply/reply-publication.js");
+      await emitStoredReplyPublicationAccepted(publication, {
+        channel: params.channel,
+        accountId: params.accountId ?? "default",
+        conversationId: params.to.replace(/^(?:channel|user):/, ""),
+        messageId: finalEventId,
+      });
+    }
+    return queueOwner.ack(options);
+  };
   const completionReceipt = (): { platformMessageId: string } | undefined => {
     const platformMessageId = deliveredResults.at(-1)?.messageId.trim();
     return platformMessageId ? { platformMessageId } : undefined;
@@ -515,8 +551,8 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
               ? false
               : await (
                   results.length === 0 && typeof params.completionRetention === "object"
-                    ? queueOwner.ack({ suppressCompletionReceipt: true })
-                    : queueOwner.ack({ completionReceipt: completionReceipt() })
+                    ? ackOwnedQueue({ suppressCompletionReceipt: true })
+                    : ackOwnedQueue({ completionReceipt: completionReceipt() })
                 )
                   .then(() => true)
                   .catch(async (err: unknown) => {
@@ -630,8 +666,11 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
               queuedPostSendState = "failed";
             }
           } else if (
-            await queueOwner
-              .ack({ suppressCompletionReceipt: true })
+            await (
+              producerClaimId
+                ? ackOwnedQueue({ suppressCompletionReceipt: true })
+                : ackOwnedQueue()
+            )
               .then(() => true)
               .catch(() => false)
           ) {

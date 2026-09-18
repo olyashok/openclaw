@@ -117,6 +117,8 @@ export type MatrixSendOpts = {
   signal?: AbortSignal;
   /** Additional Matrix event content fields to merge into the first sent event. */
   extraContent?: MatrixExtraContentFields;
+  /** Plugin-owned capability; public/model-authored extraContent cannot mint provenance. */
+  publication?: import("../projection-publication.js").MatrixPublication;
   /** Send audio as voice message instead of audio file. Defaults to false. */
   audioAsVoice?: boolean;
   /** Persist each concrete platform send before any later event can fail. */

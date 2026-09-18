@@ -1,16 +1,23 @@
 import { createHash } from "node:crypto";
+import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import type { CoreConfig } from "../types.js";
+import {
+  createMatrixSourcePublication,
+  MATRIX_PROJECTION_CONTENT_KEY,
+} from "./projection-publication.js";
+import { noteMatrixSourceSnapshotResult } from "./projection-source-result.js";
 import type { MatrixClient, MatrixRawEvent } from "./sdk.js";
-import { editMessageMatrix, sendMessageMatrix } from "./send.js";
+import { sendMessageMatrix } from "./send.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
-
-export const MATRIX_SESSION_PROJECTION_CONTENT_KEY = "com.openclaw.session_projection";
+export const MATRIX_SESSION_PROJECTION_CONTENT_KEY = MATRIX_PROJECTION_CONTENT_KEY;
+const SOURCE_CONTENT_REVISION_KEY = "com.openclaw.source_revision";
 export type SourceProjectionMessage = {
   messageId: string;
   senderId: string;
   content: string;
   role: "user" | "assistant";
   agentId?: string;
+  displayName?: string;
 };
 export type SourceProjectionSnapshot = { complete: true; messages: SourceProjectionMessage[] };
 
@@ -20,8 +27,9 @@ export function projectionText(params: {
   text: string;
   senderId?: string;
   agentId?: string;
+  displayName?: string;
 }): string {
-  const author = params.agentId || params.senderId;
+  const author = params.displayName || params.agentId || params.senderId;
   const speaker = author
     ? author
         .replace(/[\\`*_[\]<>]/g, "")
@@ -90,20 +98,29 @@ export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionS
   }
   const messages: SourceProjectionMessage[] = [];
   const sourceIds = new Set<string>();
+  let totalContent = 0;
   for (const rawMessage of rawSnapshot.messages) {
     const message = object(rawMessage);
     if (
       !message ||
       typeof message.messageId !== "string" ||
+      message.messageId.length > 64 ||
       !/^\d+\.\d+$/.test(message.messageId) ||
       sourceIds.has(message.messageId) ||
       typeof message.content !== "string" ||
+      message.content.length > 100_000 ||
       typeof message.senderId !== "string" ||
       (message.role !== "user" && message.role !== "assistant") ||
-      (message.agentId !== undefined && typeof message.agentId !== "string")
+      (message.agentId !== undefined && typeof message.agentId !== "string") ||
+      (message.displayName !== undefined &&
+        (typeof message.displayName !== "string" ||
+          message.displayName.length > 200 ||
+          /[\u0000-\u001f\u007f]/.test(message.displayName)))
     ) {
       throw new Error("Invalid source snapshot message");
     }
+    totalContent += message.content.length;
+    if (totalContent > 1_000_000) throw new Error("Source snapshot exceeds bounded content");
     sourceIds.add(message.messageId);
     messages.push({
       messageId: message.messageId,
@@ -111,6 +128,7 @@ export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionS
       content: message.content,
       role: message.role,
       agentId: message.agentId,
+      ...(typeof message.displayName === "string" ? { displayName: message.displayName } : {}),
     });
   }
   return { complete: true, messages };
@@ -123,7 +141,6 @@ export async function reconcileMatrixProjectionSnapshot(params: {
   threadId: string;
   snapshot: unknown;
   retireThreadId?: string;
-  retireLegacyDirectReplies?: boolean;
 }) {
   const deadline = Date.now() + 45_000;
   const checkDeadline = () => {
@@ -183,63 +200,135 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         }
         const current = latestEdits.get(event.event_id) ?? content;
         const metadata = object(current?.[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
-        if (
-          metadata?.sourceChannel !== "slack" ||
-          typeof metadata.messageId !== "string" ||
-          !current
-        ) {
+        const origin = object(metadata?.origin);
+        if (origin?.provider !== "slack" || typeof origin.messageId !== "string" || !current) {
           continue;
         }
-        const group = originals.get(metadata.messageId) ?? [];
+        const group = originals.get(origin.messageId) ?? [];
         group.push({ eventId: event.event_id, content: current });
-        originals.set(metadata.messageId, group);
+        originals.set(origin.messageId, group);
       }
       for (const message of snapshot.messages) {
         checkDeadline();
         const contentHash = createHash("sha256").update(JSON.stringify(message)).digest("hex");
-        const metadata = {
-          version: 1,
-          sourceChannel: "slack",
-          role: message.role,
-          senderId: message.senderId,
-          messageId: message.messageId,
-          ...(message.agentId ? { agentId: message.agentId } : {}),
-          contentHash,
-        };
-        const extraContent = { [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: metadata };
+        const existing = originals.get(message.messageId) ?? [];
+        const revision = Math.max(
+          0,
+          ...existing.map(
+            (event) =>
+              Number(
+                object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.publicationRevision,
+              ) || 0,
+          ),
+        );
+        const currentParts = existing.filter(
+          (event) =>
+            object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.publicationRevision ===
+            revision,
+        );
+        const sameRevision = currentParts.some(
+          (event) =>
+            object(event.content[SOURCE_CONTENT_REVISION_KEY])?.contentHash === contentHash,
+        );
+        const expectedParts = Number(
+          object(currentParts[0]?.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.partCount,
+        );
+        const indexes = new Set(
+          currentParts.map(
+            (event) => object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.partIndex,
+          ),
+        );
+        const unchanged =
+          sameRevision &&
+          Number.isSafeInteger(expectedParts) &&
+          expectedParts > 0 &&
+          expectedParts <= 256 &&
+          indexes.size === expectedParts &&
+          Array.from({ length: expectedParts }, (_, index) => index).every((index) =>
+            indexes.has(index),
+          ) &&
+          currentParts.some(
+            (event) =>
+              object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.complete === true,
+          );
+        const targetRevision = sameRevision ? revision : revision + 1;
+        const binding = getSessionBindingService().resolveByConversation({
+          channel: "matrix",
+          accountId: params.accountId,
+          conversationId: params.threadId,
+          parentConversationId: params.roomId,
+        });
+        const publication = binding
+          ? createMatrixSourcePublication({
+              bindingId: binding.bindingId,
+              roomId: params.roomId,
+              threadId: params.threadId,
+              provider: "slack",
+              accountId: params.accountId,
+              messageId: message.messageId,
+              actorId: message.senderId,
+              publishedAtMs: Math.floor(Number(message.messageId) * 1000),
+              role: message.role,
+              displayName: message.displayName,
+              publicationRevision: targetRevision,
+            })
+          : undefined;
+        const extraContent = { [SOURCE_CONTENT_REVISION_KEY]: { contentHash } };
         const body = projectionText({
           channel: "slack",
           role: message.role,
           text: message.content || "[Message has no text]",
           senderId: message.senderId,
           agentId: message.agentId,
+          displayName: message.displayName,
         });
-        const existing = originals.get(message.messageId) ?? [];
-        const first = existing[0];
-        if (!first) {
-          await sendMessageMatrix(`room:${params.roomId}`, body, {
+        if (!unchanged) {
+          const accepted = await sendMessageMatrix(`room:${params.roomId}`, body, {
             cfg: params.cfg,
             accountId: params.accountId,
             client,
             threadId: params.threadId,
             extraContent,
-            deliveryQueueId: `matrix-slack-source:${params.roomId}:${params.threadId}:${message.messageId}`,
+            publication,
+            deliveryQueueId: `matrix-slack-source:${params.roomId}:${params.threadId}:${message.messageId}:${targetRevision}`,
             deliveryPartIndex: 0,
             deliveryPartCount: 1,
           });
-        } else if (
-          object(first.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.contentHash !== contentHash
-        ) {
-          await editMessageMatrix(params.roomId, first.eventId, body, {
-            cfg: params.cfg,
-            accountId: params.accountId,
-            client,
-            extraContent,
-          });
+          if (binding && publication)
+            await noteMatrixSourceSnapshotResult(
+              binding.bindingId,
+              message.messageId,
+              params.roomId,
+              accepted.messageId,
+            );
+        } else if (binding && publication) {
+          const final = currentParts.find(
+            (part) =>
+              object(part.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.partIndex ===
+              expectedParts - 1,
+          );
+          if (final)
+            await noteMatrixSourceSnapshotResult(
+              binding.bindingId,
+              message.messageId,
+              params.roomId,
+              final.eventId,
+            );
         }
-        // A pre-snapshot hook can race canonical replay without changing content.
-        // These candidates are already restricted to this sender, source ID, and thread.
-        for (const duplicate of existing.slice(1)) {
+        // Replace only after every new wire part was accepted. Chunked original
+        // events are parts, not duplicate source messages; preserve their slots.
+        const slots = new Set<string>();
+        const obsolete = sameRevision
+          ? existing.filter((event) => {
+              const metadata = object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
+              if (metadata?.publicationRevision !== targetRevision) return true;
+              const slot = JSON.stringify([metadata?.publicationRevision, metadata?.partIndex]);
+              if (slots.has(slot)) return true;
+              slots.add(slot);
+              return false;
+            })
+          : existing;
+        for (const duplicate of obsolete) {
           for (const eventId of [...(editIds.get(duplicate.eventId) ?? []), duplicate.eventId]) {
             checkDeadline();
             await client.redactEvent(params.roomId, eventId, "Reconciled duplicate source message");
@@ -257,44 +346,6 @@ export async function reconcileMatrixProjectionSnapshot(params: {
           }
         }
       }
-      if (params.retireLegacyDirectReplies) {
-        for (const event of events) {
-          const content = object(event.content);
-          const relation = object(content?.["m.relates_to"]);
-          const metadata = object(content?.[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
-          if (
-            event.sender !== self ||
-            event.unsigned?.redacted_because ||
-            relation?.rel_type !== "m.thread" ||
-            relation.event_id !== params.threadId ||
-            metadata?.sourceChannel !== "slack" ||
-            metadata.role !== "assistant" ||
-            typeof metadata.runId !== "string" ||
-            metadata.messageId !== undefined
-          ) {
-            continue;
-          }
-          const matched = snapshot.messages.some(
-            (message) =>
-              message.role === "assistant" &&
-              content?.body ===
-                projectionText({
-                  channel: "slack",
-                  role: "assistant",
-                  text: message.content,
-                  senderId: typeof metadata.senderId === "string" ? metadata.senderId : undefined,
-                  agentId: typeof metadata.agentId === "string" ? metadata.agentId : undefined,
-                }),
-          );
-          if (!matched) {
-            continue;
-          }
-          for (const id of [...(editIds.get(event.event_id) ?? []), event.event_id]) {
-            checkDeadline();
-            await client.redactEvent(params.roomId, id, "Reconciled canonical Slack DM history");
-          }
-        }
-      }
       // Only after the complete new generation is present may hidden legacy
       // mirrors be retired. Replays retry redaction without duplicating messages.
       if (params.retireThreadId && params.retireThreadId !== params.threadId) {
@@ -308,7 +359,7 @@ export async function reconcileMatrixProjectionSnapshot(params: {
           const oldSource =
             relation?.rel_type === "m.thread" &&
             relation.event_id === params.retireThreadId &&
-            metadata?.sourceChannel === "slack";
+            object(metadata?.origin)?.provider === "slack";
           if (!oldSource && event.event_id !== params.retireThreadId) {
             continue;
           }

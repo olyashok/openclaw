@@ -6,6 +6,7 @@ import {
   isReplyPayloadTargetSuppressed,
   type ReplyPayload,
 } from "../../auto-reply/reply-payload.js";
+import { isReplyPublicationReceiptRequired } from "../../auto-reply/reply-publication.js";
 import type { FinalizedMsgContext } from "../../auto-reply/templating.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { normalizeDeliverableOutboundChannel } from "../../infra/outbound/channel-resolution.js";
@@ -229,7 +230,10 @@ async function deliverInboundReplyWithMessageSendContext(
       silent: params.silent,
     });
   const durability =
-    requiredCapabilities.reconcileUnknownSend === true ? "required" : "best_effort";
+    requiredCapabilities.reconcileUnknownSend === true ||
+    isReplyPublicationReceiptRequired(params.payload)
+      ? "required"
+      : "best_effort";
 
   let support: Awaited<ReturnType<typeof resolveOutboundDurableFinalDeliverySupport>>;
   try {

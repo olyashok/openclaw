@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { matrixPublicationContent, type MatrixPublication } from "./projection-publication.js";
 import {
-  MATRIX_SESSION_PROJECTION_CONTENT_KEY,
   reconcileMatrixProjectionSnapshot,
+  MATRIX_SESSION_PROJECTION_CONTENT_KEY as key,
 } from "./session-projection-snapshot.js";
-
 const mocks = vi.hoisted(() => ({
-  events: [] as Array<Record<string, unknown>>,
+  events: [] as any[],
   read: vi.fn(),
   send: vi.fn(),
-  edit: vi.fn(),
   redact: vi.fn(),
+  note: vi.fn(),
+  binding: vi.fn(),
 }));
+vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", () => ({
+  getSessionBindingService: () => ({ resolveByConversation: mocks.binding }),
+}));
+vi.mock("./projection-source-result.js", () => ({ noteMatrixSourceSnapshotResult: mocks.note }));
 vi.mock("./send/client.js", () => ({
   withResolvedMatrixSendClient: async (_opts: unknown, run: (client: unknown) => Promise<void>) =>
     run({
@@ -20,84 +25,77 @@ vi.mock("./send/client.js", () => ({
       redactEvent: mocks.redact,
     }),
 }));
-vi.mock("./send.js", () => ({ sendMessageMatrix: mocks.send, editMessageMatrix: mocks.edit }));
-
+vi.mock("./send.js", () => ({ sendMessageMatrix: mocks.send }));
 const message = {
   messageId: "1700000000.000001",
   senderId: "U111",
   role: "user" as const,
   content: "Before",
 };
-const options = { cfg: {} as never, accountId: "fi-user", roomId: "!room", threadId: "$root" };
-describe("Matrix source snapshot reconciliation", () => {
+const options = { cfg: {} as never, accountId: "account", roomId: "!room", threadId: "$root" };
+function insert(
+  body: string,
+  publication: MatrixPublication,
+  extraContent: Record<string, unknown>,
+  index = 0,
+  count = 1,
+) {
+  const eventId = `$event${mocks.events.length}`;
+  mocks.events.push({
+    event_id: eventId,
+    sender: "@transport:example.org",
+    type: "m.room.message",
+    content: {
+      body,
+      ...extraContent,
+      [key]: matrixPublicationContent(publication, "!room", index, count),
+      "m.relates_to": { rel_type: "m.thread", event_id: "$root" },
+    },
+  });
+  return eventId;
+}
+describe("v2 source reconciliation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.events.length = 0;
+    mocks.binding.mockReturnValue({
+      bindingId: "binding",
+      metadata: {
+        environment: "test",
+        projectedConversationId: "conversation",
+        sourceAccountId: "source",
+      },
+    });
     mocks.read.mockImplementation(async () => ({ chunk: [...mocks.events].toReversed() }));
     mocks.send.mockImplementation(
       async (
         _to: string,
         body: string,
-        opts: { extraContent: Record<string, unknown>; threadId: string },
-      ) => {
-        mocks.events.push({
-          event_id: "$original",
-          sender: "@transport:example.org",
-          type: "m.room.message",
-          content: {
-            body,
-            ...opts.extraContent,
-            "m.relates_to": { rel_type: "m.thread", event_id: opts.threadId },
-          },
-        });
-      },
+        opts: { publication: MatrixPublication; extraContent: Record<string, unknown> },
+      ) => ({ messageId: insert(body, opts.publication, opts.extraContent) }),
     );
-    mocks.edit.mockImplementation(
-      async (
-        _room: string,
-        original: string,
-        body: string,
-        opts: { extraContent: Record<string, unknown> },
-      ) => {
-        mocks.events.push({
-          event_id: "$edit",
-          sender: "@transport:example.org",
-          type: "m.room.message",
-          content: {
-            "m.relates_to": { rel_type: "m.replace", event_id: original },
-            "m.new_content": { body, ...opts.extraContent },
-          },
-        });
-      },
-    );
-    mocks.redact.mockImplementation(async (_room: string, eventId: string) => {
-      const event = mocks.events.find((entry) => entry.event_id === eventId);
-      if (event) {
-        event.unsigned = { redacted_because: {} };
-      }
+    mocks.redact.mockImplementation(async (_room: string, id: string) => {
+      const event = mocks.events.find((event) => event.event_id === id);
+      if (event) event.unsigned = { redacted_because: {} };
     });
   });
   it.each([
     undefined,
     null,
-    { complete: "true", messages: [] },
-    { complete: 1, messages: [] },
     { complete: false, messages: [] },
     { complete: true, messages: [null] },
-    { complete: true, messages: [{ ...message, agentId: 1 }] },
-  ])("rejects invalid runtime snapshot %# before reading or changing history", async (snapshot) => {
+    { complete: true, messages: [{ ...message, displayName: "bad\nactor" }] },
+  ])("rejects invalid snapshot %# before reads", async (snapshot) => {
     await expect(reconcileMatrixProjectionSnapshot({ ...options, snapshot })).rejects.toThrow();
     expect(mocks.read).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
-    expect(mocks.edit).not.toHaveBeenCalled();
-    expect(mocks.redact).not.toHaveBeenCalled();
   });
-  it("edits the original event and replays idempotently without duplicate messages", async () => {
+  it("publishes edits as new immutable revisions then retires the old batch", async () => {
     await reconcileMatrixProjectionSnapshot({
       ...options,
       snapshot: { complete: true, messages: [message] },
     });
-    const changed = { ...message, content: "After" };
+    const changed = { ...message, content: "After", displayName: "Actual Actor" };
     await reconcileMatrixProjectionSnapshot({
       ...options,
       snapshot: { complete: true, messages: [changed] },
@@ -106,134 +104,66 @@ describe("Matrix source snapshot reconciliation", () => {
       ...options,
       snapshot: { complete: true, messages: [changed] },
     });
-    expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(mocks.edit).toHaveBeenCalledTimes(1);
-    expect(mocks.edit).toHaveBeenCalledWith(
-      "!room",
-      "$original",
-      "**Slack · U111**\nAfter",
-      expect.objectContaining({
-        extraContent: {
-          [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: expect.objectContaining({
-            messageId: message.messageId,
-          }),
-        },
-      }),
-    );
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.redact).toHaveBeenCalledTimes(1);
+    expect(mocks.events[1].content[key]).toMatchObject({
+      publicationRevision: 2,
+      origin: { messageId: message.messageId, publishedAtMs: 1700000000000 },
+    });
+    expect(mocks.events[1].content.body).toBe("**Slack · Actual Actor**\nAfter");
   });
-  it("retires an unchanged source-owned duplicate while preserving another sender's event", async () => {
+  it("preserves distinct wire parts and retires only duplicate own slots", async () => {
+    mocks.send.mockImplementationOnce(async (_to: string, body: string, opts: any) => {
+      insert(body, opts.publication, opts.extraContent, 0, 2);
+      return { messageId: insert(body, opts.publication, opts.extraContent, 1, 2) };
+    });
     const params = { ...options, snapshot: { complete: true, messages: [message] } };
     await reconcileMatrixProjectionSnapshot(params);
-    const original = mocks.events[0];
-    if (!original) {
-      throw new Error("Expected original projection event");
-    }
     mocks.events.push(
-      { ...original, event_id: "$duplicate" },
-      { ...original, event_id: "$unrelated", sender: "@other:example.org" },
+      { ...mocks.events[0], event_id: "$duplicate" },
+      { ...mocks.events[0], event_id: "$foreign", sender: "@foreign:example.org" },
     );
     await reconcileMatrixProjectionSnapshot(params);
-    await reconcileMatrixProjectionSnapshot(params);
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(mocks.edit).not.toHaveBeenCalled();
-    expect(mocks.redact).toHaveBeenCalledTimes(1);
     expect(mocks.redact).toHaveBeenCalledWith(
       "!room",
       "$duplicate",
       "Reconciled duplicate source message",
     );
+    expect(mocks.redact).toHaveBeenCalledTimes(1);
   });
-  it("rebases a hidden generation idempotently and retires only its mirrors after complete replay", async () => {
-    mocks.events.push(
-      {
-        event_id: "$old-root",
-        sender: "@transport:example.org",
-        type: "m.room.message",
-        content: { body: "Old root" },
-      },
-      {
-        event_id: "$old-message",
-        sender: "@transport:example.org",
-        type: "m.room.message",
-        content: {
-          "m.relates_to": { rel_type: "m.thread", event_id: "$old-root" },
-          [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: {
-            sourceChannel: "slack",
-            messageId: message.messageId,
-          },
-        },
-      },
-      {
-        event_id: "$cron",
-        sender: "@transport:example.org",
-        type: "m.room.message",
-        content: { body: "Unrelated cron" },
-      },
-    );
-    const params = {
-      ...options,
-      retireThreadId: "$old-root",
-      snapshot: { complete: true, messages: [message] },
-    };
-    mocks.send.mockRejectedValueOnce(new Error("send failed"));
-    await expect(reconcileMatrixProjectionSnapshot(params)).rejects.toThrow("send failed");
+  it("retries incomplete publication with original revision and stable queue identity", async () => {
+    mocks.send.mockImplementationOnce(async (_to: string, body: string, opts: any) => {
+      insert(body, opts.publication, opts.extraContent, 0, 2);
+      throw new Error("ambiguous send");
+    });
+    const params = { ...options, snapshot: { complete: true, messages: [message] } };
+    await expect(reconcileMatrixProjectionSnapshot(params)).rejects.toThrow("ambiguous");
     expect(mocks.redact).not.toHaveBeenCalled();
     await reconcileMatrixProjectionSnapshot(params);
+    const firstSend = mocks.send.mock.calls[0],
+      retry = mocks.send.mock.calls[1];
+    if (!firstSend || !retry) throw new Error("Expected ambiguous send and publication retry");
+    expect(firstSend[2].deliveryQueueId).toBe(retry[2].deliveryQueueId);
+    expect(retry[2].publication.publicationRevision).toBe(1);
+  });
+  it("notes exact accepted snapshot event and retries unchanged rendezvous", async () => {
+    const params = { ...options, snapshot: { complete: true, messages: [message] } };
     await reconcileMatrixProjectionSnapshot(params);
-    expect(mocks.send).toHaveBeenCalledTimes(2);
-    expect(mocks.send).toHaveBeenLastCalledWith(
-      "room:!room",
-      expect.any(String),
-      expect.objectContaining({
-        deliveryQueueId: `matrix-slack-source:!room:$root:${message.messageId}`,
-      }),
-    );
-    expect(
-      mocks.redact.mock.calls
-        .map((call) => call[1])
-        .toSorted((left, right) => left.localeCompare(right)),
-    ).toEqual(["$old-message", "$old-root"]);
+    await reconcileMatrixProjectionSnapshot(params);
+    expect(mocks.note).toHaveBeenNthCalledWith(1, "binding", message.messageId, "!room", "$event0");
+    expect(mocks.note).toHaveBeenCalledTimes(2);
   });
-  it("retains an unmatched legacy DM answer when Slack delivery never succeeded", async () => {
-    for (const [eventId, body] of [
-      ["$matched", "**Slack · Assistant**\nDelivered"],
-      ["$unmatched", "**Slack · Assistant**\nOnly Matrix received this"],
-    ]) {
-      mocks.events.push({
-        event_id: eventId,
-        sender: "@transport:example.org",
-        type: "m.room.message",
-        content: {
-          body,
-          "m.relates_to": { rel_type: "m.thread", event_id: "$root" },
-          [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: {
-            sourceChannel: "slack",
-            role: "assistant",
-            runId: eventId,
-          },
-        },
-      });
-    }
-    await reconcileMatrixProjectionSnapshot({
-      ...options,
-      retireLegacyDirectReplies: true,
-      snapshot: {
-        complete: true,
-        messages: [{ ...message, role: "assistant", content: "Delivered" }],
-      },
-    });
-    expect(mocks.redact.mock.calls.map((call) => call[1])).toEqual(["$matched"]);
-  });
-  it("redacts a deleted source message once, without touching unrelated history", async () => {
-    mocks.events.push({
-      event_id: "$unrelated",
-      sender: "@person:example.org",
-      type: "m.room.message",
-      content: { body: "Not projected" },
-    });
+  it("redacts deleted source parts without deleting unrelated history", async () => {
     await reconcileMatrixProjectionSnapshot({
       ...options,
       snapshot: { complete: true, messages: [message] },
+    });
+    mocks.events.push({
+      event_id: "$foreign",
+      sender: "@person:example.org",
+      type: "m.room.message",
+      content: { body: "Unrelated" },
     });
     await reconcileMatrixProjectionSnapshot({
       ...options,
@@ -244,18 +174,17 @@ describe("Matrix source snapshot reconciliation", () => {
       snapshot: { complete: true, messages: [] },
     });
     expect(mocks.redact).toHaveBeenCalledTimes(1);
-    expect(mocks.redact).toHaveBeenCalledWith("!room", "$original", "Deleted in Slack");
+    expect(mocks.redact).toHaveBeenCalledWith("!room", "$event0", "Deleted in Slack");
   });
-  it("makes no mutations if Matrix history pagination is incomplete", async () => {
+  it("makes no mutations on incomplete pagination", async () => {
     mocks.read.mockResolvedValue({
-      chunk: [{ event_id: "$e", type: "m.room.message", content: {} }],
+      chunk: [{ event_id: "$event", type: "m.room.message", content: {} }],
       end: "repeated",
     });
     await expect(
       reconcileMatrixProjectionSnapshot({ ...options, snapshot: { complete: true, messages: [] } }),
     ).rejects.toThrow("pagination");
     expect(mocks.send).not.toHaveBeenCalled();
-    expect(mocks.edit).not.toHaveBeenCalled();
     expect(mocks.redact).not.toHaveBeenCalled();
   });
 });

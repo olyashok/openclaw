@@ -104,7 +104,7 @@ describe("matrix thread bindings", () => {
     targetSessionKey?: string;
     conversationId?: string;
     parentConversationId?: string;
-    metadata?: { introText?: string };
+    metadata?: { introText?: string | false };
   }) {
     return getSessionBindingService().bind({
       targetSessionKey: params?.targetSessionKey ?? "agent:ops:subagent:child",
@@ -250,6 +250,14 @@ describe("matrix thread bindings", () => {
     });
     expect(binding.expiresAt).toBeUndefined();
     expect(binding.metadata).toMatchObject({ idleTimeoutMs: 0, maxAgeMs: 0 });
+  });
+
+  it("persists a pre-created native root without publishing a second introduction", async () => {
+    await createBindingManager();
+    const binding = await bindCurrentThread({ metadata: { introText: false } });
+    expect(binding.conversation.conversationId).toBe("$thread");
+    expect(sendMessageMatrixMock).not.toHaveBeenCalled();
+    expect((await readPersistedBindings(resolveBindingsFilePath())).bindings).toHaveLength(1);
   });
 
   it("posts intro messages inside existing Matrix threads for current placement", async () => {

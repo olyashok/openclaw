@@ -11,6 +11,11 @@ import {
 } from "./delivery-plan.js";
 import { loadOutboundMediaFromUrl } from "./outbound-media-runtime.js";
 import { buildPollStartContent, M_POLL_START } from "./poll-types.js";
+import {
+  MATRIX_PROJECTION_CONTENT_KEY,
+  matrixPublicationContent,
+  noteMatrixPublicationAccepted,
+} from "./projection-publication.js";
 import { buildMatrixReactionContent } from "./reaction-common.js";
 import { buildMatrixMessageRelation, resolveMatrixReplyToEventId } from "./relations.js";
 import type { MatrixClient, MatrixRawEvent } from "./sdk.js";
@@ -113,7 +118,8 @@ function withMatrixExtraContentFields<T extends Record<string, unknown>>(
   if (!extraContent) {
     return content;
   }
-  return { ...content, ...extraContent };
+  const { [MATRIX_PROJECTION_CONTENT_KEY]: _forged, ...ordinary } = extraContent;
+  return { ...content, ...ordinary };
 }
 
 async function resolvePreviousEditMentions(params: {
@@ -285,12 +291,31 @@ export async function sendMessageMatrix(
             prepareContent(content, "text");
           }
         }
+        if (opts.publication)
+          events.forEach((event, index) => {
+            (event.content as Record<string, unknown>)[MATRIX_PROJECTION_CONTENT_KEY] =
+              matrixPublicationContent(opts.publication!, roomId, index, events.length);
+            if (
+              index === events.length - 1 &&
+              opts.publication!.finalResult &&
+              opts.publication!.runId &&
+              opts.publication!.generation
+            )
+              event.projectionFinalResult = {
+                runId: opts.publication!.runId!,
+                generation: opts.publication!.generation!,
+                bindingId: opts.publication!.bindingId,
+              };
+          });
         plannedEvents = durableIdentity
           ? createMatrixPlannedEvents({ identity: durableIdentity, events })
           : events.map((event) => ({
               content: event.content,
               receiptKind: event.receiptKind,
               transactionId: "",
+              ...(event.projectionFinalResult
+                ? { projectionFinalResult: event.projectionFinalResult }
+                : {}),
             }));
       }
 
@@ -346,6 +371,9 @@ export async function sendMessageMatrix(
           content: visibleContent,
         });
       }
+
+      if (opts.publication && acceptedEvents.length === plannedEvents.length && lastMessageId)
+        noteMatrixPublicationAccepted(opts.publication, roomId, lastMessageId);
 
       return {
         messageId: lastMessageId || "unknown",

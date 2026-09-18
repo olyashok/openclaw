@@ -18,6 +18,7 @@ import {
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { chunkTextForOutbound } from "openclaw/plugin-sdk/text-chunking";
+import { resolveMatrixReplyPublication } from "./matrix/projection-publication.js";
 import { sendMessageMatrix, sendPollMatrix } from "./matrix/send.js";
 import type { MatrixExtraContentFields } from "./matrix/send/types.js";
 
@@ -218,6 +219,14 @@ export const matrixOutbound: ChannelOutboundAdapter = {
             assertDirectAdapterHandoff,
             onPlatformSendDispatch,
             extraContent: isFirst ? resolveMatrixExtraContent(payload) : undefined,
+            publication: resolveMatrixReplyPublication(
+              payload,
+              accountId ?? undefined,
+              undefined,
+              resolvedThreadId,
+              index,
+              index === urls.length - 1,
+            ),
             onDeliveryResult: resolveMatrixDeliveryProgress(onDeliveryResult),
           }),
         onResult: (result) => {
@@ -255,6 +264,12 @@ export const matrixOutbound: ChannelOutboundAdapter = {
       assertDirectAdapterHandoff,
       onPlatformSendDispatch,
       extraContent: resolveMatrixExtraContent(payload),
+      publication: resolveMatrixReplyPublication(
+        payload,
+        accountId ?? undefined,
+        undefined,
+        resolvedThreadId,
+      ),
       onDeliveryResult: resolveMatrixDeliveryProgress(onDeliveryResult),
     });
     return attachChannelToResult("matrix", toMatrixOutboundResult(result));
