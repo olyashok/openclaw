@@ -11,6 +11,7 @@ import {
   defineFinalizableLivePreviewAdapter,
   deliverWithFinalizableLivePreviewAdapter,
 } from "openclaw/plugin-sdk/channel-outbound";
+import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import {
@@ -416,6 +417,37 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
         humanDelay: resolveHumanDelayConfig(cfg, route.agentId),
       },
       delivery: {
+        durable: (_payload, info) => {
+          if (
+            info.kind !== "final" ||
+            !getSessionBindingService()
+              .listBySession(sessionKey)
+              .some(
+                (binding) =>
+                  binding.conversation.channel === "matrix" &&
+                  binding.metadata?.environment &&
+                  binding.metadata.projectedConversationId &&
+                  binding.metadata.sourceReplyAuthorization,
+              )
+          )
+            return false;
+          return {
+            to: prepared.replyTarget,
+            threadId:
+              delivery.streamSession?.threadTs ??
+              delivery.nativeProgressStreamThreadTs ??
+              replyPlan.nextThreadTs(),
+            replyToMode: setup.replyDeliveryMode,
+            identity: setup.slackIdentity
+              ? {
+                  name: setup.slackIdentity.username,
+                  avatarUrl: setup.slackIdentity.iconUrl,
+                  emoji: setup.slackIdentity.iconEmoji,
+                }
+              : undefined,
+            requiredCapabilities: { reconcileUnknownSend: false },
+          };
+        },
         deliver: deliverSlackPayload,
         onError: onSlackDeliveryError,
       },

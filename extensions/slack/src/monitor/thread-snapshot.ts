@@ -1,4 +1,5 @@
 import type { WebClient } from "@slack/web-api";
+import { hydrateSlackProjectionNames } from "./projection-actor.js";
 import { createProjectionDeadline } from "./projection-deadline.js";
 
 /** Complete, account-authorized source snapshot; partial pagination never grants access. */
@@ -121,7 +122,7 @@ export async function readSlackProjectionChannel(
         channelId,
         rootMessageId,
         memberSenderIds: [...new Set(memberSenderIds)],
-        messages,
+        messages: await hydrateSlackProjectionNames(client, workspaceId, messages, read),
       };
     },
   };

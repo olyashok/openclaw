@@ -19,7 +19,13 @@ type SlackSnapshot = {
   channelId: string;
   rootMessageId: string;
   memberSenderIds: string[];
-  messages: Array<{ messageId: string; senderId: string; content: string; bot: boolean }>;
+  messages: Array<{
+    messageId: string;
+    senderId: string;
+    displayName?: string;
+    content: string;
+    bot: boolean;
+  }>;
 };
 
 export type SlackProjectionMessage = {
@@ -252,6 +258,7 @@ async function publishSlackThreadSnapshot(
       messages: messages.map((message) => ({
         messageId: message.messageId,
         senderId: message.senderId,
+        displayName: message.displayName,
         content: message.content,
         role: message.bot ? "assistant" : "user",
         agentId:

@@ -20,6 +20,7 @@ import {
 import type { ExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
 import { recordRuntimeActionDecision } from "../audit/runtime-action-decision.js";
 import { copyReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply-payload.js";
+import { copyReplyPublication } from "../auto-reply/reply-publication.js";
 import { formatHookErrorForLog } from "../hooks/fire-and-forget.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { concatOptionalTextSegments } from "../shared/text/join-segments.js";
@@ -1333,9 +1334,9 @@ export function createHookRunner(
           event: PluginHookReplyPayloadSendingEvent,
           ctx: PluginHookReplyPayloadSendingContext,
         ) => Promise<PluginHookReplyPayloadSendingResult | void>;
-        const promise = Promise.resolve(
-          handler({ ...event, payload: toPluginReplyPayload(currentPayload) }, ctx),
-        );
+        const isolatedEvent = { ...event, payload: toPluginReplyPayload(currentPayload) };
+        copyReplyPublication(event, isolatedEvent);
+        const promise = Promise.resolve(handler(isolatedEvent, ctx));
         const timeoutMs = getModifyingHookTimeoutMs("reply_payload_sending", hook);
         const handlerResult = timeoutMs ? await withHookTimeout(promise, timeoutMs) : await promise;
 

@@ -243,6 +243,7 @@ export async function prepareOutboundPayloadBatch(
       continue;
     }
     const compactPayload = compactPreparedPayload(preparedPayload);
+    copyReplyPayloadMetadata(payload, compactPayload);
     entries.push({
       sourceIndex,
       status: "accepted",

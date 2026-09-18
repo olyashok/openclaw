@@ -110,6 +110,32 @@ const queuedDeliveryPayloads = (entry: QueuedDelivery) =>
 function queuedPayloadCount(entry: QueuedDelivery): number {
   return entry.preparedBatch.sourcePayloadCount;
 }
+async function persistRecoveredPublicationReceipt(
+  entry: QueuedDelivery,
+  result: OutboundDeliveryResult,
+): Promise<void> {
+  const resultMessageId =
+    result.receipt?.parts.toSorted((left, right) => left.index - right.index).at(-1)
+      ?.platformMessageId ??
+    result.receipt?.platformMessageIds.at(-1) ??
+    result.messageId;
+  const accepted = acceptedPreparedOutboundEntries(entry.preparedBatch);
+  const publication = accepted.length === 1 ? accepted[0]?.publication : undefined;
+  if (!publication || !resultMessageId) return;
+  if (
+    publication.runId !== entry.preparedBatch.runId ||
+    publication.sessionKey !== (entry.mirror?.sessionKey ?? entry.session?.key)
+  )
+    return;
+  const { emitStoredReplyPublicationAccepted } =
+    await import("../../auto-reply/reply-publication.js");
+  await emitStoredReplyPublicationAccepted(publication, {
+    channel: entry.channel,
+    accountId: entry.accountId ?? "default",
+    conversationId: entry.to.replace(/^(?:channel|user):/, ""),
+    messageId: resultMessageId,
+  });
+}
 
 function emitRecoveredMessageSentEvents(
   entry: QueuedDelivery,
@@ -597,6 +623,11 @@ async function resolveCompletedOwnerBeforeRecovery(opts: {
   try {
     const suppressReceipt =
       operation.state !== "delivered" && typeof opts.entry.completionRetention === "object";
+    if (operation.state === "delivered" && operation.platformMessageId)
+      await persistRecoveredPublicationReceipt(opts.entry, {
+        channel: opts.entry.channel,
+        messageId: operation.platformMessageId,
+      });
     await ackRecoveredDelivery(
       opts.entry,
       opts.stateDir,
@@ -709,6 +740,7 @@ async function drainQueuedEntry(opts: {
     if (reconciliation?.status === "sent") {
       try {
         const result = buildReconciledSentResult(entry, reconciliation);
+        await persistRecoveredPublicationReceipt(entry, result);
         if (entry.deliveryCompletion) {
           await completeDurableDelivery(entry.deliveryCompletion, result, opts.stateDir);
         }
@@ -768,6 +800,17 @@ async function drainQueuedEntry(opts: {
         `Delivery entry ${entry.id} reconciled ${entry.recoveryState} as not sent; replaying`,
       );
     } else {
+      const requiredPublication = acceptedPreparedOutboundEntries(entry.preparedBatch).some(
+        (prepared) => prepared.publication?.receiptRequired === true,
+      );
+      if (requiredPublication) {
+        const error =
+          "needs_review: source final publication lacks a complete authenticated provider receipt; preserving ambiguous journal custody";
+        opts.log.warn(`Delivery entry ${entry.id} ${error}`);
+        opts.onFailed?.(entry, error);
+        await recordRecoveredFailure(failDelivery, entry, error, opts.stateDir);
+        return "failed";
+      }
       let errMsg = `delivery state is ${entry.recoveryState}; refusing blind replay without adapter reconciliation`;
       if (reconciliation?.status === "not_sent") {
         errMsg = `delivery state is ${entry.recoveryState}; refusing full replay after post-send evidence`;
@@ -984,6 +1027,8 @@ async function drainQueuedEntry(opts: {
     }
     if (postSendState !== "acked") {
       try {
+        const finalResult = results.at(-1);
+        if (finalResult) await persistRecoveredPublicationReceipt(entry, finalResult);
         await (results.length === 0 && typeof entry.completionRetention === "object"
           ? ackRecoveredDelivery(
               entry,

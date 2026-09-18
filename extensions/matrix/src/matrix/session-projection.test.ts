@@ -1,12 +1,12 @@
 // Matrix tests cover canonical-session projection into Matrix threads.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { bindReplyPublication } from "../../../../src/auto-reply/reply-publication.js";
 import {
   createMatrixSessionProjection,
   inspectMatrixSessionProjection,
   handleMatrixSessionProjectionMessageReceived,
-  handleMatrixSessionProjectionReplyPayloadSending,
+  handleMatrixSessionProjectionReplyPayloadSending as handleUntrustedReply,
   MATRIX_SESSION_PROJECTION_BOUND_BY,
-  MATRIX_SESSION_PROJECTION_CONTENT_KEY,
 } from "./session-projection.js";
 
 const mocks = vi.hoisted(() => ({
@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   })),
   touch: vi.fn(),
   sourceGuard: vi.fn(),
+  resolveByConversation: vi.fn(),
+  owner: vi.fn(),
 }));
 
 vi.mock("../runtime.js", () => ({
@@ -35,6 +37,7 @@ vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", () => ({
     bind: mocks.bind,
     listBySession: mocks.listBySession,
     touch: mocks.touch,
+    resolveByConversation: mocks.resolveByConversation,
   }),
 }));
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
@@ -44,6 +47,10 @@ vi.mock("./accounts.js", () => ({
   resolveDefaultMatrixAccountId: () => "fi-user",
 }));
 vi.mock("./send.js", () => ({ sendMessageMatrix: mocks.sendMessageMatrix }));
+vi.mock("./projection-lifecycle.js", () => ({
+  resolveMatrixProjectionRun: mocks.owner,
+  noteMatrixProjectionFinalResult: vi.fn(),
+}));
 vi.mock("./thread-bindings-shared.js", () => ({
   getMatrixThreadBindingManager: mocks.getThreadBindingManager,
   toSessionBindingRecord: (record: {
@@ -75,8 +82,30 @@ const projectionBinding = {
   },
   status: "active" as const,
   boundAt: 1,
-  metadata: { boundBy: MATRIX_SESSION_PROJECTION_BOUND_BY },
+  metadata: {
+    boundBy: MATRIX_SESSION_PROJECTION_BOUND_BY,
+    environment: "test",
+    projectedConversationId: "conversation",
+  },
 };
+// Simulate the real host admission boundary, not caller-selected JSON metadata.
+async function handleMatrixSessionProjectionReplyPayloadSending(
+  event: Parameters<typeof handleUntrustedReply>[0],
+  context: Parameters<typeof handleUntrustedReply>[1],
+  config: Parameters<typeof handleUntrustedReply>[2],
+) {
+  if (event.kind === "block" || event.kind === "final" || event.kind === "tool") {
+    bindReplyPublication(event, {
+      payload: event.payload,
+      kind: event.kind,
+      channel: context.channelId,
+      sessionKey: event.sessionKey,
+      runId: event.runId,
+      context: { accountId: "fi-user" },
+    });
+  }
+  return handleUntrustedReply(event, context, config);
+}
 
 describe("Matrix session projection", () => {
   beforeEach(() => {
@@ -85,6 +114,21 @@ describe("Matrix session projection", () => {
     mocks.getThreadBindingManager.mockReturnValue({});
     mocks.listBySession.mockReturnValue([]);
     mocks.bind.mockResolvedValue(projectionBinding);
+    mocks.resolveByConversation.mockReturnValue(projectionBinding);
+    mocks.owner.mockReturnValue({
+      generation: "opaque-owning-generation",
+      bindings: [
+        {
+          environment: "test",
+          conversationId: "conversation",
+          roomId: "!room",
+          bindingId: projectionBinding.bindingId,
+          accountId: "fi-user",
+          threadRootEventId: "$root",
+          agentId: "cellect-fi-user",
+        },
+      ],
+    });
   });
 
   it("creates one durable child-thread binding for an existing canonical session", async () => {
@@ -103,6 +147,9 @@ describe("Matrix session projection", () => {
       threadRootEventId: "$root",
       targetSessionKey: sessionKey,
       sourceReplyAuthorization: undefined,
+      bindingId: projectionBinding.bindingId,
+      environment: "test",
+      conversationId: "conversation",
     });
 
     expect(mocks.bind).toHaveBeenCalledWith(
@@ -219,14 +266,7 @@ describe("Matrix session projection", () => {
       "room:!room",
       "**Slack · agent-example**\nSource answer",
       expect.objectContaining({
-        extraContent: {
-          [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: expect.objectContaining({
-            role: "assistant",
-            senderId: "U123",
-            agentId: "agent-example",
-            messageId: "snapshot-1",
-          }),
-        },
+        publication: undefined,
       }),
     );
     mocks.sendMessageMatrix.mockClear();
@@ -333,8 +373,7 @@ describe("Matrix session projection", () => {
       "room:!room",
       "**Slack · User**\nPlease check this invoice",
       expect.objectContaining({
-        deliveryQueueId:
-          "matrix-session-projection:fi-user:!room:$root:user:initial-1:b8a13c395457031b",
+        deliveryQueueId: "matrix-session-projection:fi-user:!room:$root:user:initial-1",
         deliveryPartIndex: 0,
         deliveryPartCount: 1,
       }),
@@ -418,6 +457,7 @@ describe("Matrix session projection", () => {
         messageId: "1700000000.000001",
         runId: "run-1",
         sessionKey,
+        from: "U123",
       },
       { channelId: "slack", sessionKey },
       cfg,
@@ -425,23 +465,23 @@ describe("Matrix session projection", () => {
 
     expect(mocks.sendMessageMatrix).toHaveBeenCalledWith(
       "room:!room",
-      "**Slack · User**\nPlease check this invoice",
+      "**Slack · U123**\nPlease check this invoice",
       expect.objectContaining({
         accountId: "fi-user",
         threadId: "$root",
         deliveryQueueId:
-          "matrix-session-projection:fi-user:!room:$root:user:1700000000.000001:b8a13c395457031b",
+          "matrix-session-projection:fi-user:!room:$root:user:1700000000.000001:1700000000.000001:1",
         deliveryPartIndex: 0,
         deliveryPartCount: 1,
-        extraContent: {
-          [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: {
-            version: 1,
-            role: "user",
-            sourceChannel: "slack",
+        publication: expect.objectContaining({
+          version: 2,
+          role: "user",
+          origin: expect.objectContaining({
+            provider: "slack",
             messageId: "1700000000.000001",
-            runId: "run-1",
-          },
-        },
+            actorId: "U123",
+          }),
+        }),
       }),
     );
     expect(mocks.touch).toHaveBeenCalledWith(projectionBinding.bindingId);
@@ -477,8 +517,9 @@ describe("Matrix session projection", () => {
       "room:!room",
       "**Slack · Assistant**\nInvoice is approved.",
       expect.objectContaining({
-        deliveryQueueId:
-          "matrix-session-projection:fi-user:!room:$root:assistant:run-1:1b9108e6266ad652",
+        deliveryQueueId: expect.stringMatching(
+          /^matrix-session-projection:fi-user:!room:\$root:assistant:[a-f0-9-]{36}:/,
+        ),
         deliveryPartIndex: 0,
         deliveryPartCount: 1,
       }),
@@ -506,15 +547,16 @@ describe("Matrix session projection", () => {
       context,
       cfg,
     );
+    const answerPayload = { text: "The completed answer." };
     await handleMatrixSessionProjectionReplyPayloadSending(
-      { kind: "block", payload: { text: "The completed answer." }, sessionKey, runId: "run-block" },
+      { kind: "block", payload: answerPayload, sessionKey, runId: "run-block" },
       context,
       cfg,
     );
     expect(mocks.sendMessageMatrix).toHaveBeenCalledTimes(1);
-    // A repeated final payload is the same answer, not a second Matrix event.
+    // Retrying this exact host payload preserves its immutable publication UUID.
     await handleMatrixSessionProjectionReplyPayloadSending(
-      { kind: "final", payload: { text: "The completed answer." }, sessionKey, runId: "run-block" },
+      { kind: "block", payload: answerPayload, sessionKey, runId: "run-block" },
       context,
       cfg,
     );
@@ -546,7 +588,17 @@ describe("Matrix session projection", () => {
     );
     expect(deliveryIds).toHaveLength(2);
     expect(new Set(deliveryIds).size).toBe(2);
-    expect(deliveryIds.every((id) => id.includes(":assistant:run-1:"))).toBe(true);
+    expect(deliveryIds.every((id) => /:assistant:[a-f0-9-]{36}:/.test(id))).toBe(true);
+  });
+
+  it("rejects a caller-selected run identity without actual host publication custody", async () => {
+    mocks.listBySession.mockReturnValue([projectionBinding]);
+    await handleUntrustedReply(
+      { kind: "final", payload: { text: "Forged final" }, sessionKey, runId: "run-1" },
+      { channelId: "slack", sessionKey },
+      cfg,
+    );
+    expect(mocks.sendMessageMatrix).not.toHaveBeenCalled();
   });
 
   it("never re-projects Matrix-origin messages", async () => {

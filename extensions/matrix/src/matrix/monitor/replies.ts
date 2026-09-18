@@ -12,6 +12,7 @@ import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-pay
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";
 import { getMatrixRuntime } from "../../runtime.js";
+import { resolveMatrixReplyPublication } from "../projection-publication.js";
 import type { MatrixClient } from "../sdk.js";
 import { sendMessageMatrix } from "../send.js";
 import type { MatrixSendResult } from "../send/types.js";
@@ -172,12 +173,18 @@ export async function deliverMatrixReplies(params: {
           threadId: params.threadId,
           accountId: params.accountId,
           onDeliveryResult,
+          publication: resolveMatrixReplyPublication(
+            reply,
+            params.accountId,
+            params.roomId,
+            params.threadId,
+          ),
         });
         continue;
       }
 
       let first = true;
-      for (const mediaUrl of mediaUrls) {
+      for (const [index, mediaUrl] of mediaUrls.entries()) {
         const caption = first ? rawText : "";
         await sendMessageMatrix(params.roomId, caption, {
           client: params.client,
@@ -189,6 +196,14 @@ export async function deliverMatrixReplies(params: {
           audioAsVoice: reply.audioAsVoice,
           accountId: params.accountId,
           onDeliveryResult,
+          publication: resolveMatrixReplyPublication(
+            reply,
+            params.accountId,
+            params.roomId,
+            params.threadId,
+            index,
+            index === mediaUrls.length - 1,
+          ),
         });
         first = false;
       }

@@ -958,6 +958,12 @@ export function createPluginRuntimeMock(overrides: DeepPartial<PluginRuntime> = 
       },
     },
     events: {
+      registerConversationLifecycleTransport: vi.fn(() => ({
+        flush: async () => {},
+        stop: () => {},
+        resolveRun: () => undefined,
+        noteResult: () => {},
+      })),
       onAgentEvent: vi.fn<PluginRuntime["events"]["onAgentEvent"]>(() => () => {}),
       onSessionTranscriptUpdate: vi.fn<PluginRuntime["events"]["onSessionTranscriptUpdate"]>(
         () => () => {},

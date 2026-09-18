@@ -1,11 +1,13 @@
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { listAllBindings } from "./thread-bindings-shared.js";
+import { listAllBindings, resolveBindingKey } from "./thread-bindings-shared.js";
 
 export function parseProjectionBindingMetadata(value: Record<string, unknown> | undefined) {
   return {
     externalSource: parseProjectionExternalSource(value?.externalSource),
     sourceReplyAuthorization: normalizeOptionalString(value?.sourceReplyAuthorization) || undefined,
     sourceAccountId: normalizeOptionalString(value?.sourceAccountId) || undefined,
+    environment: normalizeOptionalString(value?.environment) || undefined,
+    projectedConversationId: normalizeOptionalString(value?.projectedConversationId) || undefined,
   };
 }
 
@@ -59,6 +61,7 @@ export function getMatrixProjectionStatus(roomId: string, accountId?: string) {
   }
   return {
     status: "existing" as const,
+    bindingId: resolveBindingKey(binding),
     roomId,
     accountId: binding.accountId,
     agentId: binding.agentId,
@@ -66,6 +69,8 @@ export function getMatrixProjectionStatus(roomId: string, accountId?: string) {
     targetSessionKey: binding.targetSessionKey,
     sourceReplyAuthorization: binding.sourceReplyAuthorization,
     externalSource: binding.externalSource,
+    environment: binding.environment,
+    conversationId: binding.projectedConversationId,
   };
 }
 

@@ -1,15 +1,20 @@
-// Projects an existing canonical OpenClaw session into a Matrix room thread.
-import { createHash } from "node:crypto";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/core";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
 import { isSilentReplyPayloadText } from "openclaw/plugin-sdk/reply-chunking";
+// Projects an existing canonical OpenClaw session into a Matrix room thread.
+import { resolveReplyPublication } from "openclaw/plugin-sdk/reply-runtime";
 import {
   normalizeOptionalString,
   asNonArrayRecord,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CoreConfig } from "../types.js";
+import {
+  createMatrixSourcePublication,
+  resolveMatrixReplyPublication,
+  type MatrixPublication,
+} from "./projection-publication.js";
 import {
   SOURCE_AUTHORIZED_PROJECTION,
   resolveProjectionReplyUpgrade,
@@ -27,7 +32,6 @@ import { withResolvedMatrixSendClient } from "./send/client.js";
 import {
   projectionText,
   reconcileMatrixProjectionSnapshot,
-  MATRIX_SESSION_PROJECTION_CONTENT_KEY,
   type SourceProjectionSnapshot,
   parseSourceProjectionSnapshot,
 } from "./session-projection-snapshot.js";
@@ -71,6 +75,9 @@ type MessageReceivedEvent = {
   sessionKey?: string;
   runId?: string;
   messageId?: string;
+  timestamp?: number;
+  senderId?: string;
+  from?: string;
 };
 
 type ReplyPayloadSendingEvent = {
@@ -78,6 +85,8 @@ type ReplyPayloadSendingEvent = {
   channel?: string;
   sessionKey?: string;
   runId?: string;
+  publicationId?: string;
+  publishedAtMs?: number;
   payload: {
     text?: string;
     isReasoning?: boolean;
@@ -98,18 +107,16 @@ function normalizeChannel(value: unknown): string {
 
 function resolveDeliveryIdentity(params: {
   role: ProjectionRole;
-  text: string;
   messageId?: string;
-  runId?: string;
+  publication?: MatrixPublication;
 }): string | null {
-  const sourceId = clean(params.messageId) || clean(params.runId);
+  const sourceId = params.publication
+    ? `${params.publication.origin.messageId}:${params.publication.logicalPartId}:${params.publication.publicationRevision}`
+    : clean(params.messageId);
   if (!sourceId) {
     return null;
   }
-  // A final turn may be split into several payloads. The content suffix keeps
-  // those parts distinct while making a replay of the same part idempotent.
-  const contentId = createHash("sha256").update(params.text).digest("hex").slice(0, 16);
-  return `${params.role}:${sourceId}:${contentId}`;
+  return `${params.role}:${sourceId}`;
 }
 
 async function projectToMatrix(params: {
@@ -123,6 +130,8 @@ async function projectToMatrix(params: {
   bindings?: ProjectionBinding[];
   senderId?: string;
   agentId?: string;
+  publishedAtMs?: number;
+  hostEvent?: unknown;
 }): Promise<void> {
   const sourceChannel = normalizeChannel(params.sourceChannel);
   if (!sourceChannel || sourceChannel === "matrix") {
@@ -130,8 +139,7 @@ async function projectToMatrix(params: {
   }
   const sessionKey = clean(params.sessionKey);
   const text = params.text.trim();
-  const identity = resolveDeliveryIdentity({ ...params, text });
-  if (!sessionKey || !text || !identity) {
+  if (!sessionKey || !text) {
     return;
   }
 
@@ -158,6 +166,34 @@ async function projectToMatrix(params: {
       if (!roomId || !threadId) {
         return;
       }
+      const originalTime =
+        params.publishedAtMs ??
+        (sourceChannel === "slack" && /^\d+\.\d+$/.test(params.messageId ?? "")
+          ? Math.floor(Number(params.messageId) * 1000)
+          : undefined);
+      const publication = params.hostEvent
+        ? resolveMatrixReplyPublication(
+            params.hostEvent,
+            binding.conversation.accountId,
+            roomId,
+            threadId,
+          )
+        : originalTime !== undefined && params.messageId && params.senderId
+          ? createMatrixSourcePublication({
+              bindingId: binding.bindingId,
+              roomId,
+              threadId,
+              provider: sourceChannel,
+              accountId: binding.conversation.accountId,
+              messageId: params.messageId,
+              actorId: params.senderId,
+              publishedAtMs: originalTime,
+              role: params.role,
+            })
+          : undefined;
+      if (params.hostEvent && !publication) return;
+      const identity = resolveDeliveryIdentity({ ...params, publication });
+      if (!identity) return;
       const deliveryScope =
         binding.metadata?.boundBy === "session-projection-read-only" ? roomId : binding.bindingId;
       const projectionKey = `${deliveryScope}:${identity}`;
@@ -183,21 +219,11 @@ async function projectToMatrix(params: {
             accountId: binding.conversation.accountId,
             threadId,
             deliveryQueueId: `matrix-session-projection:${deliveryScope}:${identity}`,
-            // Each content-addressed projection is one durable payload part;
+            // Each immutable logical publication is one durable payload part;
             // sendMessageMatrix owns any wire-event splitting within that part.
             deliveryPartIndex: 0,
             deliveryPartCount: 1,
-            extraContent: {
-              [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: {
-                version: 1,
-                role: params.role,
-                sourceChannel,
-                ...(params.senderId ? { senderId: params.senderId } : {}),
-                ...(params.agentId ? { agentId: params.agentId } : {}),
-                ...(clean(params.messageId) ? { messageId: clean(params.messageId) } : {}),
-                ...(clean(params.runId) ? { runId: clean(params.runId) } : {}),
-              },
-            },
+            publication,
           },
         );
         bindingService.touch(binding.bindingId);
@@ -256,6 +282,8 @@ export async function handleMatrixSessionProjectionMessageReceived(
     text: event.content,
     messageId: event.messageId ?? context.messageId,
     runId: event.runId ?? context.runId,
+    senderId: event.senderId || event.from,
+    publishedAtMs: event.timestamp,
   });
 }
 
@@ -277,19 +305,22 @@ function isVisibleAnswerReply(event: ReplyPayloadSendingEvent): boolean {
 
 export async function handleMatrixSessionProjectionReplyPayloadSending(
   event: ReplyPayloadSendingEvent,
-  context: MessageHookContext,
+  _context: MessageHookContext,
   cfg: CoreConfig,
 ): Promise<void> {
   if (!isVisibleAnswerReply(event)) {
     return;
   }
+  const publication = resolveReplyPublication(event);
+  if (!publication) return;
   await projectToMatrix({
     cfg,
-    sessionKey: event.sessionKey ?? context.sessionKey ?? "",
-    sourceChannel: event.channel ?? context.channelId,
+    sessionKey: publication.sessionKey ?? "",
+    sourceChannel: publication.channel ?? "",
     role: "assistant",
     text: clean(event.payload.text),
-    runId: event.runId ?? context.runId,
+    runId: publication.runId,
+    hostEvent: event,
   });
 }
 
@@ -440,6 +471,8 @@ export async function createMatrixSessionProjection(params: {
   cfg: CoreConfig;
   targetSessionKey: string;
   roomId: string;
+  environment?: string;
+  conversationId?: string;
   accountId?: string;
   label?: string;
   readOnly?: boolean;
@@ -459,6 +492,7 @@ export async function createMatrixSessionProjection(params: {
   };
 }): Promise<{
   status: "created" | "existing";
+  bindingId: string;
   accountId: string;
   agentId: string;
   roomId: string;
@@ -468,6 +502,15 @@ export async function createMatrixSessionProjection(params: {
 }> {
   const target = resolveProjectionTarget(params);
   const { targetSessionKey, accountId, agentId, roomId } = target;
+  const environment = clean(params.environment);
+  const conversationId = clean(params.conversationId);
+  if (
+    Boolean(environment) !== Boolean(conversationId) ||
+    environment.length > 64 ||
+    conversationId.length > 255
+  ) {
+    throw new Error("Projection environment and conversationId must be supplied together");
+  }
 
   const label = (clean(params.label) || `${agentId} session`).slice(0, 160);
   const externalSource = resolveDetachedProjectionSource({ ...params, targetSessionKey });
@@ -527,6 +570,28 @@ export async function createMatrixSessionProjection(params: {
           });
         }
       }
+      if (existing && environment) {
+        if (
+          (existing.metadata?.environment && existing.metadata.environment !== environment) ||
+          (existing.metadata?.projectedConversationId &&
+            existing.metadata.projectedConversationId !== conversationId)
+        ) {
+          throw new Error("Projection conversation ownership cannot change");
+        }
+        if (!existing.metadata?.environment) {
+          existing = await bindingService.bind({
+            targetSessionKey,
+            targetKind: "session",
+            placement: "current",
+            conversation: existing.conversation,
+            metadata: {
+              ...existing.metadata,
+              environment,
+              projectedConversationId: conversationId,
+            },
+          });
+        }
+      }
       if (existing) {
         if (
           params.sourceDetached &&
@@ -571,6 +636,9 @@ export async function createMatrixSessionProjection(params: {
         }
         const result = {
           status: "existing" as const,
+          bindingId: existing.bindingId,
+          environment: existing.metadata?.environment,
+          conversationId: existing.metadata?.projectedConversationId,
           accountId,
           agentId,
           roomId,
@@ -597,7 +665,6 @@ export async function createMatrixSessionProjection(params: {
             roomId,
             threadId: result.threadRootEventId,
             snapshot: params.sourceSnapshot,
-            retireLegacyDirectReplies: params.sourceDirect,
           });
         }
         return result;
@@ -615,6 +682,7 @@ export async function createMatrixSessionProjection(params: {
         metadata: {
           agentId,
           label,
+          ...(environment ? { environment, projectedConversationId: conversationId } : {}),
           externalSource: params.sourceDetached ? externalSource : undefined,
           ...(authorizedSource
             ? {
@@ -640,6 +708,9 @@ export async function createMatrixSessionProjection(params: {
 
       const result = {
         status: "created" as const,
+        bindingId: binding.bindingId,
+        environment: binding.metadata?.environment,
+        conversationId: binding.metadata?.projectedConversationId,
         accountId,
         agentId,
         roomId,
@@ -660,7 +731,6 @@ export async function createMatrixSessionProjection(params: {
           roomId,
           threadId: result.threadRootEventId,
           snapshot: params.sourceSnapshot,
-          retireLegacyDirectReplies: params.sourceDirect,
         });
       }
       return result;
@@ -678,6 +748,8 @@ export async function handleMatrixSessionProjectionCreate({
       cfg: context.getRuntimeConfig() as CoreConfig,
       targetSessionKey: clean(params?.targetSessionKey),
       roomId: clean(params?.roomId),
+      environment: clean(params?.environment) || undefined,
+      conversationId: clean(params?.conversationId) || undefined,
       accountId: clean(params?.accountId) || undefined,
       label: clean(params?.label) || undefined,
       readOnly: params?.readOnly === true,

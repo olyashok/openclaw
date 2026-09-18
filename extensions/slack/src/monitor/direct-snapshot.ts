@@ -1,4 +1,5 @@
 import type { WebClient } from "@slack/web-api";
+import { hydrateSlackProjectionNames } from "./projection-actor.js";
 import { createProjectionDeadline } from "./projection-deadline.js";
 
 type Message = { ts?: string; user?: string; text?: string; bot_id?: string; reply_count?: number };
@@ -95,19 +96,24 @@ export async function readSlackDirectSnapshot(
   }
   return {
     directSource,
-    messages: [...messages.values()]
-      .flatMap((message) =>
-        message.ts && message.user && typeof message.text === "string"
-          ? [
-              {
-                messageId: message.ts,
-                senderId: message.user,
-                content: message.text,
-                bot: Boolean(message.bot_id),
-              },
-            ]
-          : [],
-      )
-      .toSorted((left, right) => left.messageId.localeCompare(right.messageId)),
+    messages: await hydrateSlackProjectionNames(
+      client,
+      workspaceId,
+      [...messages.values()]
+        .flatMap((message) =>
+          message.ts && message.user && typeof message.text === "string"
+            ? [
+                {
+                  messageId: message.ts,
+                  senderId: message.user,
+                  content: message.text,
+                  bot: Boolean(message.bot_id),
+                },
+              ]
+            : [],
+        )
+        .toSorted((left, right) => left.messageId.localeCompare(right.messageId)),
+      read,
+    ),
   };
 }

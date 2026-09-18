@@ -1,3 +1,4 @@
+import { copyReplyPublication } from "../../auto-reply/reply-publication.js";
 // Normalizes payloads and applies post-send presentation/media effects.
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import { resolveReceiptSourceId } from "../../channels/message/receipt.js";
@@ -89,6 +90,7 @@ export function normalizePayloadsForChannelDelivery(
         )
       : null;
     if (normalized) {
+      copyReplyPublication(entry.payload, normalized);
       normalizedPayloads.push({ index: entry.sourceIndex, payload: normalized });
     }
   }

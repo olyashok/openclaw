@@ -11,6 +11,7 @@ import {
 } from "openclaw/plugin-sdk/reply-payload";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CoreConfig, MatrixStreamingMode, ReplyToMode } from "../../types.js";
+import { resolveMatrixReplyPublication } from "../projection-publication.js";
 import type { MatrixClient } from "../sdk.js";
 import type { createMatrixDraftController } from "./handler-draft-controller.js";
 import {
@@ -92,6 +93,7 @@ export function createMatrixReplyDispatcher(config: {
     ...prefixOptions,
     humanDelay,
     deliver: async (payload: ReplyPayload, info: { kind: string }) => {
+      const publication = resolveMatrixReplyPublication(payload, accountId, roomId, threadTarget);
       const completeDelivery = async (
         result: MatrixReplyDeliveryResult,
       ): Promise<MatrixReplyDeliveryResult> => {
@@ -182,7 +184,10 @@ export function createMatrixReplyDispatcher(config: {
           !threadTarget &&
           (replyToMode !== "off" || payload.replyToTag || payload.replyToCurrent) &&
           normalizeOptionalString(payload.replyToId) !== draftController.currentReplyToId();
-        let mustDeliverFinalNormally = draftStream.mustDeliverFinalNormally();
+        // Canonical publications own a fresh immutable event batch. A technical
+        // draft/edit is never silently promoted into a final accepted result.
+        let mustDeliverFinalNormally =
+          Boolean(publication) || draftStream.mustDeliverFinalNormally();
         const canPotentiallyFinalizeDraft =
           Boolean(payload.text?.trim()) &&
           !payload.isError &&
@@ -191,7 +196,7 @@ export function createMatrixReplyDispatcher(config: {
 
         if (canPotentiallyFinalizeDraft) {
           await draftStream.stop();
-          mustDeliverFinalNormally = draftStream.mustDeliverFinalNormally();
+          mustDeliverFinalNormally = Boolean(publication) || draftStream.mustDeliverFinalNormally();
         } else {
           await draftStream.discardPending();
         }

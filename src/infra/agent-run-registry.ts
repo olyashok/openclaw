@@ -57,6 +57,7 @@ type AgentRunContextOwnership = {
 };
 
 type AgentRunRegistryState = {
+  admissionHandlers?: Set<(runId: string) => void>;
   contexts: Map<string, AgentRunContext>;
   owners: Map<string, AgentRunContextOwnership>;
   queuedRunContextLeases?: WeakMap<AgentRunContext, number>;
@@ -65,6 +66,19 @@ type AgentRunRegistryState = {
   delegatedAuthorityClosedHandlers?: Set<(authority: AgentRunDelegatedAuthority) => void>;
   version: number;
 };
+
+/** Trusted projection custody runs synchronously before admission is returned. */
+export function registerAgentRunAdmissionHandler(handler: (runId: string) => void): () => void {
+  const handlers = (getAgentRunRegistryState().admissionHandlers ??= new Set());
+  handlers.add(handler);
+  return () => {
+    handlers.delete(handler);
+  };
+}
+
+function persistAgentRunAdmission(runId: string): void {
+  for (const handler of getAgentRunRegistryState().admissionHandlers ?? []) handler(runId);
+}
 
 const AGENT_RUN_REGISTRY_STATE_KEY = Symbol.for("openclaw.agentRunRegistry.state");
 
@@ -152,6 +166,7 @@ export function registerAgentRunContext(
       registeredAt: context.registeredAt ?? Date.now(),
     });
     bumpAgentRunIndexVersion();
+    persistAgentRunAdmission(runId);
     return;
   }
   if (
@@ -213,6 +228,7 @@ export function registerAgentRunContext(
   if (runIndexChanged) {
     bumpAgentRunIndexVersion();
   }
+  persistAgentRunAdmission(runId);
 }
 
 /** Claims a run id for a newly admitted execution, replacing stale ownership. */
@@ -301,6 +317,7 @@ export function claimAgentRunContext(
   state.sequenceResetHandler?.(runId);
   clearAgentRunUsage(runId);
   bumpAgentRunIndexVersion();
+  persistAgentRunAdmission(runId);
   return claimId;
 }
 
@@ -733,6 +750,7 @@ export function resetAgentRunRegistryForTest(): void {
   state.contexts.clear();
   state.owners.clear();
   state.queuedRunContextLeases = undefined;
+  state.admissionHandlers?.clear();
   if (hadRunContexts) {
     bumpAgentRunIndexVersion();
   }

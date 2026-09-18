@@ -2,6 +2,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ExecutionIdentityAdmissionToken } from "../../audit/execution-identity-admission.js";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
+import { isReplyPublicationReceiptRequired } from "../../auto-reply/reply-publication.js";
 import type { FinalizedMsgContext } from "../../auto-reply/templating.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { normalizeDeliverableOutboundChannel } from "../../infra/outbound/channel-resolution.js";
@@ -185,7 +186,10 @@ export async function deliverInboundReplyWithMessageSendContextCore(
       silent: params.silent,
     });
   const durability =
-    requiredCapabilities.reconcileUnknownSend === true ? "required" : "best_effort";
+    requiredCapabilities.reconcileUnknownSend === true ||
+    isReplyPublicationReceiptRequired(params.payload)
+      ? "required"
+      : "best_effort";
 
   let support: Awaited<ReturnType<typeof resolveOutboundDurableFinalDeliverySupport>>;
   try {

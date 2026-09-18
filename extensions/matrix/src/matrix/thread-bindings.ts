@@ -226,6 +226,9 @@ function buildMatrixBindingIntroText(params: {
   metadata?: Record<string, unknown>;
   targetSessionKey: string;
 }): string {
+  if (params.metadata?.introText === false) {
+    return "";
+  }
   const introText = normalizeOptionalString(params.metadata?.introText);
   if (introText) {
     return introText;

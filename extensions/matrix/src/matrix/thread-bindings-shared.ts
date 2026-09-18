@@ -21,6 +21,8 @@ export type MatrixThreadBindingRecord = {
   externalSource?: ProjectionExternalSource;
   sourceReplyAuthorization?: string;
   sourceAccountId?: string;
+  environment?: string;
+  projectedConversationId?: string;
   boundAt: number;
   lastActivityAt: number;
   idleTimeoutMs?: number;
@@ -131,6 +133,8 @@ export function toSessionBindingRecord(
       externalSource: record.externalSource,
       sourceReplyAuthorization: record.sourceReplyAuthorization,
       sourceAccountId: record.sourceAccountId,
+      environment: record.environment,
+      projectedConversationId: record.projectedConversationId,
       lastActivityAt: record.lastActivityAt,
       idleTimeoutMs,
       maxAgeMs,
