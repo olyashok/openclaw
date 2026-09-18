@@ -19,6 +19,7 @@ import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "../opera
 import type { ChatRunTiming } from "../server-chat-state.js";
 import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import { loadSessionEntry } from "../session-utils.js";
+import type { TalkRelayConsultAdmission } from "../talk-relay-consult-admission.js";
 import {
   terminalizeRestartSafeChatAdmission,
   type RestartSafeChatTerminalState,
@@ -46,6 +47,7 @@ import { resolveOperatorSessionCreation } from "./session-creation-provenance.js
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
 type ChatSendInternalOptions = {
+  talkRelayAdmission?: TalkRelayConsultAdmission;
   goalResume?: SessionGoalOperation & { action: "resume" };
   trustedSystemInput?: boolean;
   toolsAllow?: string[];
@@ -453,10 +455,12 @@ export async function handleChatSendWithRuntimeTools(
 export async function handleTrustedInternalChatSendWithRuntimeTools(
   options: GatewayRequestHandlerOptions,
   toolsAllow: string[],
+  talkRelayAdmission?: TalkRelayConsultAdmission,
 ): Promise<void> {
   await handleChatSendWithOptions(options, undefined, undefined, {
     trustedSystemInput: true,
     toolsAllow,
+    talkRelayAdmission,
   });
 }
 
@@ -475,8 +479,10 @@ export async function handleChatSendWithSkillWorkshopProposalRevision(
 export async function handleTrustedInternalChatSend(
   options: GatewayRequestHandlerOptions,
   onAdmissionOwned?: () => Promise<boolean>,
+  talkRelayAdmission?: TalkRelayConsultAdmission,
 ): Promise<void> {
   await handleChatSendWithOptions(options, onAdmissionOwned, undefined, {
     trustedSystemInput: true,
+    talkRelayAdmission,
   });
 }

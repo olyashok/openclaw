@@ -19,6 +19,7 @@ import {
   resolveDeletedAgentIdFromSessionKey,
   resolveSessionModelRef,
 } from "../session-utils.js";
+import type { TalkRelayConsultAdmission } from "../talk-relay-consult-admission.js";
 import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import {
   hasGatewayAdminScope,
@@ -113,6 +114,7 @@ export function prepareChatSendSession(params: {
   request: NormalizedChatSendRequest;
   context: GatewayRequestHandlerOptions["context"];
   client: GatewayRequestHandlerOptions["client"];
+  talkRelayAdmission?: TalkRelayConsultAdmission;
 }) {
   const loaded = loadChatSendSessionContext(params);
   if (!loaded.ok) {
@@ -122,6 +124,11 @@ export function prepareChatSendSession(params: {
   const { request, client } = params;
   const { p, explicitOrigin, normalizedAttachments, turnKind, rawMessage } = request;
   const { cfg, sessionKey, entry, legacyKey, rawSessionKey, agentIdOverride } = loadedValue;
+  try {
+    params.talkRelayAdmission?.assertCurrent(sessionKey, client?.connId, explicitOrigin);
+  } catch (error) {
+    return { ok: false as const, error: String(error) };
+  }
   if (
     !isWebchatSessionAllowed({ cfg, client, sessionKey }) ||
     isUnauthorizedRawMatrixBrowserSession({
@@ -129,7 +136,7 @@ export function prepareChatSendSession(params: {
       clientInfo: request.clientInfo,
       pairedClientId: client?.pairedClientId,
       sessionKey,
-      authorizedByBinding: false,
+      authorizedByBinding: params.talkRelayAdmission !== undefined,
     })
   ) {
     return {

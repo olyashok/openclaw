@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
   prepareRelayRun: vi.fn(),
   abortChatRunById: vi.fn(),
   resolveAuthority: vi.fn(() => ({ senderIsOwner: false, toolsAllow: ["read"] })),
+  relayAdmission: { assertCurrent: vi.fn() },
+}));
+
+vi.mock("./talk-relay-consult-admission.js", () => ({
+  prepareTalkRelayConsultAdmission: () => mocks.relayAdmission,
 }));
 
 vi.mock("./server-methods/chat-send-handler.js", () => ({
@@ -102,6 +107,7 @@ describe("Talk Matrix consult delivery", () => {
         }),
       }),
       ["read"],
+      mocks.relayAdmission,
     );
     expect(mocks.handleChatSendWithRuntimeTools).not.toHaveBeenCalled();
   });

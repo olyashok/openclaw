@@ -23,6 +23,10 @@ import type {
 } from "./server-methods/shared-types.js";
 import { resolveTalkAgentConsultAuthority } from "./talk-client-gateway-control.js";
 import { prepareTalkRealtimeRelayAgentRunRegistration } from "./talk-realtime-relay.js";
+import {
+  prepareTalkRelayConsultAdmission,
+  type TalkRelayConsultAdmission,
+} from "./talk-relay-consult-admission.js";
 import { formatForLog } from "./ws-log.js";
 
 type TalkChatSendAckStatus = "started" | "in_flight" | "ok" | "timeout" | "error";
@@ -102,7 +106,20 @@ export async function startTalkRealtimeAgentConsult(params: {
   const normalizedTalk = normalizeTalkSection(params.context.getRuntimeConfig().talk);
   const authority = resolveTalkAgentConsultAuthority(params.client?.connect?.scopes);
   let registerRelayRun: ((runId: string) => "registered" | "detached") | undefined;
+  let talkRelayAdmission: TalkRelayConsultAdmission | undefined;
   try {
+    if (params.matrixRoute) {
+      if (!params.relaySessionId || !params.connId) {
+        throw new Error("Matrix Talk consultation requires its owning relay");
+      }
+      talkRelayAdmission = prepareTalkRelayConsultAdmission({
+        relaySessionId: params.relaySessionId,
+        connId: params.connId,
+        sessionKey: params.sessionKey,
+        callId: params.callId,
+        matrixRoute: params.matrixRoute,
+      });
+    }
     registerRelayRun =
       params.relaySessionId && params.connId
         ? prepareTalkRealtimeRelayAgentRunRegistration({
@@ -200,8 +217,12 @@ export async function startTalkRealtimeAgentConsult(params: {
     // delegated run must carry the Talk caller's already-resolved tool boundary.
     const chatSendResult = params.matrixRoute
       ? authority.toolsAllow !== undefined
-        ? handleTrustedInternalChatSendWithRuntimeTools(chatSendOptions, authority.toolsAllow)
-        : handleTrustedInternalChatSend(chatSendOptions)
+        ? handleTrustedInternalChatSendWithRuntimeTools(
+            chatSendOptions,
+            authority.toolsAllow,
+            talkRelayAdmission,
+          )
+        : handleTrustedInternalChatSend(chatSendOptions, undefined, talkRelayAdmission)
       : authority.toolsAllow !== undefined
         ? handleChatSendWithRuntimeTools(chatSendOptions, authority.toolsAllow)
         : handleChatSend(chatSendOptions);

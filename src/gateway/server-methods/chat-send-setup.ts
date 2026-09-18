@@ -1,5 +1,6 @@
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import type { SessionGoalOperation } from "../../config/sessions/goals-operations.js";
+import type { TalkRelayConsultAdmission } from "../talk-relay-consult-admission.js";
 import { admitChatSend } from "./chat-send-admission.js";
 import { runChatSendPreAdmission } from "./chat-send-pre-admission.js";
 import { normalizeChatSendRequest } from "./chat-send-request.js";
@@ -16,6 +17,7 @@ export async function prepareAndAdmitChatSend(
   }: Pick<GatewayRequestHandlerOptions, "params" | "respond" | "context" | "client">,
   onAdmissionOwned?: () => Promise<boolean>,
   options?: {
+    talkRelayAdmission?: TalkRelayConsultAdmission;
     trustedSystemInput?: boolean;
     goalResume?: SessionGoalOperation & { action: "resume" };
   },
@@ -42,6 +44,7 @@ export async function prepareAndAdmitChatSend(
     request: normalizedRequest.value,
     context,
     client,
+    talkRelayAdmission: options?.talkRelayAdmission,
   });
   if (!preparedSession.ok) {
     respond(
@@ -63,6 +66,7 @@ export async function prepareAndAdmitChatSend(
   if (!shouldAdmit) {
     return undefined;
   }
+  const talkRelayAdmission = options?.talkRelayAdmission;
   const admitted = await admitChatSend({
     request: normalizedRequest.value,
     session: preparedSession.value,
@@ -70,6 +74,14 @@ export async function prepareAndAdmitChatSend(
     context,
     client,
     onAdmissionOwned,
+    assertDelegatedAdmission: talkRelayAdmission
+      ? () =>
+          talkRelayAdmission.assertCurrent(
+            preparedSession.value.sessionKey,
+            client?.connId,
+            normalizedRequest.value.explicitOrigin,
+          )
+      : undefined,
   });
   if (!admitted.ok) {
     return undefined;
