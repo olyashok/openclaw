@@ -5,6 +5,7 @@ import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-ke
 import { projectChatDisplayMessage } from "../chat-display-projection.js";
 import { capLiveAssistantText } from "../live-chat-projector.js";
 import type { GatewayBroadcastOpts } from "../server-broadcast-types.js";
+import { publishChatTerminal } from "../chat-terminal-observer.js";
 import { tryResolveSessionCompatibilityOwnerAgentId } from "../session-request-agent.js";
 import type { GatewayRequestContext } from "./types.js";
 
@@ -142,6 +143,7 @@ function broadcastChatFrame(
     ...frame,
   };
   const group = params.context.chatRunState?.runs.get(params.runId)?.liveTextGroup?.signal;
+  publishChatTerminal(payload);
   params.context.broadcast("chat", payload, {
     ...(liveText ? { liveText, dropIfSlow: true } : group ? { liveText: { group } } : {}),
     sessionKeys: resolveChatSessionKeys({

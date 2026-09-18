@@ -301,6 +301,7 @@ export type RelaySession = {
   activeAgentRuns: Map<string, string>;
   provider: string;
   activeAgentToolCalls: Map<string, string>;
+  agentToolCallTerminalSubscriptions?: Map<string, () => void>;
   toolCalls: RelayToolCallLedger;
   providerToolCallIds: Map<string, string>;
   relayToolCallIdsByProviderId: Map<string, string>;
