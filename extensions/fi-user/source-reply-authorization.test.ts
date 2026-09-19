@@ -62,7 +62,7 @@ describe("source reply authorization", () => {
     ).resolves.toMatchObject({ sourceAccountId: "fi-user" });
     expect(readDirectIdentity).toHaveBeenCalledWith("D123", "U123");
     await expect(guard.resolveSource({ targetSessionKey: sessionKey })).rejects.toThrow(
-      "not authorized",
+      "Source account identity is unavailable",
     );
     await expect(
       guard.resolveSource({
