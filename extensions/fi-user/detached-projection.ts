@@ -19,6 +19,7 @@ type Scope = NonNullable<ChannelProjectionParams["channelScope"]> & {
 type Reader = { workspaceId: string; readChannel: (channelId: string) => Promise<Scope> };
 const PARENT =
   /^agent:(cellect-fi-user|cellect-fi-admin):slack:(?:channel|group):([cg][a-z0-9]+)$/i;
+const RECONCILE_BATCH_SIZE = 8;
 const identity = (source: Source) =>
   `${source.workspaceId}:${source.channelId}:${source.rootMessageId}`;
 const safeError = (error: unknown) =>
@@ -84,8 +85,9 @@ export function createDetachedProjectionReconciler(
     }
   >();
   let channelCursor = "";
-  let contentCursor = "";
+  let existingCursor = "";
   let refreshAt = 0;
+  const existingOutcomes = new Map<string, "ok" | "unavailable" | "error">();
   const run = async (
     connection: { baseUrl: string; token: string },
     bindings: ProjectionInventoryBinding[],
@@ -174,21 +176,30 @@ export function createDetachedProjectionReconciler(
     const existing = bindings.filter(
       (binding) => binding.externalSource?.provider === "slack" && PARENT.test(binding.sessionKey),
     );
+    const currentRooms = new Set(existing.map((binding) => binding.roomId));
+    for (const roomId of existingOutcomes.keys()) {
+      if (!currentRooms.has(roomId)) existingOutcomes.delete(roomId);
+    }
     const roomIds = existing.map((binding) => binding.roomId).toSorted();
-    const contentRooms = new Set(
-      [
-        ...roomIds.filter((id) => id > contentCursor),
-        ...roomIds.filter((id) => id <= contentCursor),
-      ].slice(0, 10),
+    const pendingRooms = roomIds.filter((roomId) => !existingOutcomes.has(roomId));
+    const existingRooms = new Set(
+      (pendingRooms.length
+        ? pendingRooms
+        : [
+            ...roomIds.filter((id) => id > existingCursor),
+            ...roomIds.filter((id) => id <= existingCursor),
+          ]
+      ).slice(0, RECONCILE_BATCH_SIZE),
     );
-    contentCursor = [...contentRooms].at(-1) ?? contentCursor;
+    existingCursor = [...existingRooms].at(-1) ?? existingCursor;
     for (const binding of existing) {
-      signal.throwIfAborted();
       const source = binding.externalSource;
       if (!source) {
         continue;
       }
       knownRoots.add(identity(source));
+      if (!existingRooms.has(binding.roomId)) continue;
+      signal.throwIfAborted();
       const agentId = PARENT.exec(binding.sessionKey)?.[1];
       const entry = agentId
         ? getSessionEntry({ agentId, sessionKey: binding.sessionKey, readConsistency: "latest" })
@@ -213,12 +224,12 @@ export function createDetachedProjectionReconciler(
           reconcile: true,
           projectionRoomId: binding.roomId,
           channelScope: await scopeFor(accountId, source.channelId),
-          membershipOnly: !contentRooms.has(binding.roomId),
+          membershipOnly: false,
           signal,
         });
+        existingOutcomes.set(binding.roomId, "ok");
       } catch (error) {
-        unavailable++;
-        await publish({
+        const revoked = await publish({
           api,
           ...connection,
           sessionKey: binding.sessionKey,
@@ -228,7 +239,11 @@ export function createDetachedProjectionReconciler(
           projectionRoomId: binding.roomId,
           unavailable: true,
           signal,
-        }).catch(() => {});
+        }).then(
+          () => true,
+          () => false,
+        );
+        existingOutcomes.set(binding.roomId, revoked ? "unavailable" : "error");
         api.logger.warn(
           `fi-user: detached source unavailable room=${binding.roomId} error=${safeError(error)}`,
         );
@@ -265,7 +280,7 @@ export function createDetachedProjectionReconciler(
         const scope = await scopeFor(parent.accountId, parent.channelId);
         if (!state.roots.length) {
           if (state.pages > 0 && !state.cursor) {
-            state.roots = [...state.failed].slice(0, 10);
+            state.roots = [...state.failed].slice(0, RECONCILE_BATCH_SIZE);
           } else {
             if (state.failed.size >= 1000) {
               throw new Error(
@@ -278,7 +293,7 @@ export function createDetachedProjectionReconciler(
             state.roots = [...page.roots];
           }
         }
-        for (const rootMessageId of state.roots.slice(0, 10)) {
+        for (const rootMessageId of state.roots.slice(0, RECONCILE_BATCH_SIZE)) {
           signal.throwIfAborted();
           const source: Source = {
             provider: "slack",
@@ -330,9 +345,15 @@ export function createDetachedProjectionReconciler(
     }
     return {
       channels: parents.size,
-      pending: keys.filter((candidate) => !scans.get(candidate)?.done).length,
-      unavailable,
-      error: states.filter((state) => state.error).length,
+      pending:
+        keys.filter((candidate) => !scans.get(candidate)?.done).length +
+        roomIds.filter((roomId) => !existingOutcomes.has(roomId)).length,
+      unavailable:
+        unavailable +
+        [...existingOutcomes.values()].filter((outcome) => outcome === "unavailable").length,
+      error:
+        states.filter((state) => state.error).length +
+        [...existingOutcomes.values()].filter((outcome) => outcome === "error").length,
       created: states.reduce((sum, state) => sum + state.created, 0),
       existing: states.reduce((sum, state) => sum + state.existing, 0),
       skipped: states.reduce((sum, state) => sum + state.skipped, 0),
