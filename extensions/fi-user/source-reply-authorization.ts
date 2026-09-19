@@ -73,8 +73,14 @@ export function registerSourceReplyAuthorization(
         : legacyDirect && accounts.size === 1
           ? [...accounts][0]
           : undefined);
-    if (!entry || !accountId || !accounts.has(accountId)) {
-      throw new Error("Source account is not authorized");
+    if (!entry) {
+      throw new Error("Source session is unavailable");
+    }
+    if (!accountId) {
+      throw new Error("Source account identity is unavailable");
+    }
+    if (!accounts.has(accountId)) {
+      throw new Error("Source account is not authorized for this agent");
     }
     const reader = api.runtime.channel.runtimeContexts.get<Reader>({
       channelId: "slack",
@@ -82,7 +88,7 @@ export function registerSourceReplyAuthorization(
       capability: "thread-read-projection",
     });
     if (!reader) {
-      throw new Error("Source account is unavailable");
+      throw new Error("Source account reader is unavailable");
     }
     const source = params.externalSource;
     const channelId = source?.channelId ?? origin?.nativeChannelId;
