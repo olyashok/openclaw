@@ -123,7 +123,7 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
     "matrix.sessionProjection.create",
     async (options) => {
       const { handleMatrixSessionProjectionCreate } = await loadSessionProjectionModule();
-      await handleMatrixSessionProjectionCreate(options);
+      await handleMatrixSessionProjectionCreate(options, api.runtime.channel);
     },
     { scope: "operator.admin" },
   );

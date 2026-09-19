@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
-import { getMatrixRuntime } from "../runtime.js";
 import type { ProjectionExternalSource } from "./projection-source.js";
 import type { MatrixClient } from "./sdk.js";
 import {
@@ -26,13 +25,14 @@ export type SourceReplyAuthorizer = {
 };
 
 export async function resolveProjectionReplyUpgrade(params: {
+  channelRuntime: PluginRuntime["channel"];
   targetSessionKey: string;
   externalSource?: ProjectionExternalSource;
   protocol: string;
   readOnly?: boolean;
   existing?: { targetSessionKey: string; metadata?: Record<string, unknown> };
 }) {
-  const guard = getMatrixRuntime().channel.runtimeContexts.get<SourceReplyAuthorizer>({
+  const guard = params.channelRuntime.runtimeContexts.get<SourceReplyAuthorizer>({
     channelId: "matrix",
     capability: "source-session-authorization",
   });

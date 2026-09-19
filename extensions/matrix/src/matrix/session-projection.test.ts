@@ -21,12 +21,13 @@ const mocks = vi.hoisted(() => ({
   })),
   touch: vi.fn(),
   sourceGuard: vi.fn(),
+  globalSourceGuard: vi.fn(),
   resolveByConversation: vi.fn(),
   owner: vi.fn(),
 }));
 
 vi.mock("../runtime.js", () => ({
-  getMatrixRuntime: () => ({ channel: { runtimeContexts: { get: mocks.sourceGuard } } }),
+  getMatrixRuntime: () => ({ channel: { runtimeContexts: { get: mocks.globalSourceGuard } } }),
 }));
 
 vi.mock("openclaw/plugin-sdk/agent-scope-runtime", () => ({
@@ -186,6 +187,7 @@ describe("Matrix session projection", () => {
     mocks.listBySession.mockReturnValue([readonly]);
     const params = {
       cfg,
+      channelRuntime: { runtimeContexts: { get: mocks.sourceGuard } } as never,
       targetSessionKey: sessionKey,
       roomId: "!room",
       externalSource: source,
@@ -208,6 +210,7 @@ describe("Matrix session projection", () => {
       targetSessionKey: sessionKey,
       sourceReplyAuthorization: "fi-v1",
     });
+    expect(mocks.globalSourceGuard).not.toHaveBeenCalled();
     await expect(createMatrixSessionProjection(params)).resolves.toMatchObject({
       threadRootEventId: "$root",
       sourceReplyAuthorization: "fi-v1",

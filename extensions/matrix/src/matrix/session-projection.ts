@@ -2,6 +2,7 @@ import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-bindi
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/core";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
+import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import { isSilentReplyPayloadText } from "openclaw/plugin-sdk/reply-chunking";
 // Projects an existing canonical OpenClaw session into a Matrix room thread.
 import { resolveReplyPublication } from "openclaw/plugin-sdk/reply-runtime";
@@ -469,6 +470,7 @@ export function inspectMatrixSessionProjection(params: ProjectionTarget) {
 
 export async function createMatrixSessionProjection(params: {
   cfg: CoreConfig;
+  channelRuntime?: PluginRuntime["channel"];
   targetSessionKey: string;
   roomId: string;
   environment?: string;
@@ -541,7 +543,11 @@ export async function createMatrixSessionProjection(params: {
       );
       let authorizedSource: Awaited<ReturnType<typeof resolveProjectionReplyUpgrade>> | undefined;
       if (params.sourceReplyAuthorization) {
+        if (!params.channelRuntime) {
+          throw new Error("Requested source reply authorization is unavailable");
+        }
         authorizedSource = await resolveProjectionReplyUpgrade({
+          channelRuntime: params.channelRuntime,
           targetSessionKey,
           externalSource,
           protocol: params.sourceReplyAuthorization,
@@ -738,14 +744,14 @@ export async function createMatrixSessionProjection(params: {
   );
 }
 
-export async function handleMatrixSessionProjectionCreate({
-  params,
-  respond,
-  context,
-}: GatewayRequestHandlerOptions): Promise<void> {
+export async function handleMatrixSessionProjectionCreate(
+  { params, respond, context }: GatewayRequestHandlerOptions,
+  channelRuntime: PluginRuntime["channel"],
+): Promise<void> {
   try {
     const result = await createMatrixSessionProjection({
       cfg: context.getRuntimeConfig() as CoreConfig,
+      channelRuntime,
       targetSessionKey: clean(params?.targetSessionKey),
       roomId: clean(params?.roomId),
       environment: clean(params?.environment) || undefined,
