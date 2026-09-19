@@ -46,6 +46,7 @@ export type SlackProjectionContext = {
 
 const CHANNEL_SESSION =
   /^agent:(cellect-fi-user|cellect-fi-admin):slack:channel:([cg][a-z0-9]+):thread:(\d+\.\d+)$/i;
+const RECONCILE_BATCH_SIZE = 8;
 const snapshotQueue = new KeyedAsyncQueue();
 type SlackThreadReader = {
   workspaceId: string;
@@ -358,7 +359,7 @@ export function registerSlackProjectionReconciler(
   let running = false;
   let wakeRequested = false;
   let discoveryCursor = "";
-  let contentCursor = "";
+  const bindingSweepSeen = new Set<string>();
   const outcomes = new Map<string, "created" | "existing" | "skipped" | "error">();
   let report = {
     scanned: 0,
@@ -507,7 +508,7 @@ export function registerSlackProjectionReconciler(
         ...keys.filter((key) => key > discoveryCursor),
         ...keys.filter((key) => key <= discoveryCursor),
       ];
-      const batch = ordered.slice(0, 10).flatMap((key) => {
+      const batch = ordered.slice(0, RECONCILE_BATCH_SIZE).flatMap((key) => {
         const candidate = discovered.get(key);
         if (!candidate) {
           return [];
@@ -515,24 +516,32 @@ export function registerSlackProjectionReconciler(
         discoveryCursor = key;
         return [{ ...candidate, roomId: undefined }];
       });
-      const contentKeys = bindings
+      const bindingKeys = bindings
         .filter((binding) => CHANNEL_SESSION.test(binding.sessionKey))
         .map((binding) => binding.sessionKey)
         .toSorted();
-      const contentBatch = new Set(
-        [
-          ...contentKeys.filter((key) => key > contentCursor),
-          ...contentKeys.filter((key) => key <= contentCursor),
-        ].slice(0, 10),
+      for (const sessionKey of bindingSweepSeen) {
+        if (!bindingKeys.includes(sessionKey)) bindingSweepSeen.delete(sessionKey);
+      }
+      if (bindingKeys.length > 0 && bindingKeys.every((key) => bindingSweepSeen.has(key))) {
+        bindingSweepSeen.clear();
+      }
+      const bindingBatch = new Set(
+        bindingKeys.filter((key) => !bindingSweepSeen.has(key)).slice(0, RECONCILE_BATCH_SIZE),
       );
-      contentCursor = [...contentBatch].at(-1) ?? contentCursor;
+      for (const sessionKey of bindingBatch) bindingSweepSeen.add(sessionKey);
       const channelScopes = new Map<
         string,
         { createdAt: number; scope: Promise<SlackChannelScope> }
       >();
-      const projects = [...bindings, ...batch];
-      // ACLs are reconciled for every existing room, but source history is bounded
-      // separately. Sharing one roster per channel avoids N Slack member reads.
+      const projects = [
+        ...bindings.filter((binding) => bindingBatch.has(binding.sessionKey)),
+        ...batch,
+      ];
+      // Both ACL and source-history work are bounded. A full-room ACL sweep in one
+      // tick exhausts Fi's shared provisioning credential before live traffic can
+      // authenticate. Active Slack deliveries still project immediately; this loop
+      // is the durable repair path.
       for (const { sessionKey, roomId } of projects) {
         if (stopped || controller !== generation) {
           return;
@@ -583,7 +592,7 @@ export function registerSlackProjectionReconciler(
             discover: !roomId,
             projectionRoomId: roomId,
             channelScope,
-            membershipOnly: Boolean(roomId) && !contentBatch.has(sessionKey),
+            membershipOnly: false,
             onResult: (status) => {
               if (identity) {
                 outcomes.set(identity, status);

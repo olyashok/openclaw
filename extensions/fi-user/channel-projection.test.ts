@@ -353,7 +353,7 @@ describe("Fi Slack channel publisher", () => {
     }
     service.start();
     await vi.advanceTimersByTimeAsync(5000);
-    expect(fetchMock).toHaveBeenCalledTimes(10);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
     await vi.advanceTimersByTimeAsync(60_000);
     service.stop();
     const payloads = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
@@ -420,9 +420,11 @@ describe("Fi Slack channel publisher", () => {
       }
       service.start();
       await vi.advanceTimersByTimeAsync(5000);
-      service.stop();
       expect(readChannel).toHaveBeenCalledTimes(1);
-      expect(readThread).toHaveBeenCalledTimes(outage ? 0 : 10);
+      expect(readThread).toHaveBeenCalledTimes(outage ? 0 : 8);
+      expect(fetchMock).toHaveBeenCalledTimes(8);
+      await vi.advanceTimersByTimeAsync(60_000);
+      service.stop();
       const payloads = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
       expect(payloads).toHaveLength(12);
       expect(payloads.every((payload) => payload.reconcile === true)).toBe(true);
@@ -431,7 +433,7 @@ describe("Fi Slack channel publisher", () => {
           true,
         );
       } else {
-        expect(payloads.filter((payload) => payload.snapshot)).toHaveLength(10);
+        expect(payloads.filter((payload) => payload.snapshot)).toHaveLength(12);
         expect(payloads.every((payload) => payload.source.memberSenderIds.includes("U111"))).toBe(
           true,
         );

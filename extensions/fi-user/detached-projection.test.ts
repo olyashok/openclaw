@@ -114,6 +114,37 @@ describe("native parent-session Slack history discovery", () => {
     );
     expect(f.readChannel).not.toHaveBeenCalled();
   });
+  it("bounds existing detached-room repair and reports the remaining backlog", async () => {
+    const f = fixture();
+    const bindings = Array.from({ length: 12 }, (_, index) => ({
+      sessionKey: f.sessionKey,
+      roomId: `!room${String(index).padStart(2, "0")}`,
+      sourceAccountId: "fi-admin",
+      externalSource: {
+        provider: "slack" as const,
+        workspaceId: "T123",
+        channelId: "C123",
+        rootMessageId: `1700000000.${String(index).padStart(6, "0")}`,
+      },
+    }));
+    const { reconcile } = createDetachedProjectionReconciler(f.api, f.publish);
+    const first = await reconcile(
+      { baseUrl: "https://fi.example", token: "test" },
+      bindings,
+      new AbortController().signal,
+      new Set(),
+    );
+    expect(f.publish).toHaveBeenCalledTimes(8);
+    expect(first.pending).toBe(4);
+    const second = await reconcile(
+      { baseUrl: "https://fi.example", token: "test" },
+      bindings,
+      new AbortController().signal,
+      new Set(),
+    );
+    expect(f.publish).toHaveBeenCalledTimes(12);
+    expect(second.pending).toBe(0);
+  });
   it("rescans completed skipped roots after opt-out restoration and live parent activity", async () => {
     vi.useFakeTimers();
     const f = fixture();
