@@ -10,6 +10,17 @@ describe("projection reconciliation batching", () => {
     expect([...takeSweepBatch(keys, seen, 8)]).toEqual(keys.slice(0, 8));
   });
 
+  it("drops retired keys and handles an empty inventory", () => {
+    const seen = new Set(["retired"]);
+    expect([...takeSweepBatch(["current"], seen, 8)]).toEqual(["current"]);
+    expect(seen).toEqual(new Set(["current"]));
+    expect([...takeSweepBatch([], seen, 8)]).toEqual([]);
+    expect(takePendingOrRotatingBatch([], new Set(), "cursor", 8)).toEqual({
+      batch: new Set(),
+      cursor: "cursor",
+    });
+  });
+
   it("prioritizes never-repaired items before rotating completed items", () => {
     const keys = ["a", "b", "c", "d"];
     const first = takePendingOrRotatingBatch(keys, new Set(["a", "b"]), "", 3);
