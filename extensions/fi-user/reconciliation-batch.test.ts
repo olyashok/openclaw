@@ -1,0 +1,20 @@
+import { describe, expect, it } from "vitest";
+import { takePendingOrRotatingBatch, takeSweepBatch } from "./reconciliation-batch.js";
+
+describe("projection reconciliation batching", () => {
+  it("finishes a sweep without repeating work before rotating", () => {
+    const seen = new Set<string>();
+    const keys = Array.from({ length: 12 }, (_, index) => `key-${String(index).padStart(2, "0")}`);
+    expect([...takeSweepBatch(keys, seen, 8)]).toEqual(keys.slice(0, 8));
+    expect([...takeSweepBatch(keys, seen, 8)]).toEqual(keys.slice(8));
+    expect([...takeSweepBatch(keys, seen, 8)]).toEqual(keys.slice(0, 8));
+  });
+
+  it("prioritizes never-repaired items before rotating completed items", () => {
+    const keys = ["a", "b", "c", "d"];
+    const first = takePendingOrRotatingBatch(keys, new Set(["a", "b"]), "", 3);
+    expect([...first.batch]).toEqual(["c", "d"]);
+    const next = takePendingOrRotatingBatch(keys, new Set(keys), first.cursor, 3);
+    expect([...next.batch]).toEqual(["a", "b", "c"]);
+  });
+});

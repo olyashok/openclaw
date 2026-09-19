@@ -13,6 +13,7 @@ import {
   reconcileSlackDirectProjections,
   recoverSlackDirectProjection,
 } from "./direct-projection.js";
+import { RECONCILE_BATCH_SIZE, takeSweepBatch } from "./reconciliation-batch.js";
 
 type SlackSnapshot = {
   workspaceId: string;
@@ -46,7 +47,6 @@ export type SlackProjectionContext = {
 
 const CHANNEL_SESSION =
   /^agent:(cellect-fi-user|cellect-fi-admin):slack:channel:([cg][a-z0-9]+):thread:(\d+\.\d+)$/i;
-const RECONCILE_BATCH_SIZE = 8;
 const snapshotQueue = new KeyedAsyncQueue();
 type SlackThreadReader = {
   workspaceId: string;
@@ -520,16 +520,7 @@ export function registerSlackProjectionReconciler(
         .filter((binding) => CHANNEL_SESSION.test(binding.sessionKey))
         .map((binding) => binding.sessionKey)
         .toSorted();
-      for (const sessionKey of bindingSweepSeen) {
-        if (!bindingKeys.includes(sessionKey)) bindingSweepSeen.delete(sessionKey);
-      }
-      if (bindingKeys.length > 0 && bindingKeys.every((key) => bindingSweepSeen.has(key))) {
-        bindingSweepSeen.clear();
-      }
-      const bindingBatch = new Set(
-        bindingKeys.filter((key) => !bindingSweepSeen.has(key)).slice(0, RECONCILE_BATCH_SIZE),
-      );
-      for (const sessionKey of bindingBatch) bindingSweepSeen.add(sessionKey);
+      const bindingBatch = takeSweepBatch(bindingKeys, bindingSweepSeen, RECONCILE_BATCH_SIZE);
       const channelScopes = new Map<
         string,
         { createdAt: number; scope: Promise<SlackChannelScope> }

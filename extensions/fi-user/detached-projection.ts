@@ -5,6 +5,7 @@ import {
   sessionDeliveryOrigin,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import type { ChannelProjectionParams } from "./channel-projection.js";
+import { RECONCILE_BATCH_SIZE, takePendingOrRotatingBatch } from "./reconciliation-batch.js";
 
 type Source = NonNullable<ChannelProjectionParams["detachedSource"]>;
 export type ProjectionInventoryBinding = {
@@ -19,7 +20,6 @@ type Scope = NonNullable<ChannelProjectionParams["channelScope"]> & {
 type Reader = { workspaceId: string; readChannel: (channelId: string) => Promise<Scope> };
 const PARENT =
   /^agent:(cellect-fi-user|cellect-fi-admin):slack:(?:channel|group):([cg][a-z0-9]+)$/i;
-const RECONCILE_BATCH_SIZE = 8;
 const identity = (source: Source) =>
   `${source.workspaceId}:${source.channelId}:${source.rootMessageId}`;
 const safeError = (error: unknown) =>
@@ -178,27 +178,28 @@ export function createDetachedProjectionReconciler(
     );
     const currentRooms = new Set(existing.map((binding) => binding.roomId));
     for (const roomId of existingOutcomes.keys()) {
-      if (!currentRooms.has(roomId)) existingOutcomes.delete(roomId);
+      if (!currentRooms.has(roomId)) {
+        existingOutcomes.delete(roomId);
+      }
     }
     const roomIds = existing.map((binding) => binding.roomId).toSorted();
-    const pendingRooms = roomIds.filter((roomId) => !existingOutcomes.has(roomId));
-    const existingRooms = new Set(
-      (pendingRooms.length
-        ? pendingRooms
-        : [
-            ...roomIds.filter((id) => id > existingCursor),
-            ...roomIds.filter((id) => id <= existingCursor),
-          ]
-      ).slice(0, RECONCILE_BATCH_SIZE),
+    const scheduled = takePendingOrRotatingBatch(
+      roomIds,
+      new Set(existingOutcomes.keys()),
+      existingCursor,
+      RECONCILE_BATCH_SIZE,
     );
-    existingCursor = [...existingRooms].at(-1) ?? existingCursor;
+    const existingRooms = scheduled.batch;
+    existingCursor = scheduled.cursor;
     for (const binding of existing) {
       const source = binding.externalSource;
       if (!source) {
         continue;
       }
       knownRoots.add(identity(source));
-      if (!existingRooms.has(binding.roomId)) continue;
+      if (!existingRooms.has(binding.roomId)) {
+        continue;
+      }
       signal.throwIfAborted();
       const agentId = PARENT.exec(binding.sessionKey)?.[1];
       const entry = agentId
