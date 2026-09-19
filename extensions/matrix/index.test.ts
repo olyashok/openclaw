@@ -177,9 +177,10 @@ describe("matrix plugin", () => {
     ).toEqual({ scope: "operator.admin" });
     expect(projectionRegistration?.[2]).toEqual({ scope: "operator.admin" });
     await projectionRegistration?.[1]({ params: { roomId: "!room" } });
-    expect(runtimeMocks.handleMatrixSessionProjectionCreate).toHaveBeenCalledWith({
-      params: { roomId: "!room" },
-    });
+    expect(runtimeMocks.handleMatrixSessionProjectionCreate).toHaveBeenCalledWith(
+      { params: { roomId: "!room" } },
+      api.runtime.channel,
+    );
     const inspectionRegistration = registerGatewayMethod.mock.calls.find(
       ([method]) => method === "matrix.sessionProjection.inspect",
     );
