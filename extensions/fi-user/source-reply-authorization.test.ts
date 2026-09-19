@@ -80,7 +80,7 @@ describe("source reply authorization", () => {
     });
     await expect(
       guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
-    ).rejects.toThrow("not authorized");
+    ).rejects.toThrow("Source account identity is unavailable");
   });
   afterEach(() => {
     vi.unstubAllGlobals();
