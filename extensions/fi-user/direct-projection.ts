@@ -4,6 +4,7 @@ import {
   listSessionEntries,
   sessionDeliveryOrigin,
 } from "openclaw/plugin-sdk/session-store-runtime";
+import { RECONCILE_HISTORY_BATCH_SIZE, takeSweepBatch } from "./reconciliation-batch.js";
 
 const DIRECT_SESSION = /^agent:(cellect-fi-user|cellect-fi-admin):slack:direct:([uw][a-z0-9]+)$/i;
 type DirectReader = {
@@ -120,6 +121,7 @@ export async function reconcileSlackDirectProjections(
     externalSource?: { channelId: string; peerSenderId?: string };
   }>,
   signal: AbortSignal,
+  sweepSeen = new Set<string>(),
 ) {
   const config = api.runtime.config?.current?.() ?? api.config;
   const configured = (config?.bindings ?? []).filter(
@@ -141,6 +143,8 @@ export async function reconcileSlackDirectProjections(
       }
     }
   }
+  const sessionKeys = [...sessions].toSorted();
+  const scheduled = takeSweepBatch(sessionKeys, sweepSeen, RECONCILE_HISTORY_BATCH_SIZE);
   const report = { scanned: sessions.size, created: 0, existing: 0, skipped: 0, error: 0 };
   const post = async (body: unknown) => {
     const response = await fetch(`${connection.baseUrl}/api/openclaw-session-projection`, {
@@ -162,7 +166,7 @@ export async function reconcileSlackDirectProjections(
     }
     return result.status;
   };
-  for (const sessionKey of [...sessions].toSorted()) {
+  for (const sessionKey of scheduled) {
     signal.throwIfAborted();
     const [, agentId, rawPeer] = DIRECT_SESSION.exec(sessionKey) ?? [];
     if (!agentId || !rawPeer) {

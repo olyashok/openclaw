@@ -13,7 +13,11 @@ import {
   reconcileSlackDirectProjections,
   recoverSlackDirectProjection,
 } from "./direct-projection.js";
-import { RECONCILE_BATCH_SIZE, takeSweepBatch } from "./reconciliation-batch.js";
+import {
+  RECONCILE_BATCH_SIZE,
+  RECONCILE_HISTORY_BATCH_SIZE,
+  takeSweepBatch,
+} from "./reconciliation-batch.js";
 
 type SlackSnapshot = {
   workspaceId: string;
@@ -360,6 +364,7 @@ export function registerSlackProjectionReconciler(
   let wakeRequested = false;
   let discoveryCursor = "";
   const bindingSweepSeen = new Set<string>();
+  const directSweepSeen = new Set<string>();
   const outcomes = new Map<string, "created" | "existing" | "skipped" | "error">();
   let report = {
     scanned: 0,
@@ -508,7 +513,7 @@ export function registerSlackProjectionReconciler(
         ...keys.filter((key) => key > discoveryCursor),
         ...keys.filter((key) => key <= discoveryCursor),
       ];
-      const batch = ordered.slice(0, RECONCILE_BATCH_SIZE).flatMap((key) => {
+      const batch = ordered.slice(0, RECONCILE_HISTORY_BATCH_SIZE).flatMap((key) => {
         const candidate = discovered.get(key);
         if (!candidate) {
           return [];
@@ -583,7 +588,11 @@ export function registerSlackProjectionReconciler(
             discover: !roomId,
             projectionRoomId: roomId,
             channelScope,
-            membershipOnly: false,
+            // Existing projections receive source content on live delivery.
+            // The periodic repair path only needs to reconcile current
+            // readers, so it must not re-read and re-upload an entire Slack
+            // thread for every bound room.
+            membershipOnly: Boolean(roomId),
             onResult: (status) => {
               if (identity) {
                 outcomes.set(identity, status);
@@ -652,6 +661,7 @@ export function registerSlackProjectionReconciler(
         { ...config, token: config.token },
         bindings,
         generation.signal,
+        directSweepSeen,
       );
       report = {
         scanned: candidates.size,

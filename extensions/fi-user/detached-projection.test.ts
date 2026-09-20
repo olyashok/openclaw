@@ -70,8 +70,9 @@ describe("native parent-session Slack history discovery", () => {
       pending: 1,
       error: 1,
     });
-    await reconcile(connection, [], signal, new Set());
-    await reconcile(connection, [], signal, new Set());
+    for (let index = 0; index < 12; index++) {
+      await reconcile(connection, [], signal, new Set());
+    }
     expect(await reconcile(connection, [], signal, new Set())).toMatchObject({
       pending: 0,
       error: 0,
