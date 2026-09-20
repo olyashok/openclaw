@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { takePendingOrRotatingBatch, takeSweepBatch } from "./reconciliation-batch.js";
+import {
+  RECONCILE_HISTORY_BATCH_SIZE,
+  takePendingOrRotatingBatch,
+  takeSweepBatch,
+} from "./reconciliation-batch.js";
 
 describe("projection reconciliation batching", () => {
   it("finishes a sweep without repeating work before rotating", () => {
@@ -27,5 +31,9 @@ describe("projection reconciliation batching", () => {
     expect([...first.batch]).toEqual(["c", "d"]);
     const next = takePendingOrRotatingBatch(keys, new Set(keys), first.cursor, 3);
     expect([...next.batch]).toEqual(["a", "b", "c"]);
+  });
+
+  it("uses a one-at-a-time budget for historical snapshots", () => {
+    expect(RECONCILE_HISTORY_BATCH_SIZE).toBe(1);
   });
 });

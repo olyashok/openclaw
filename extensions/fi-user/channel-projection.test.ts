@@ -274,12 +274,9 @@ describe("Fi Slack channel publisher", () => {
           : {
               reconcile: true,
               source: { memberSenderIds: [] },
-              snapshot: { complete: true, messages: [] },
             },
       );
-      if (orphaned) {
-        expect(payload).not.toHaveProperty("snapshot");
-      }
+      expect(payload).not.toHaveProperty("snapshot");
       await vi.advanceTimersByTimeAsync(60_000);
       expect(fetchMock).toHaveBeenCalledTimes(2);
     },
@@ -353,8 +350,10 @@ describe("Fi Slack channel publisher", () => {
     }
     service.start();
     await vi.advanceTimersByTimeAsync(5000);
-    expect(fetchMock).toHaveBeenCalledTimes(8);
-    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    for (let index = 1; index < 12; index++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
     service.stop();
     const payloads = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
     expect(new Set(payloads.map((payload) => payload.source.rootMessageId)).size).toBe(12);
@@ -421,7 +420,7 @@ describe("Fi Slack channel publisher", () => {
       service.start();
       await vi.advanceTimersByTimeAsync(5000);
       expect(readChannel).toHaveBeenCalledTimes(1);
-      expect(readThread).toHaveBeenCalledTimes(outage ? 0 : 8);
+      expect(readThread).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledTimes(8);
       await vi.advanceTimersByTimeAsync(60_000);
       service.stop();
@@ -433,7 +432,7 @@ describe("Fi Slack channel publisher", () => {
           true,
         );
       } else {
-        expect(payloads.filter((payload) => payload.snapshot)).toHaveLength(12);
+        expect(payloads.every((payload) => !payload.snapshot)).toBe(true);
         expect(payloads.every((payload) => payload.source.memberSenderIds.includes("U111"))).toBe(
           true,
         );

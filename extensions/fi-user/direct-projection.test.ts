@@ -131,4 +131,58 @@ describe("Fi direct projection discovery", () => {
       fetchMock.mockRestore();
     },
   );
+
+  it("rotates historical direct snapshots instead of replaying every direct session", async () => {
+    const sessions = Array.from(
+      { length: 3 },
+      (_, index) => `agent:cellect-fi-admin:slack:direct:u${String(index + 1).padStart(3, "0")}`,
+    );
+    mocks.list.mockReturnValue(sessions.map((key) => ({ sessionKey: key, entry: {} })));
+    mocks.entry.mockImplementation(({ sessionKey: key }: { sessionKey: string }) => ({
+      origin: { accountId: "configured-admin", nativeChannelId: `D${key.slice(-3)}` },
+    }));
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: true, json: async () => ({ status: "existing" }) } as Response);
+    const api = {
+      config: {
+        bindings: [
+          {
+            agentId: "cellect-fi-admin",
+            match: { channel: "slack", accountId: "configured-admin" },
+          },
+        ],
+      },
+      logger: { warn: vi.fn() },
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: () => ({
+              botUserId: "U222",
+              readDirect: async (channelId: string, peerSenderId: string) => ({
+                directSource: { workspaceId: "T123", channelId, peerSenderId },
+                messages: [],
+              }),
+            }),
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    const seen = new Set<string>();
+    const args = [
+      api,
+      { baseUrl: "https://fi.example", token: "test" },
+      sessions.map((key, index) => ({ sessionKey: key, roomId: `!room${index}` })),
+      new AbortController().signal,
+      seen,
+    ] as const;
+    await reconcileSlackDirectProjections(...args);
+    await reconcileSlackDirectProjections(...args);
+    await reconcileSlackDirectProjections(...args);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(
+      fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).sessionKey),
+    ).toEqual(sessions);
+    fetchMock.mockRestore();
+  });
 });

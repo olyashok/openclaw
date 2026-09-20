@@ -5,7 +5,11 @@ import {
   sessionDeliveryOrigin,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import type { ChannelProjectionParams } from "./channel-projection.js";
-import { RECONCILE_BATCH_SIZE, takePendingOrRotatingBatch } from "./reconciliation-batch.js";
+import {
+  RECONCILE_BATCH_SIZE,
+  RECONCILE_HISTORY_BATCH_SIZE,
+  takePendingOrRotatingBatch,
+} from "./reconciliation-batch.js";
 
 type Source = NonNullable<ChannelProjectionParams["detachedSource"]>;
 export type ProjectionInventoryBinding = {
@@ -225,7 +229,9 @@ export function createDetachedProjectionReconciler(
           reconcile: true,
           projectionRoomId: binding.roomId,
           channelScope: await scopeFor(accountId, source.channelId),
-          membershipOnly: false,
+          // A detached room already has its historical snapshot.  Reconcile
+          // reader access without replaying that history on every sweep.
+          membershipOnly: true,
           signal,
         });
         existingOutcomes.set(binding.roomId, "ok");
@@ -281,7 +287,7 @@ export function createDetachedProjectionReconciler(
         const scope = await scopeFor(parent.accountId, parent.channelId);
         if (!state.roots.length) {
           if (state.pages > 0 && !state.cursor) {
-            state.roots = [...state.failed].slice(0, RECONCILE_BATCH_SIZE);
+            state.roots = [...state.failed].slice(0, RECONCILE_HISTORY_BATCH_SIZE);
           } else {
             if (state.failed.size >= 1000) {
               throw new Error(
@@ -294,7 +300,7 @@ export function createDetachedProjectionReconciler(
             state.roots = [...page.roots];
           }
         }
-        for (const rootMessageId of state.roots.slice(0, RECONCILE_BATCH_SIZE)) {
+        for (const rootMessageId of state.roots.slice(0, RECONCILE_HISTORY_BATCH_SIZE)) {
           signal.throwIfAborted();
           const source: Source = {
             provider: "slack",
