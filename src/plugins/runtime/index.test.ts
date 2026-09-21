@@ -353,6 +353,7 @@ describe("plugin runtime command execution", () => {
           "createSessionEntry",
           "getSessionEntry",
           "listSessionEntries",
+          "listSessionKeys",
           "patchSessionEntry",
           "upsertSessionEntry",
           "runWithWorkAdmission",

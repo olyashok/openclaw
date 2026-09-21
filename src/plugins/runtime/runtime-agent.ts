@@ -20,6 +20,7 @@ import { resolveSessionWorkStartError } from "../../config/sessions/lifecycle.js
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import {
   deleteSessionEntryLifecycle,
+  listSessionEntryKeysReadOnly as listAccessorSessionEntryKeysReadOnly,
   listSessionEntriesCore as listAccessorSessionEntries,
   listSessionEntriesReadOnly as listAccessorSessionEntriesReadOnly,
   loadSessionEntryReadOnly,
@@ -131,6 +132,16 @@ function listSessionEntries(
     ...(params.hydrateSkillPromptRefs !== undefined
       ? { hydrateSkillPromptRefs: params.hydrateSkillPromptRefs }
       : {}),
+    ...(params.storePath !== undefined ? { storePath: params.storePath } : {}),
+  });
+}
+
+function listSessionKeys(
+  params: Partial<Omit<RuntimeSessionStoreReadParams, "sessionKey">> = {},
+): string[] {
+  return listAccessorSessionEntryKeysReadOnly({
+    ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
+    ...(params.env !== undefined ? { env: params.env } : {}),
     ...(params.storePath !== undefined ? { storePath: params.storePath } : {}),
   });
 }
@@ -679,6 +690,7 @@ export function createRuntimeAgent(): PluginRuntime["agent"] {
     createSessionEntry,
     getSessionEntry,
     listSessionEntries,
+    listSessionKeys,
     patchSessionEntry,
     upsertSessionEntry,
     runWithWorkAdmission: runWithSessionWorkAdmission,

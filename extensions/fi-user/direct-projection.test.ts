@@ -7,7 +7,8 @@ import {
 const mocks = vi.hoisted(() => ({ entry: vi.fn(), list: vi.fn() }));
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
   getSessionEntry: mocks.entry,
-  listSessionEntries: mocks.list,
+  listSessionKeys: (...args: unknown[]) =>
+    mocks.list(...args).map(({ sessionKey }: { sessionKey: string }) => sessionKey),
   sessionDeliveryOrigin: (entry: { origin?: unknown } | undefined) => entry?.origin,
 }));
 const sessionKey = "agent:cellect-fi-admin:slack:direct:u111";
