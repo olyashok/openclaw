@@ -2,12 +2,24 @@ import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runti
 import { listAllBindings, resolveBindingKey } from "./thread-bindings-shared.js";
 
 export function parseProjectionBindingMetadata(value: Record<string, unknown> | undefined) {
+  const sourceSnapshotDigest = normalizeOptionalString(value?.sourceSnapshotDigest);
+  const sourceSnapshotReconciledAtMs = value?.sourceSnapshotReconciledAtMs;
   return {
     externalSource: parseProjectionExternalSource(value?.externalSource),
     sourceReplyAuthorization: normalizeOptionalString(value?.sourceReplyAuthorization) || undefined,
     sourceAccountId: normalizeOptionalString(value?.sourceAccountId) || undefined,
     environment: normalizeOptionalString(value?.environment) || undefined,
     projectedConversationId: normalizeOptionalString(value?.projectedConversationId) || undefined,
+    sourceSnapshotDigest:
+      sourceSnapshotDigest && /^[a-f0-9]{64}$/.test(sourceSnapshotDigest)
+        ? sourceSnapshotDigest
+        : undefined,
+    sourceSnapshotReconciledAtMs:
+      typeof sourceSnapshotReconciledAtMs === "number" &&
+      Number.isFinite(sourceSnapshotReconciledAtMs) &&
+      sourceSnapshotReconciledAtMs >= 0
+        ? Math.floor(sourceSnapshotReconciledAtMs)
+        : undefined,
   };
 }
 

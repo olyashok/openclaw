@@ -22,6 +22,8 @@ export type MatrixThreadBindingRecord = {
   sourceAccountId?: string;
   environment?: string;
   projectedConversationId?: string;
+  sourceSnapshotDigest?: string;
+  sourceSnapshotReconciledAtMs?: number;
   boundAt: number;
   lastActivityAt: number;
   idleTimeoutMs?: number;
@@ -134,6 +136,8 @@ export function toSessionBindingRecord(
       sourceAccountId: record.sourceAccountId,
       environment: record.environment,
       projectedConversationId: record.projectedConversationId,
+      sourceSnapshotDigest: record.sourceSnapshotDigest,
+      sourceSnapshotReconciledAtMs: record.sourceSnapshotReconciledAtMs,
       lastActivityAt: record.lastActivityAt,
       idleTimeoutMs,
       maxAgeMs,
