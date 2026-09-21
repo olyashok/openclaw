@@ -79,8 +79,10 @@ describe("v2 source reconciliation", () => {
       ) => ({ messageId: insert(body, opts.publication, opts.extraContent) }),
     );
     mocks.redact.mockImplementation(async (_room: string, id: string) => {
-      const event = mocks.events.find((event) => event.event_id === id);
-      if (event) event.unsigned = { redacted_because: {} };
+      const matchedEvent = mocks.events.find((candidate) => candidate.event_id === id);
+      if (matchedEvent) {
+        matchedEvent.unsigned = { redacted_because: {} };
+      }
     });
   });
   it.each([
@@ -147,7 +149,9 @@ describe("v2 source reconciliation", () => {
     await reconcileMatrixProjectionSnapshot(params);
     const firstSend = mocks.send.mock.calls[0],
       retry = mocks.send.mock.calls[1];
-    if (!firstSend || !retry) throw new Error("Expected ambiguous send and publication retry");
+    if (!firstSend || !retry) {
+      throw new Error("Expected ambiguous send and publication retry");
+    }
     expect(firstSend[2].deliveryQueueId).toBe(retry[2].deliveryQueueId);
     expect(retry[2].publication.publicationRevision).toBe(1);
   });
