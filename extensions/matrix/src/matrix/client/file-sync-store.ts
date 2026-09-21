@@ -23,13 +23,19 @@ import { resolveMatrixSqliteStateEnv } from "../sqlite-state.js";
 import { claimCurrentTokenStorageState } from "./storage.js";
 
 const STORE_VERSION = 1;
-const PERSIST_DEBOUNCE_MS = 250;
+// A /sync response can retain tens of megabytes of joined-room state. Persist a
+// restart checkpoint periodically instead of rewriting that full snapshot on
+// every long-poll response. Explicit flushes (including shutdown) remain
+// immediate.
+const PERSIST_DEBOUNCE_MS = 60_000;
 const SYNC_CACHE_NAMESPACE = "sync-cache";
 const SYNC_CACHE_MAX_ENTRIES = 20_000;
 const SYNC_CACHE_MAX_CHUNKS = Math.floor((SYNC_CACHE_MAX_ENTRIES - 1) / 2);
 const SYNC_CACHE_STATE_KEY = "current";
-// PluginState serializes this string inside a row object; 24KB leaves room for JSON escaping.
-const SYNC_CACHE_CHUNK_BYTES = 24_000;
+// PluginState serializes this JSON string inside another JSON object. The
+// source is already JSON-escaped, so 256KB leaves ample room below the 1MB
+// PluginState value limit while avoiding thousands of SQLite transactions.
+const SYNC_CACHE_CHUNK_BYTES = 256_000;
 
 type PersistedMatrixSyncStore = {
   version: number;
@@ -58,7 +64,7 @@ export type MatrixSyncCacheRecord = MatrixSyncCacheMeta | MatrixSyncCacheChunk;
 
 type MatrixSyncCacheAsyncStore = Pick<
   PluginStateKeyedStore<MatrixSyncCacheRecord>,
-  "delete" | "entries" | "lookup" | "register"
+  "clear" | "lookup" | "register"
 >;
 
 function normalizeRoomsData(value: unknown): IRooms | null {
@@ -276,12 +282,7 @@ export class SqliteBackedMatrixSyncStore extends MemoryStore {
     this.savedSync = null;
     this.savedClientOptions = undefined;
     this.cleanShutdown = false;
-    this.store.delete(metaKey(this.stateKey));
-    for (const row of this.store.entries()) {
-      if (row.key.startsWith(chunkKeyPrefix(this.stateKey))) {
-        this.store.delete(row.key);
-      }
-    }
+    this.store.clear();
     await fs
       .rm(resolveLegacySyncCachePath(this.storageRootDir), { force: true })
       .catch(() => undefined);
@@ -368,15 +369,15 @@ export class SqliteBackedMatrixSyncStore extends MemoryStore {
 
   private writePersistedStore(payload: PersistedMatrixSyncStore): void {
     const rows = buildSyncCacheRows(this.stateKey, payload);
+    // The namespace belongs exclusively to this cache. Clearing it in one SQL
+    // statement avoids loading every prior chunk into JS just to discover its
+    // key. Meta is written last, so a crash mid-checkpoint is detected as a
+    // cache miss and Matrix safely performs a fresh sync.
+    this.store.clear();
     for (const row of rows.chunks) {
       this.store.register(row.key, row.value);
     }
     this.store.register(rows.meta.key, rows.meta.value);
-    for (const row of this.store.entries()) {
-      if (row.key.startsWith(chunkKeyPrefix(this.stateKey)) && !rows.nextChunkKeys.has(row.key)) {
-        this.store.delete(row.key);
-      }
-    }
   }
 
   private assertStoreAvailable(): void {
@@ -508,20 +509,18 @@ function chunkSyncCacheJson(value: string): string[] {
     }
     chunks.push(chunk);
   };
-  let current = "";
-  let currentBytes = 0;
-  for (const char of value) {
-    const charBytes = Buffer.byteLength(char, "utf8");
-    if (current && currentBytes + charBytes > SYNC_CACHE_CHUNK_BYTES) {
-      pushChunk(current);
-      current = "";
-      currentBytes = 0;
+  const encoded = Buffer.from(value, "utf8");
+  for (let offset = 0; offset < encoded.length;) {
+    let end = Math.min(offset + SYNC_CACHE_CHUNK_BYTES, encoded.length);
+    // Never start the next chunk on a UTF-8 continuation byte.
+    while (end < encoded.length && (encoded[end]! & 0xc0) === 0x80) {
+      end -= 1;
     }
-    current += char;
-    currentBytes += charBytes;
-  }
-  if (current) {
-    pushChunk(current);
+    if (end <= offset) {
+      throw new Error("Matrix sync cache contains an invalid UTF-8 chunk boundary");
+    }
+    pushChunk(encoded.toString("utf8", offset, end));
+    offset = end;
   }
   return chunks;
 }
@@ -532,7 +531,6 @@ function buildSyncCacheRows(
 ): {
   meta: { key: string; value: MatrixSyncCacheMeta };
   chunks: { key: string; value: MatrixSyncCacheChunk }[];
-  nextChunkKeys: Set<string>;
 } {
   const generation = randomUUID().replaceAll("-", "");
   const syncJson = payload.savedSync ? JSON.stringify(payload.savedSync) : "";
@@ -547,7 +545,6 @@ function buildSyncCacheRows(
   }));
   return {
     chunks,
-    nextChunkKeys: new Set(chunks.map((chunk) => chunk.key)),
     meta: {
       key: metaKey(stateKey),
       value: {
@@ -613,15 +610,11 @@ export async function writeMatrixSyncCacheStateToStore(params: {
 }): Promise<void> {
   const stateKey = SYNC_CACHE_STATE_KEY;
   const rows = buildSyncCacheRows(stateKey, params.payload);
+  await params.store.clear();
   for (const row of rows.chunks) {
     await params.store.register(row.key, row.value);
   }
   await params.store.register(rows.meta.key, rows.meta.value);
-  for (const row of await params.store.entries()) {
-    if (row.key.startsWith(chunkKeyPrefix(stateKey)) && !rows.nextChunkKeys.has(row.key)) {
-      await params.store.delete(row.key);
-    }
-  }
 }
 
 export function openMatrixSyncCacheStoreOptions(storageRootDir: string) {
