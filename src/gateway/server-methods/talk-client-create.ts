@@ -38,6 +38,7 @@ import {
   resolveSandboxedSessionCreation,
 } from "../operator-role-policy.js";
 import { readSessionPreviewItemsFromTranscript } from "../session-transcript-readers.js";
+import { consumeTalkBindingCapability } from "../talk-binding-capability.js";
 import {
   boundTalkClientRealtimeInitialItems,
   createTalkClientAgentConsultRunner,
@@ -136,7 +137,25 @@ export const createTalkClient: GatewayRequestHandler = async ({
       requested: params,
       defaults: realtimeConfig,
     });
-    const rawMatrixSessionKey = normalizeOptionalString(params.sessionKey);
+    const binding = normalizeOptionalString(params.binding);
+    if (binding && normalizeOptionalString(params.sessionKey)) {
+      rejectTalkClientRequest(
+        respond,
+        ErrorCodes.INVALID_REQUEST,
+        "Talk binding and sessionKey are mutually exclusive",
+      );
+      return;
+    }
+    const bound = binding ? consumeTalkBindingCapability(binding) : undefined;
+    if (binding && !bound) {
+      rejectTalkClientRequest(
+        respond,
+        ErrorCodes.INVALID_REQUEST,
+        "Talk binding is invalid or expired",
+      );
+      return;
+    }
+    const rawMatrixSessionKey = bound?.sessionKey ?? normalizeOptionalString(params.sessionKey);
     if (
       rawMatrixSessionKey &&
       (!isWebchatSessionAllowed({ cfg: runtimeConfig, client, sessionKey: rawMatrixSessionKey }) ||
@@ -145,7 +164,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
           clientInfo: client?.connect?.client,
           pairedClientId: client?.pairedClientId,
           sessionKey: rawMatrixSessionKey,
-          authorizedByBinding: false,
+          authorizedByBinding: Boolean(bound),
         }))
     ) {
       rejectTalkClientRequest(
@@ -155,7 +174,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
       );
       return;
     }
-    const requestedAgentId = resolveTalkSessionAgentId(runtimeConfig, params.sessionKey);
+    const requestedAgentId = resolveTalkSessionAgentId(runtimeConfig, rawMatrixSessionKey);
     assertSecretOwnerAvailable("capability", "talk:realtime");
     const resolution = resolveConfiguredRealtimeVoiceProvider({
       configuredProviderId: realtimeConfig.provider,
@@ -194,7 +213,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
       config: runtimeConfig,
       agentId: requestedAgentId,
       configuredInstructions: realtimeConfig.instructions,
-      sessionKey: params.sessionKey,
+      sessionKey: rawMatrixSessionKey,
       // Legacy creates can drift to another agent's session at toolCall time, so
       // the default agent's profile must not leak into the provider session.
       requireSessionKeyForProfile: true,
@@ -243,7 +262,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
       const instructions =
         providerCapabilities?.handlesAgentConsult === true
           ? normalizeOptionalString(realtimeContext.instructions)
-          : buildRealtimeInstructions(realtimeContext.instructions);
+          : buildRealtimeInstructions(realtimeContext.instructions, params.sessionCapsule);
       const requestedVoiceSessionId = normalizeOptionalString(params.voiceSessionId);
       const ownsProvider =
         wantsGatewayControl || providerCapabilities?.handlesAgentConsult === true;
@@ -312,11 +331,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
                   voiceSessionId: activeVoiceSessionId!,
                   config: runtimeConfig,
                 });
-                forgetLegacyVoiceBinding(
-                  ownerConnId!,
-                  params.sessionKey?.trim() || sessionKey,
-                  activeVoiceSessionId!,
-                );
+                forgetLegacyVoiceBinding(ownerConnId!, sessionKey, activeVoiceSessionId!);
               }
             },
           })
@@ -401,7 +416,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
           if (connId) {
             rememberLegacyVoiceBinding({
               connId,
-              sessionKey: params.sessionKey?.trim() || sessionKey,
+              sessionKey,
               voiceSessionId,
             });
           }
@@ -410,6 +425,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
             true,
             {
               ...session,
+              sessionKey,
               voiceSessionId,
               ...(wantsGatewayControl ? { clientControl: { owner: "gateway" as const } } : {}),
             },

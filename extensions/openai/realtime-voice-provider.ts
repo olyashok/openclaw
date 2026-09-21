@@ -156,7 +156,11 @@ function buildOpenAIRealtimeBrowserSessionConfig(
             ? { silence_duration_ms: req.silenceDurationMs ?? config.silenceDurationMs }
             : {}),
         },
-        transcription: { model: OPENAI_REALTIME_INPUT_TRANSCRIPTION_MODEL, delay: "low" },
+        transcription: {
+          model: OPENAI_REALTIME_INPUT_TRANSCRIPTION_MODEL,
+          delay: "low",
+          ...(req.language ? { languages: [req.language] } : {}),
+        },
       },
       output: { voice },
     },
@@ -217,6 +221,7 @@ async function createOpenAIRealtimeBrowserSession(
       audioFormat: REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
       instructions: req.instructions,
       interruptResponseOnInputAudio: config.interruptResponseOnInputAudio,
+      language: req.language,
       model,
       noiseReduction: { type: "near_field" },
       prefixPaddingMs: req.prefixPaddingMs ?? config.prefixPaddingMs,

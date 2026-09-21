@@ -411,6 +411,7 @@ type RealtimeVoiceLaunchOptions = {
   vadThreshold?: number;
   silenceDurationMs?: number;
   prefixPaddingMs?: number;
+  language?: string;
   reasoningEffort?: string;
 };
 
@@ -420,6 +421,7 @@ type RealtimeVoiceLaunchOptionInput = {
   vadThreshold?: unknown;
   silenceDurationMs?: unknown;
   prefixPaddingMs?: unknown;
+  language?: unknown;
   reasoningEffort?: unknown;
 };
 
@@ -443,12 +445,16 @@ function withRealtimeBrowserOverrides(
   const overrides: RealtimeVoiceProviderConfig = {};
   const model = normalizeOptionalString(params.model);
   const voice = normalizeOptionalString(params.voice);
+  const language = normalizeOptionalString(params.language);
   const reasoningEffort = normalizeOptionalString(params.reasoningEffort);
   if (model) {
     overrides.model = model;
   }
   if (voice) {
     overrides.voice = voice;
+  }
+  if (language) {
+    overrides.language = language;
   }
   if (typeof params.vadThreshold === "number" && Number.isFinite(params.vadThreshold)) {
     overrides.vadThreshold = params.vadThreshold;
@@ -493,12 +499,16 @@ function pickRealtimeVoiceLaunchOptions(
   const options: RealtimeVoiceLaunchOptions = {};
   const model = normalizeOptionalString(params.model);
   const voice = normalizeOptionalString(params.voice);
+  const language = normalizeOptionalString(params.language);
   const reasoningEffort = normalizeOptionalString(params.reasoningEffort);
   if (model) {
     options.model = model;
   }
   if (voice) {
     options.voice = voice;
+  }
+  if (language) {
+    options.language = language;
   }
   if (typeof params.vadThreshold === "number" && Number.isFinite(params.vadThreshold)) {
     options.vadThreshold = params.vadThreshold;
