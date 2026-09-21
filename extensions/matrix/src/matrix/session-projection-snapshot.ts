@@ -54,35 +54,40 @@ function object(value: unknown): Record<string, unknown> | undefined {
 async function readProjectionHistory(
   client: MatrixClient,
   roomId: string,
+  threadId: string,
   checkDeadline: () => void,
 ) {
   const events: MatrixRawEvent[] = [];
   let from: string | undefined;
   const cursors = new Set<string>();
-  // A complete bounded read is required before changing or deleting anything.
+  // A complete bounded read of this projection thread is required before
+  // changing or deleting anything. Reading the whole room is both unnecessary
+  // and dangerous in long-lived DMs: decrypting unrelated threads blocks the
+  // gateway event loop while a source snapshot is reconciled.
   for (let pageIndex = 0; pageIndex < 100; pageIndex++) {
     checkDeadline();
-    const page = (await client.doRequest(
-      "GET",
-      `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages`,
-      { dir: "b", limit: 100, from },
-    )) as { chunk: MatrixRawEvent[]; end?: string };
-    if (!Array.isArray(page.chunk)) {
+    const page = await client.getRelations(roomId, threadId, "m.thread", undefined, {
+      dir: "b",
+      limit: 100,
+      from,
+    });
+    if (!Array.isArray(page.events)) {
       throw new Error("Invalid Matrix projection history");
     }
-    const hydrated = await client.hydrateEvents(roomId, page.chunk);
+    const hydrated = await client.hydrateEvents(roomId, page.events);
     if (hydrated.some((event) => event.type === "m.room.encrypted")) {
       throw new Error("Incomplete decrypted Matrix projection history");
     }
     events.push(...hydrated);
-    if (!page.chunk.length || !page.end) {
+    const next = page.nextBatch ?? undefined;
+    if (!next) {
       return events;
     }
-    if (cursors.has(page.end)) {
+    if (cursors.has(next)) {
       throw new Error("Incomplete Matrix projection history pagination");
     }
-    cursors.add(page.end);
-    from = page.end;
+    cursors.add(next);
+    from = next;
   }
   throw new Error("Matrix projection history exceeds reconciliation bound");
 }
@@ -153,7 +158,12 @@ export async function reconcileMatrixProjectionSnapshot(params: {
   await withResolvedMatrixSendClient(
     { cfg: params.cfg, accountId: params.accountId, timeoutMs: 10_000 },
     async (client) => {
-      const events = await readProjectionHistory(client, params.roomId, checkDeadline);
+      const events = await readProjectionHistory(
+        client,
+        params.roomId,
+        params.threadId,
+        checkDeadline,
+      );
       const self = await client.getUserId();
       const latestEdits = new Map<string, Record<string, unknown>>();
       const editIds = new Map<string, string[]>();
