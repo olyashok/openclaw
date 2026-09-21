@@ -7,6 +7,7 @@ import {
 const mocks = vi.hoisted(() => ({
   events: [] as any[],
   getRelations: vi.fn(),
+  hydrate: vi.fn(),
   send: vi.fn(),
   redact: vi.fn(),
   note: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock("./send/client.js", () => ({
   withResolvedMatrixSendClient: async (_opts: unknown, run: (client: unknown) => Promise<void>) =>
     run({
       getRelations: mocks.getRelations,
-      hydrateEvents: async (_room: string, events: unknown[]) => events,
+      hydrateEvents: mocks.hydrate,
       getUserId: async () => "@transport:example.org",
       redactEvent: mocks.redact,
     }),
@@ -71,6 +72,7 @@ describe("v2 source reconciliation", () => {
       nextBatch: null,
       prevBatch: null,
     }));
+    mocks.hydrate.mockImplementation(async (_room: string, events: unknown[]) => events);
     mocks.send.mockImplementation(
       async (
         _to: string,
@@ -194,6 +196,21 @@ describe("v2 source reconciliation", () => {
       limit: 100,
       from: undefined,
     });
+  });
+  it("hydrates old encrypted history in cooperative batches", async () => {
+    mocks.events.push(
+      ...Array.from({ length: 9 }, (_, index) => ({
+        event_id: `$foreign-${index}`,
+        sender: "@foreign:example.org",
+        type: "m.room.message",
+        content: {},
+      })),
+    );
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [] },
+    });
+    expect(mocks.hydrate.mock.calls.map(([, events]) => events.length)).toEqual([4, 4, 1]);
   });
   it("makes no mutations on incomplete pagination", async () => {
     mocks.getRelations.mockResolvedValue({
