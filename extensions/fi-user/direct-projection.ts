@@ -1,7 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   getSessionEntry,
-  listSessionEntries,
+  listSessionKeys,
   sessionDeliveryOrigin,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { RECONCILE_HISTORY_BATCH_SIZE, takeSweepBatch } from "./reconciliation-batch.js";
@@ -138,7 +138,7 @@ export async function reconcileSlackDirectProjections(
       .map((binding) => binding.sessionKey),
   );
   for (const agentId of new Set(configured.map((binding) => binding.agentId))) {
-    for (const { sessionKey } of listSessionEntries({ agentId, readOnly: true })) {
+    for (const sessionKey of listSessionKeys({ agentId })) {
       if (DIRECT_SESSION.test(sessionKey)) {
         sessions.add(sessionKey);
       }

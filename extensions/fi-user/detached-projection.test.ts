@@ -4,7 +4,8 @@ import type { ChannelProjectionParams } from "./channel-projection.js";
 import { createDetachedProjectionReconciler } from "./detached-projection.js";
 const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn() }));
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
-  listSessionEntries: mocks.list,
+  listSessionKeys: (...args: unknown[]) =>
+    mocks.list(...args).map(({ sessionKey }: { sessionKey: string }) => sessionKey),
   getSessionEntry: mocks.get,
   sessionDeliveryOrigin: (entry: unknown) => entry,
 }));

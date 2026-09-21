@@ -1,7 +1,7 @@
 import { KeyedAsyncQueue, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   getSessionEntry,
-  listSessionEntries,
+  listSessionKeys,
   sessionDeliveryOrigin,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import {
@@ -377,13 +377,7 @@ export function registerSlackProjectionReconciler(
         if (!agentId || !channelId) {
           continue;
         }
-        const entry = getSessionEntry({ agentId, sessionKey, readConsistency: "latest" });
-        const accountId = resolveAccount(
-          agentId,
-          channelId,
-          sessionKey,
-          sessionDeliveryOrigin(entry)?.accountId,
-        );
+        const accountId = resolveAccount(agentId, channelId, sessionKey);
         const identity = accountId && rootIdentity(sessionKey, accountId);
         if (identity) {
           knownRoots.add(identity);
@@ -392,17 +386,12 @@ export function registerSlackProjectionReconciler(
         }
       }
       for (const agentId of new Set(configuredBindings.map((binding) => binding.agentId))) {
-        for (const { sessionKey, entry } of listSessionEntries({ agentId, readOnly: true })) {
+        for (const sessionKey of listSessionKeys({ agentId })) {
           const [, sourceAgentId, channelId] = CHANNEL_SESSION.exec(sessionKey) ?? [];
           if (sourceAgentId !== agentId || !channelId) {
             continue;
           }
-          const accountId = resolveAccount(
-            agentId,
-            channelId,
-            sessionKey,
-            sessionDeliveryOrigin(entry)?.accountId,
-          );
+          const accountId = resolveAccount(agentId, channelId, sessionKey);
           if (!accountId) {
             unavailableSessions.add(sessionKey);
             continue;

@@ -16,7 +16,8 @@ const discovery = vi.hoisted(() => ({
 }));
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
   getSessionEntry: discovery.entry,
-  listSessionEntries: discovery.list,
+  listSessionKeys: (...args: unknown[]) =>
+    discovery.list(...args).map(({ sessionKey }) => sessionKey),
   sessionDeliveryOrigin: (entry: Record<string, unknown> | undefined) => ({
     accountId: "fi-admin",
     ...entry,
@@ -362,7 +363,7 @@ describe("Fi Slack channel publisher", () => {
     expect(new Set(payloads.map((payload) => payload.source.rootMessageId)).size).toBe(12);
     expect(payloads.every((payload) => payload.discover === true && !payload.reconcile)).toBe(true);
     expect(payloads.every((payload) => payload.source.memberSenderIds.includes("U333"))).toBe(true);
-    expect(discovery.list).toHaveBeenCalledWith({ agentId: "cellect-fi-user", readOnly: true });
+    expect(discovery.list).toHaveBeenCalledWith({ agentId: "cellect-fi-user" });
   });
   it.each([false, true])(
     "refreshes every room ACL with bounded history, source outage=%s",

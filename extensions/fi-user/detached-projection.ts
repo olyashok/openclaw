@@ -1,7 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   getSessionEntry,
-  listSessionEntries,
+  listSessionKeys,
   sessionDeliveryOrigin,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import type { ChannelProjectionParams } from "./channel-projection.js";
@@ -119,23 +119,32 @@ export function createDetachedProjectionReconciler(
     >();
     let unavailable = 0;
     for (const agentId of new Set(configured.map((binding) => binding.agentId))) {
-      for (const { sessionKey, entry } of listSessionEntries({ agentId, readOnly: true })) {
+      for (const sessionKey of listSessionKeys({ agentId })) {
         const channelId = PARENT.exec(sessionKey)?.[2]?.toUpperCase();
         if (!channelId) {
           continue;
         }
-        const origin = sessionDeliveryOrigin(entry);
         const persisted = bindings.find(
           (binding) =>
             binding.sessionKey === sessionKey &&
             binding.sourceAccountId &&
             binding.externalSource?.channelId === channelId,
         );
-        const accountId = persisted?.sourceAccountId ?? origin?.accountId;
+        const configuredAccounts = new Set(
+          configured
+            .filter(
+              (binding) =>
+                binding.agentId === agentId &&
+                (!binding.match.peer || binding.match.peer.id.toUpperCase() === channelId),
+            )
+            .map((binding) => binding.match.accountId),
+        );
+        const accountId =
+          persisted?.sourceAccountId ??
+          (configuredAccounts.size === 1 ? [...configuredAccounts][0] : undefined);
         const allowed =
           accountId &&
-          (persisted?.externalSource?.channelId ?? origin?.nativeChannelId)?.toUpperCase() ===
-            channelId &&
+          (!persisted || persisted.externalSource?.channelId.toUpperCase() === channelId) &&
           configured.some(
             (binding) =>
               binding.agentId === agentId &&
