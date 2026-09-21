@@ -546,6 +546,7 @@ describe("Matrix session projection", () => {
         content: "Continue this OpenClaw conversation",
         runId: "native-chat-run-1",
         sessionKey,
+        senderId: "gateway-client",
       },
       { channelId: "webchat", sessionKey, runId: "native-chat-run-1" },
       cfg,
@@ -555,9 +556,19 @@ describe("Matrix session projection", () => {
       "room:!room",
       "**OpenClaw · User**\nContinue this OpenClaw conversation",
       expect.objectContaining({
-        deliveryQueueId: "matrix-session-projection:fi-user:!room:$root:user:native-chat-run-1",
+        deliveryQueueId:
+          "matrix-session-projection:fi-user:!room:$root:user:native-chat-run-1:native-chat-run-1:1",
         deliveryPartIndex: 0,
         deliveryPartCount: 1,
+        publication: expect.objectContaining({
+          version: 2,
+          role: "user",
+          origin: expect.objectContaining({
+            provider: "webchat",
+            messageId: "native-chat-run-1",
+            actorId: "gateway-client",
+          }),
+        }),
       }),
     );
     expect(mocks.touch).toHaveBeenCalledWith(projectionBinding.bindingId);
