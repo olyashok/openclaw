@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { setTimeout as yieldToEventLoop } from "node:timers/promises";
 import type { Direction } from "matrix-js-sdk/lib/models/event-timeline.js";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import type { CoreConfig } from "../types.js";
@@ -76,7 +76,7 @@ async function hydrateProjectionEvents(
     );
     // matrix-rust-sdk decryption can be CPU-heavy for old encrypted threads.
     // Yield between small batches so gateway health and ingress stay responsive.
-    await yieldToEventLoop();
+    await yieldToEventLoop(0);
   }
   return hydrated;
 }

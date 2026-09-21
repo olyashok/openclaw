@@ -398,6 +398,8 @@ describe("matrix thread bindings", () => {
         channelId: "C123",
         rootMessageId: "1700000000.000001",
       };
+      const sourceSnapshotDigest = "a".repeat(64);
+      const sourceSnapshotReconciledAtMs = 1_700_000_000_000;
       const binding = await getSessionBindingService().bind({
         targetSessionKey: "agent:ops:slack:channel:c123",
         targetKind: "session",
@@ -411,16 +413,24 @@ describe("matrix thread bindings", () => {
         metadata: {
           boundBy: "session-projection-read-only",
           externalSource,
+          sourceSnapshotDigest,
+          sourceSnapshotReconciledAtMs,
           ...(authorized
             ? { sourceReplyAuthorization: "fi-v1", sourceAccountId: "slack-source" }
             : {}),
         },
       });
       expect(binding.metadata?.externalSource).toEqual(externalSource);
+      expect(binding.metadata).toMatchObject({
+        sourceSnapshotDigest,
+        sourceSnapshotReconciledAtMs,
+      });
       expect(await readPersistedBindings(resolveBindingsFilePath())).toMatchObject({
         bindings: [
           expect.objectContaining({
             externalSource,
+            sourceSnapshotDigest,
+            sourceSnapshotReconciledAtMs,
             ...(authorized
               ? { sourceReplyAuthorization: "fi-v1", sourceAccountId: "slack-source" }
               : {}),
@@ -432,6 +442,8 @@ describe("matrix thread bindings", () => {
       expect(restarted.listBindings()).toEqual([
         expect.objectContaining({
           externalSource,
+          sourceSnapshotDigest,
+          sourceSnapshotReconciledAtMs,
           ...(authorized
             ? { sourceReplyAuthorization: "fi-v1", sourceAccountId: "slack-source" }
             : {}),

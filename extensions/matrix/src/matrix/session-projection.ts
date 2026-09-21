@@ -681,6 +681,7 @@ export async function createMatrixSessionProjection(params: {
             conversation: existing.conversation,
             metadata: {
               ...existing.metadata,
+              introText: false,
               sourceSnapshotDigest,
               sourceSnapshotReconciledAtMs: Date.now(),
             },
@@ -760,6 +761,7 @@ export async function createMatrixSessionProjection(params: {
           conversation: binding.conversation,
           metadata: {
             ...binding.metadata,
+            introText: false,
             sourceSnapshotDigest,
             sourceSnapshotReconciledAtMs: Date.now(),
           },
