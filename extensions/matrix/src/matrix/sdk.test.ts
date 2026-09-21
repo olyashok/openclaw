@@ -2838,6 +2838,15 @@ describe("MatrixClient event bridge", () => {
       matrixRTC: { stop: stopMatrixRtc },
     });
     matrixJsClient.on("sync", startMatrixRtc);
+    matrixJsClient.startClient = vi.fn(async () => {
+      const rtcCallback = (
+        matrixJsClient as unknown as { startMatrixRTC: (...args: unknown[]) => void }
+      ).startMatrixRTC;
+      matrixJsClient.on("sync", rtcCallback);
+      queueMicrotask(() => {
+        matrixJsClient.emit("sync", "PREPARED", null, undefined);
+      });
+    });
 
     const client = new MatrixClient("https://matrix.example.org", "token");
     await client.start();
