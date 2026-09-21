@@ -9,10 +9,7 @@ import {
   verifyDetachedProjectionOrigin,
   type ProjectionInventoryBinding,
 } from "./detached-projection.js";
-import {
-  reconcileSlackDirectProjections,
-  recoverSlackDirectProjection,
-} from "./direct-projection.js";
+import { reconcileSlackDirectProjections } from "./direct-projection.js";
 import {
   RECONCILE_BATCH_SIZE,
   RECONCILE_HISTORY_BATCH_SIZE,
@@ -31,22 +28,6 @@ type SlackSnapshot = {
     content: string;
     bot: boolean;
   }>;
-};
-
-export type SlackProjectionMessage = {
-  content: string;
-  sessionKey?: string;
-  messageId?: string;
-  runId?: string;
-  senderId?: string;
-};
-export type SlackProjectionContext = {
-  channelId: string;
-  sessionKey?: string;
-  messageId?: string;
-  runId?: string;
-  senderId?: string;
-  accountId?: string;
 };
 
 const CHANNEL_SESSION =
@@ -276,82 +257,6 @@ async function publishSlackThreadSnapshot(
   return true;
 }
 
-export function registerSlackChannelProjection(
-  api: OpenClawPluginApi,
-  connection: () => { baseUrl: string; token?: string },
-) {
-  const reconciler = registerSlackProjectionReconciler(api, connection);
-  api.registerGatewayMethod(
-    "fi.slackProjection.sync",
-    async ({ params, respond }) => {
-      const { baseUrl, token } = connection();
-      try {
-        if (token && typeof params?.sessionKey === "string" && params.directSource) {
-          respond(
-            true,
-            await recoverSlackDirectProjection(
-              api,
-              { baseUrl, token },
-              params.sessionKey,
-              params.directSource,
-            ),
-          );
-          return;
-        }
-        if (
-          !token ||
-          typeof params?.sessionKey !== "string" ||
-          typeof params.accountId !== "string" ||
-          typeof params.requesterSenderId !== "string"
-        ) {
-          throw new Error("Missing Slack projection parameters");
-        }
-        const projected = await projectSlackChannelThread({
-          api,
-          token,
-          baseUrl,
-          sessionKey: params.sessionKey,
-          accountId: params.accountId,
-          requesterSenderId: params.requesterSenderId,
-        });
-        if (!projected) {
-          throw new Error("Unsupported Slack channel session");
-        }
-        respond(true, { projected: true });
-      } catch (error) {
-        respond(false, {
-          error: error instanceof Error ? error.message : "Slack projection failed",
-        });
-      }
-    },
-    { scope: "operator.admin" },
-  );
-  api.on("message_sent", async (event, context) => {
-    if (!event.success || context.channelId !== "slack" || !context.accountId) {
-      return;
-    }
-    const sessionKey = event.sessionKey ?? context.sessionKey;
-    const { baseUrl, token } = connection();
-    if (!sessionKey || !token) {
-      return;
-    }
-    if (/^agent:[^:]+:slack:(channel|group):[cg][a-z0-9]+$/i.test(sessionKey)) {
-      reconciler.wake(sessionKey);
-      return;
-    }
-    void projectSlackChannelThread({
-      api,
-      token,
-      baseUrl,
-      sessionKey,
-      accountId: context.accountId,
-      discover: true,
-    }).catch(() => {
-      api.logger.warn("fi-user: channel projection failed after Slack delivery");
-    });
-  });
-}
-
 /** Reconstruct work from durable session/binding stores; no timer state is authoritative. */
 export function registerSlackProjectionReconciler(
   api: OpenClawPluginApi,
@@ -362,6 +267,10 @@ export function registerSlackProjectionReconciler(
   let stopped = true;
   let running = false;
   let wakeRequested = false;
+  let prioritySessionKey: string | undefined;
+  let maintenanceLane: "channel" | "detached" | "direct" = "channel";
+  let channelWorkKind: "acl" | "history" = "acl";
+  let detachedWorkKind: "acl" | "history" = "acl";
   let discoveryCursor = "";
   const bindingSweepSeen = new Set<string>();
   const directSweepSeen = new Set<string>();
@@ -513,31 +422,66 @@ export function registerSlackProjectionReconciler(
         ...keys.filter((key) => key > discoveryCursor),
         ...keys.filter((key) => key <= discoveryCursor),
       ];
-      const batch = ordered.slice(0, RECONCILE_HISTORY_BATCH_SIZE).flatMap((key) => {
+      const discoveryCandidate = ordered.slice(0, RECONCILE_HISTORY_BATCH_SIZE).flatMap((key) => {
         const candidate = discovered.get(key);
         if (!candidate) {
           return [];
         }
-        discoveryCursor = key;
         return [{ ...candidate, roomId: undefined }];
       });
       const bindingKeys = bindings
         .filter((binding) => CHANNEL_SESSION.test(binding.sessionKey))
         .map((binding) => binding.sessionKey)
         .toSorted();
-      const bindingBatch = takeSweepBatch(bindingKeys, bindingSweepSeen, RECONCILE_BATCH_SIZE);
+      const priority = prioritySessionKey
+        ? bindings.find((binding) => binding.sessionKey === prioritySessionKey)
+        : undefined;
+      const bindingBatch =
+        maintenanceLane === "channel" && !priority
+          ? takeSweepBatch(bindingKeys, bindingSweepSeen, RECONCILE_BATCH_SIZE)
+          : new Set<string>();
       const channelScopes = new Map<
         string,
         { createdAt: number; scope: Promise<SlackChannelScope> }
       >();
-      const projects = [
-        ...bindings.filter((binding) => bindingBatch.has(binding.sessionKey)),
-        ...batch,
-      ];
-      // Both ACL and source-history work are bounded. A full-room ACL sweep in one
-      // tick exhausts Fi's shared provisioning credential before live traffic can
-      // authenticate. Active Slack deliveries still project immediately; this loop
-      // is the durable repair path.
+      const aclCandidate = bindings.find((binding) => bindingBatch.has(binding.sessionKey));
+      const historyCandidate = discoveryCandidate[0];
+      // This service has one global maintenance slot.  A previous implementation
+      // separately admitted channel ACLs, detached ACLs, direct snapshots, and
+      // history discovery, creating a burst despite each local cap.  Live Slack
+      // delivery is deliberately outside this scheduler; a wake only gives its
+      // own session the next maintenance slot.
+      const projects =
+        maintenanceLane !== "channel"
+          ? []
+          : priority
+            ? [priority]
+            : channelWorkKind === "acl"
+              ? aclCandidate
+                ? [aclCandidate]
+                : historyCandidate
+                  ? [historyCandidate]
+                  : []
+              : historyCandidate
+                ? [historyCandidate]
+                : aclCandidate
+                  ? [aclCandidate]
+                  : [];
+      if (historyCandidate && projects[0] === historyCandidate) {
+        const identity = rootIdentity(historyCandidate.sessionKey, historyCandidate.accountId);
+        if (identity) {
+          discoveryCursor = identity;
+        }
+      }
+      if (projects.length && !priority) {
+        channelWorkKind = channelWorkKind === "acl" ? "history" : "acl";
+      }
+      if (priority) {
+        prioritySessionKey = undefined;
+      }
+      // A full-room ACL sweep exhausts Fi's shared provisioning credential before
+      // live traffic can authenticate.  The selected item is the durable repair
+      // path; an existing live Slack event has its own direct projection hook.
       for (const { sessionKey, roomId } of projects) {
         if (stopped || controller !== generation) {
           return;
@@ -649,20 +593,33 @@ export function registerSlackProjectionReconciler(
       const pending =
         [...candidates].filter((identity) => !outcomes.has(identity)).length +
         unavailableSessions.size;
-      // Existing channel ACLs run first; slower historical/direct hydration cannot delay them.
-      detachedReport = await reconcileDetached.reconcile(
-        { ...config, token: config.token },
-        bindings,
-        generation.signal,
-        knownRoots,
-      );
-      directReport = await reconcileSlackDirectProjections(
-        api,
-        { ...config, token: config.token },
-        bindings,
-        generation.signal,
-        directSweepSeen,
-      );
+      if (maintenanceLane === "detached") {
+        detachedReport = await reconcileDetached.reconcile(
+          { ...config, token: config.token },
+          bindings,
+          generation.signal,
+          knownRoots,
+          detachedWorkKind === "acl"
+            ? { maxExistingRooms: RECONCILE_BATCH_SIZE, allowDiscovery: false }
+            : { maxExistingRooms: 0, allowDiscovery: true },
+        );
+        detachedWorkKind = detachedWorkKind === "acl" ? "history" : "acl";
+      } else if (maintenanceLane === "direct") {
+        directReport = await reconcileSlackDirectProjections(
+          api,
+          { ...config, token: config.token },
+          bindings,
+          generation.signal,
+          directSweepSeen,
+          RECONCILE_HISTORY_BATCH_SIZE,
+        );
+      }
+      maintenanceLane =
+        maintenanceLane === "channel"
+          ? "detached"
+          : maintenanceLane === "detached"
+            ? "direct"
+            : "channel";
       report = {
         scanned: candidates.size,
         pending,
@@ -698,6 +655,15 @@ export function registerSlackProjectionReconciler(
         return;
       }
       stopped = false;
+      // Timer/cursor state is deliberately transient. A fresh service start
+      // begins at the channel lane so a durable room never waits behind a
+      // stale detached/direct cursor from the prior gateway generation.
+      prioritySessionKey = undefined;
+      maintenanceLane = "channel";
+      channelWorkKind = "acl";
+      detachedWorkKind = "acl";
+      bindingSweepSeen.clear();
+      directSweepSeen.clear();
       controller = new AbortController();
       timer = setTimeout(() => void reconcile(), 5_000);
       timer.unref();
@@ -714,6 +680,8 @@ export function registerSlackProjectionReconciler(
   return {
     wake: (sessionKey: string) => {
       reconcileDetached.invalidate(sessionKey);
+      prioritySessionKey = sessionKey;
+      maintenanceLane = "channel";
       if (stopped) {
         return;
       }

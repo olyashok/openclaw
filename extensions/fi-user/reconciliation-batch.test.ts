@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  RECONCILE_BATCH_SIZE,
   RECONCILE_HISTORY_BATCH_SIZE,
   takePendingOrRotatingBatch,
   takeSweepBatch,
@@ -34,6 +35,7 @@ describe("projection reconciliation batching", () => {
   });
 
   it("uses a one-at-a-time budget for historical snapshots", () => {
+    expect(RECONCILE_BATCH_SIZE).toBe(1);
     expect(RECONCILE_HISTORY_BATCH_SIZE).toBe(1);
   });
 });

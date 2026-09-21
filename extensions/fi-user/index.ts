@@ -18,7 +18,7 @@ import {
   registerSlackChannelProjection,
   type SlackProjectionMessage,
   type SlackProjectionContext,
-} from "./channel-projection.js";
+} from "./channel-projection-registration.js";
 import { registerSourceReplyAuthorization } from "./source-reply-authorization.js";
 
 const execFileAsync = promisify(execFile);

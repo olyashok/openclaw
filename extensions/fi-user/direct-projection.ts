@@ -122,6 +122,7 @@ export async function reconcileSlackDirectProjections(
   }>,
   signal: AbortSignal,
   sweepSeen = new Set<string>(),
+  limit = RECONCILE_HISTORY_BATCH_SIZE,
 ) {
   const config = api.runtime.config?.current?.() ?? api.config;
   const configured = (config?.bindings ?? []).filter(
@@ -144,7 +145,7 @@ export async function reconcileSlackDirectProjections(
     }
   }
   const sessionKeys = [...sessions].toSorted();
-  const scheduled = takeSweepBatch(sessionKeys, sweepSeen, RECONCILE_HISTORY_BATCH_SIZE);
+  const scheduled = takeSweepBatch(sessionKeys, sweepSeen, limit);
   const report = { scanned: sessions.size, created: 0, existing: 0, skipped: 0, error: 0 };
   const post = async (body: unknown) => {
     const response = await fetch(`${connection.baseUrl}/api/openclaw-session-projection`, {
