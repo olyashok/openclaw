@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { normalizeTalkSection } from "../config/talk.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
+import { runWithGatewayIndependentRootWorkAdmission } from "../process/gateway-work-admission.js";
 import { BoundedSerialQueue } from "../shared/bounded-serial-queue.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { consultRealtimeVoiceAgent } from "../talk/agent-consult-runtime.js";
@@ -139,7 +140,14 @@ function createTalkClientAgentRuntime(params: {
     runParams.abortSignal?.addEventListener("abort", close, { once: true });
     try {
       runParams.abortSignal?.throwIfAborted();
-      return await execution.runEmbeddedAgent({ ...runParams, preparedRunAdmission });
+      // Provider callbacks outlive the talk.client.create RPC that installed them.
+      // Their AsyncLocalStorage chain can therefore still point at the RPC's
+      // already-released root lease, which makes healthy subordinate work look as
+      // though the gateway is draining. Re-enter process admission for each
+      // delayed consult while retaining the normal restart/suspension fence.
+      return await runWithGatewayIndependentRootWorkAdmission(
+        async () => await execution.runEmbeddedAgent({ ...runParams, preparedRunAdmission }),
+      );
     } finally {
       runParams.abortSignal?.removeEventListener("abort", close);
       close();

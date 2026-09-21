@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import {
+  isGatewaySubordinateWorkAdmissionClosed,
+  resetGatewayWorkAdmission,
+  tryBeginGatewayRootWorkAdmission,
+} from "../process/gateway-work-admission.js";
+import {
   authorizeClientVoiceConfirmation,
   checkClientVoiceToolConfirmationPolicy,
   deactivateClientVoiceConfirmationSession,
@@ -99,7 +104,10 @@ describe("Talk client agent consult admission", () => {
     });
   });
 
-  afterEach(() => resetClientVoiceConfirmationStateForTest());
+  afterEach(() => {
+    resetClientVoiceConfirmationStateForTest();
+    resetGatewayWorkAdmission();
+  });
 
   it("runs through a Talk-owned gateway admission and closes it after success", async () => {
     await expect(createRunner().runPrompt({ prompt: "check" })).resolves.toEqual({ text: "done" });
@@ -127,6 +135,26 @@ describe("Talk client agent consult admission", () => {
       expect.objectContaining({ senderIsOwner: false, toolsAllow: ["read"] }),
     );
     expect(mocks.close).toHaveBeenCalledOnce();
+  });
+
+  it("re-admits a delayed provider consult after its creating RPC root was released", async () => {
+    const creatingRpc = tryBeginGatewayRootWorkAdmission();
+    expect(creatingRpc).not.toBeNull();
+    if (!creatingRpc) {
+      throw new Error("expected creating RPC admission");
+    }
+    let delayedConsult: (() => Promise<{ text: string }>) | undefined;
+    await creatingRpc.run(async () => {
+      delayedConsult = () => createRunner().runPrompt({ prompt: "check" });
+    });
+    creatingRpc.release();
+
+    mocks.runEmbeddedAgentCore.mockImplementationOnce(async () => {
+      expect(isGatewaySubordinateWorkAdmissionClosed()).toBe(false);
+      return { payloads: [] };
+    });
+    expect(delayedConsult).toBeDefined();
+    await expect(delayedConsult?.()).resolves.toEqual({ text: "done" });
   });
 
   it("preserves full agent authority for administrator consults", async () => {
