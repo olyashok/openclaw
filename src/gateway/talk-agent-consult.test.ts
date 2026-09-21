@@ -108,6 +108,22 @@ describe("Talk Matrix consult delivery", () => {
       expect.objectContaining({
         toolsAllow: ["read"],
         talkRelayAdmission: mocks.relayAdmission,
+        inboundEventKind: "user_request",
+        sourceReplyDeliveryMode: "automatic",
+      }),
+    );
+  });
+
+  it("uses the directed turn policy when the owner retains the full tool profile", async () => {
+    mocks.resolveAuthority.mockReturnValueOnce({ senderIsOwner: true, toolsAllow: undefined });
+    const { request, params } = createParams();
+    await startTalkRealtimeAgentConsult(request, params);
+    expect(mocks.handleTrustedInternalChatSend).toHaveBeenCalledWith(
+      expect.any(Object),
+      undefined,
+      expect.objectContaining({
+        inboundEventKind: "user_request",
+        sourceReplyDeliveryMode: "automatic",
       }),
     );
   });

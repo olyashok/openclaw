@@ -4,6 +4,8 @@ import {
   isAgentRunRestartAbortReason,
 } from "../../agents/run-termination.js";
 import { createMessageInjectionAuthority } from "../../auto-reply/reply/message-injection-authority.js";
+import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
+import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
 import {
   lookupSessionGoalOperation,
   type SessionGoalOperation,
@@ -75,7 +77,14 @@ type ChatSendInternalOptions = {
   prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;
   toolsAllow?: string[];
   skillWorkshopProposalRevision?: SkillWorkshopProposalRevisionConstraint;
+  inboundEventKind?: InboundEventKind;
+  sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
 };
+
+type TrustedInternalChatSendTurnPolicy = Pick<
+  ChatSendInternalOptions,
+  "inboundEventKind" | "sourceReplyDeliveryMode"
+>;
 
 const mediaDocumentContextLoader = createLazyImportLoader(
   () => import("../../media-understanding/file-context.js"),
@@ -303,6 +312,9 @@ async function handleChatSendWithOptions(
       getConfig: context.getRuntimeConfig,
       userTurn,
     });
+    if (options?.inboundEventKind) {
+      preparedUserTurn.ctx.InboundEventKind = options.inboundEventKind;
+    }
     const { ctx, isInternalTextSlashCommandTurn } = preparedUserTurn;
     admitted.value.setPendingInputCleanup(() => {
       try {
@@ -616,6 +628,7 @@ async function handleChatSendWithOptions(
       prepareAssistantTranscriptMessage: options?.prepareAssistantTranscriptMessage,
       skillWorkshopProposalRevision: options?.skillWorkshopProposalRevision,
       skillLibraryAuthoring,
+      sourceReplyDeliveryMode: options?.sourceReplyDeliveryMode,
       cronCreatorAuthority,
       assertDashboardReadCurrent,
       externalAuthorityAdmission,
@@ -702,11 +715,13 @@ export async function handleTrustedInternalChatSendWithRuntimeTools(
   options: GatewayRequestHandlerOptions,
   toolsAllow: string[],
   talkRelayAdmission?: TalkRelayConsultAdmission,
+  turnPolicy?: TrustedInternalChatSendTurnPolicy,
 ): Promise<void> {
   await handleChatSendWithOptions(options, undefined, undefined, {
     trustedSystemInput: true,
     toolsAllow,
     talkRelayAdmission,
+    ...turnPolicy,
   });
 }
 /** Dispatches an operator-requested proposal revision with its reviewed revision bound to the run. */
@@ -726,7 +741,12 @@ export async function handleTrustedInternalChatSend(
   onAdmissionOwned?: () => Promise<boolean>,
   inputOptions?: Pick<
     ChatSendInternalOptions,
-    "transcript" | "toolsAllow" | "prepareAssistantTranscriptMessage" | "talkRelayAdmission"
+    | "transcript"
+    | "toolsAllow"
+    | "prepareAssistantTranscriptMessage"
+    | "talkRelayAdmission"
+    | "inboundEventKind"
+    | "sourceReplyDeliveryMode"
   >,
 ): Promise<void> {
   await handleChatSendWithOptions(options, onAdmissionOwned, undefined, {

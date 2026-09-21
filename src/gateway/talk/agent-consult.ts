@@ -230,12 +230,21 @@ export async function startTalkRealtimeAgentConsult(
       },
     } satisfies GatewayRequestHandlerOptions;
     // Speech owns reusable history; keep consult scaffolding only in the lossless archive.
-    const chatSendResult = handleTrustedInternalChatSend(chatSendOptions, undefined, {
+    const trustedTurnPolicy = params.matrixRoute
+      ? { inboundEventKind: "user_request" as const, sourceReplyDeliveryMode: "automatic" as const }
+      : {};
+    const inputOptions = {
       toolsAllow: authority.toolsAllow,
       transcript: { display: false, excludeFromContext: true },
       prepareAssistantTranscriptMessage: prepareTalkAgentConsultTranscript,
       talkRelayAdmission,
-    });
+      ...trustedTurnPolicy,
+    };
+    const chatSendResult = handleTrustedInternalChatSend(
+      chatSendOptions,
+      undefined,
+      inputOptions,
+    );
     void Promise.resolve(chatSendResult).then(
       () => {
         if (!acknowledged) {

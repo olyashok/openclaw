@@ -63,6 +63,7 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
     toolsAllow,
     skillWorkshopProposalRevision,
     skillLibraryAuthoring,
+    sourceReplyDeliveryMode,
     cronCreatorAuthority,
     assertDashboardReadCurrent,
     externalAuthorityAdmission,
@@ -357,6 +358,7 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
                 dashboardReadAdmission,
                 skillWorkshopProposalRevision,
                 skillLibraryAuthoring,
+                ...(sourceReplyDeliveryMode ? { sourceReplyDeliveryMode } : {}),
                 ...(cronCreatorAuthority
                   ? { cronCreatorAuthorityCapability: cronCreatorAuthority }
                   : {}),
