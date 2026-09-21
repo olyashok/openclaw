@@ -293,7 +293,13 @@ describe("Matrix session projection", () => {
     mocks.listBySession.mockReturnValue([projectionBinding]);
     expect(
       inspectMatrixSessionProjection({ cfg, targetSessionKey: sessionKey, roomId: "!room" }),
-    ).toMatchObject({ status: "existing", threadRootEventId: "$root" });
+    ).toMatchObject({
+      status: "existing",
+      threadRootEventId: "$root",
+      bindingId: "fi-user:!room:$root",
+      environment: "test",
+      conversationId: "conversation",
+    });
     expect(mocks.bind).not.toHaveBeenCalled();
     expect(mocks.touch).not.toHaveBeenCalled();
     expect(mocks.sendMessageMatrix).not.toHaveBeenCalled();
