@@ -190,6 +190,44 @@ describe("SqliteBackedMatrixSyncStore", () => {
     }
   });
 
+  it("persists a large unicode sync snapshot in bounded chunks without retaining old generations", async () => {
+    const storageRoot = createStorageRoot();
+    const syncResponse = createSyncResponse("large-unicode-token");
+    const body = 'Matrix says "hello" 🟢 '.repeat(30_000);
+    syncResponse.rooms.join!["!room:example.org"]!.timeline!.events[0]!.content = {
+      body,
+      msgtype: "m.text",
+    };
+
+    const firstStore = await SqliteBackedMatrixSyncStore.create(storageRoot);
+    await firstStore.setSyncData(syncResponse);
+    await firstStore.flush();
+
+    const rows = createPluginStateSyncKeyedStoreForTests<MatrixSyncCacheRecord>(
+      "matrix",
+      openMatrixSyncCacheStoreOptions(storageRoot),
+    ).entries();
+    const meta = rows.find((row) => row.key === "current:meta")?.value;
+    expect(meta).toMatchObject({ kind: "meta" });
+    expect(rows).toHaveLength((meta as { chunkCount: number }).chunkCount + 1);
+    expect(rows.length).toBeLessThan(10);
+
+    const restored = await SqliteBackedMatrixSyncStore.create(storageRoot);
+    const saved = await restored.getSavedSync();
+    expect(saved?.roomsData.join?.["!room:example.org"]?.timeline?.events[0]?.content.body).toBe(
+      body,
+    );
+
+    await firstStore.setSyncData(createSyncResponse("replacement-token"));
+    await firstStore.flush();
+    const replacedRows = createPluginStateSyncKeyedStoreForTests<MatrixSyncCacheRecord>(
+      "matrix",
+      openMatrixSyncCacheStoreOptions(storageRoot),
+    ).entries();
+    const replacedMeta = replacedRows.find((row) => row.key === "current:meta")?.value;
+    expect(replacedRows).toHaveLength((replacedMeta as { chunkCount: number }).chunkCount + 1);
+  });
+
   it("keeps a cache generation intact while another store instance publishes", async () => {
     const storageRoot = createStorageRoot();
     const runtime = getMatrixRuntime();
@@ -543,7 +581,7 @@ describe("SqliteBackedMatrixSyncStore", () => {
     const beforeDebounce = await SqliteBackedMatrixSyncStore.create(storageRoot);
     expect(beforeDebounce.hasSavedSync()).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(249);
+    await vi.advanceTimersByTimeAsync(59_999);
     const beforeElapsed = await SqliteBackedMatrixSyncStore.create(storageRoot);
     expect(beforeElapsed.hasSavedSync()).toBe(false);
 
