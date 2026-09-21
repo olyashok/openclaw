@@ -275,11 +275,11 @@ export function createTalkClientAgentConsultRunner(params: {
           confirmationId: parsedArgs.confirmationId,
         })
       : undefined;
-    agentRuntime ??= createTalkClientAgentRuntime({
+    const consultAgentRuntime = (agentRuntime ??= createTalkClientAgentRuntime({
       config: params.config,
       agentId: params.agentId,
       ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
-    });
+    }));
     const talkConfig = normalizeTalkSection(params.config.talk);
     // Provider callbacks outlive the talk.client.create RPC that installed them.
     // Their AsyncLocalStorage chain can therefore still point at the RPC's
@@ -290,7 +290,7 @@ export function createTalkClientAgentConsultRunner(params: {
       async () =>
         await consultRealtimeVoiceAgent({
           cfg: params.config,
-          agentRuntime,
+          agentRuntime: consultAgentRuntime,
           logger: params.context.logGateway,
           agentId: params.agentId,
           sessionKey: params.sessionKey,
