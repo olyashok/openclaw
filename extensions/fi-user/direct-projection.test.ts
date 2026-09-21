@@ -182,7 +182,13 @@ describe("Fi direct projection discovery", () => {
     await reconcileSlackDirectProjections(...args);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(
-      fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).sessionKey),
+      fetchMock.mock.calls.map((call) => {
+        const body = call[1]?.body;
+        if (typeof body !== "string") {
+          throw new Error("Expected JSON request body");
+        }
+        return JSON.parse(body).sessionKey;
+      }),
     ).toEqual(sessions);
     fetchMock.mockRestore();
   });
