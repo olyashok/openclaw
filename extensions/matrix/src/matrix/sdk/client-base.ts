@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  ClientEvent,
   Filter,
   createClient as createMatrixJsClient,
   type IFilterDefinition,
@@ -44,6 +45,65 @@ import type { MatrixVerificationSummary } from "./verification-manager.js";
 type MatrixCryptoRuntime = typeof import("./crypto-runtime.js");
 
 const MATRIX_ENCRYPTED_STARTUP_TIMEOUT_MS = 60_000;
+
+type HeadlessMatrixRtcControl = {
+  matrixRTC?: { stop: () => void };
+  startMatrixRTC?: (...args: unknown[]) => void;
+};
+
+function disableHeadlessMatrixRtc(client: MatrixJsClient): void {
+  const rtcControl = client as unknown as HeadlessMatrixRtcControl;
+  // matrix-js-sdk starts its RTC membership manager after initial sync even
+  // when VoIP is disabled. OpenClaw's Matrix plugin is a headless messaging
+  // client; voice uses the gateway Talk relay, so walking RTC state for every
+  // joined room only blocks the gateway event loop.
+  if (typeof rtcControl.startMatrixRTC === "function") {
+    client.off(ClientEvent.Sync, rtcControl.startMatrixRTC);
+  }
+  rtcControl.matrixRTC?.stop();
+}
+
+export type MatrixMessageWireDispatch = {
+  roomId: string;
+  eventType: "m.room.message" | "m.room.encrypted";
+  transactionId: string;
+  requestPath: string;
+};
+
+type MatrixMessageWireDispatchGuard = (dispatch: MatrixMessageWireDispatch) => Promise<void>;
+
+function resolveMessageWireDispatch(
+  resource: RequestInfo | URL,
+  init?: RequestInit,
+): MatrixMessageWireDispatch | null {
+  const method = (
+    init?.method ?? (resource instanceof Request ? resource.method : "GET")
+  ).toUpperCase();
+  if (method !== "PUT") {
+    return null;
+  }
+  const rawUrl =
+    typeof resource === "string"
+      ? resource
+      : resource instanceof URL
+        ? resource.href
+        : resource.url;
+  const segments = new URL(rawUrl).pathname.split("/").filter(Boolean);
+  const roomsIndex = segments.lastIndexOf("rooms");
+  if (roomsIndex < 0 || segments[roomsIndex + 2] !== "send" || segments.length !== roomsIndex + 5) {
+    return null;
+  }
+  const eventType = decodeURIComponent(segments[roomsIndex + 3] ?? "");
+  if (eventType !== "m.room.message" && eventType !== "m.room.encrypted") {
+    return null;
+  }
+  return {
+    roomId: decodeURIComponent(segments[roomsIndex + 1] ?? ""),
+    eventType,
+    transactionId: decodeURIComponent(segments[roomsIndex + 4] ?? ""),
+    requestPath: new URL(rawUrl).pathname,
+  };
+}
 
 let loadedMatrixCryptoRuntime: MatrixCryptoRuntime | null = null;
 
@@ -241,6 +301,7 @@ export abstract class MatrixClientBase {
         VerificationMethod.Reciprocate,
       ],
     });
+    disableHeadlessMatrixRtc(this.client);
     // SDK mappers and relations also call this method. Crypto retries belong to
     // the client generation, while their callers retain their own read authority.
     const decryptEventIfNeeded = this.client.decryptEventIfNeeded.bind(this.client);
@@ -248,6 +309,25 @@ export abstract class MatrixClientBase {
       this.captureRequestAuthority()?.();
       return this.withClientCryptoWork(() => decryptEventIfNeeded(event, options));
     };
+  }
+
+  protected async withMessageWireDispatchGuard<T>(params: {
+    transactionId?: string;
+    guard?: MatrixMessageWireDispatchGuard;
+    run: () => Promise<T>;
+  }): Promise<T> {
+    if (!params.transactionId || !params.guard) {
+      return await params.run();
+    }
+    if (this.messageWireDispatchGuards.has(params.transactionId)) {
+      throw new Error(`Matrix transaction ${params.transactionId} already has a dispatch guard`);
+    }
+    this.messageWireDispatchGuards.set(params.transactionId, params.guard);
+    try {
+      return await params.run();
+    } finally {
+      this.messageWireDispatchGuards.delete(params.transactionId);
+    }
   }
 
   on<TEvent extends keyof MatrixClientEventMap>(
