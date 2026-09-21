@@ -52,6 +52,13 @@ function object(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function hasAsciiControl(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
 async function readProjectionHistory(
   client: MatrixClient,
   roomId: string,
@@ -121,12 +128,14 @@ export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionS
       (message.displayName !== undefined &&
         (typeof message.displayName !== "string" ||
           message.displayName.length > 200 ||
-          /[\u0000-\u001f\u007f]/.test(message.displayName)))
+          hasAsciiControl(message.displayName)))
     ) {
       throw new Error("Invalid source snapshot message");
     }
     totalContent += message.content.length;
-    if (totalContent > 1_000_000) throw new Error("Source snapshot exceeds bounded content");
+    if (totalContent > 1_000_000) {
+      throw new Error("Source snapshot exceeds bounded content");
+    }
     sourceIds.add(message.messageId);
     messages.push({
       messageId: message.messageId,
@@ -305,26 +314,28 @@ export async function reconcileMatrixProjectionSnapshot(params: {
             deliveryPartIndex: 0,
             deliveryPartCount: 1,
           });
-          if (binding && publication)
+          if (binding && publication) {
             await noteMatrixSourceSnapshotResult(
               binding.bindingId,
               message.messageId,
               params.roomId,
               accepted.messageId,
             );
+          }
         } else if (binding && publication) {
           const final = currentParts.find(
             (part) =>
               object(part.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.partIndex ===
               expectedParts - 1,
           );
-          if (final)
+          if (final) {
             await noteMatrixSourceSnapshotResult(
               binding.bindingId,
               message.messageId,
               params.roomId,
               final.eventId,
             );
+          }
         }
         // Replace only after every new wire part was accepted. Chunked original
         // events are parts, not duplicate source messages; preserve their slots.
@@ -332,9 +343,13 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         const obsolete = sameRevision
           ? existing.filter((event) => {
               const metadata = object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
-              if (metadata?.publicationRevision !== targetRevision) return true;
+              if (metadata?.publicationRevision !== targetRevision) {
+                return true;
+              }
               const slot = JSON.stringify([metadata?.publicationRevision, metadata?.partIndex]);
-              if (slots.has(slot)) return true;
+              if (slots.has(slot)) {
+                return true;
+              }
               slots.add(slot);
               return false;
             })
