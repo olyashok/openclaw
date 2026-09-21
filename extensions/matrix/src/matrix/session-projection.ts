@@ -51,7 +51,6 @@ const projectionCreationQueue = new KeyedAsyncQueue();
 // delivery queue remains the durable retry/idempotency layer across restarts.
 const projectedDeliveryKeys = new Set<string>();
 const MAX_PROJECTED_DELIVERY_KEYS = 10_000;
-const SOURCE_SNAPSHOT_AUDIT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 type ProjectionRole = "user" | "assistant";
 
@@ -660,20 +659,11 @@ export async function createMatrixSessionProjection(params: {
           initialMessage: params.initialMessage,
           binding: existing,
         });
-        const reconciledAt = Number(existing.metadata?.sourceSnapshotReconciledAtMs);
-        const currentSnapshot =
-          sourceSnapshotDigest !== undefined &&
-          existing.metadata?.sourceSnapshotDigest === sourceSnapshotDigest &&
-          Number.isFinite(reconciledAt) &&
-          Date.now() - reconciledAt < SOURCE_SNAPSHOT_AUDIT_INTERVAL_MS;
-        if (params.sourceSnapshot && !currentSnapshot) {
-          await reconcileMatrixProjectionSnapshot({
-            cfg: params.cfg,
-            accountId,
-            roomId,
-            threadId: existing.conversation.conversationId,
-            snapshot: params.sourceSnapshot,
-          });
+        if (params.sourceSnapshot && !existing.metadata?.sourceSnapshotDigest) {
+          // Existing projections are maintained by live source hooks. Adopting
+          // their first observed snapshot must not turn the minute discovery
+          // sweep into an implicit full-history decrypt/replay. Operators can
+          // still request the explicit rebase path when history needs repair.
           existing = await bindingService.bind({
             targetSessionKey,
             targetKind: "session",

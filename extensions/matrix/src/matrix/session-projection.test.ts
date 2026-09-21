@@ -334,7 +334,7 @@ describe("Matrix session projection", () => {
     ).resolves.toMatchObject({ status: "existing", threadRootEventId: "$root" });
     expect(mocks.bind).not.toHaveBeenCalled();
   });
-  it("persists a snapshot digest and skips unchanged reconciliation for one day", async () => {
+  it("adopts a checkpoint without replaying an existing projection", async () => {
     const snapshot = {
       complete: true as const,
       messages: [
@@ -366,7 +366,7 @@ describe("Matrix session projection", () => {
     await createMatrixSessionProjection(params);
     await createMatrixSessionProjection(params);
 
-    expect(mocks.reconcileSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.reconcileSnapshot).not.toHaveBeenCalled();
     expect(mocks.bind).toHaveBeenCalledTimes(1);
     expect(current.metadata).toEqual(
       expect.objectContaining({
