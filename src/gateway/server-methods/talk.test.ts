@@ -3602,6 +3602,25 @@ describe("talk.client.create handler", () => {
     expectRespondOk(respond, { ok: true });
   });
 
+  it("lets the owning connection close a bound Matrix Gateway-controlled session", async () => {
+    mocks.closeTalkClientGatewayControlSession.mockResolvedValueOnce(true);
+    const respond = vi.fn();
+    const matrixKey = "agent:main:matrix:channel:!private:example.org:thread:$root";
+
+    await callTalkHandler("talk.client.close", {
+      params: { sessionKey: matrixKey, voiceSessionId: "voice-bound" },
+      respond,
+      context: { getRuntimeConfig: () => ({}) as OpenClawConfig },
+    });
+
+    expect(mocks.closeTalkClientGatewayControlSession).toHaveBeenCalledWith({
+      voiceSessionId: "voice-bound",
+      sessionKey: matrixKey,
+      connId: "conn-1",
+    });
+    expectRespondOk(respond, { ok: true });
+  });
+
   it("binds GPT-Live delegations to the voice session and browser-owned steer lifecycle", async () => {
     const started = createDeferred();
     const release = createDeferred();

@@ -305,6 +305,19 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     }
     try {
       const config = context.getRuntimeConfig();
+      // A Gateway-controlled session is already bound to this exact connection,
+      // session key, and voice id. Let its owner close it before applying the raw
+      // Matrix-key gate; the one-time binding used at create has been consumed.
+      if (
+        await closeTalkClientGatewayControlSession({
+          voiceSessionId: params.voiceSessionId,
+          sessionKey: params.sessionKey,
+          connId: normalizeOptionalString(client?.connId),
+        })
+      ) {
+        respond(true, { ok: true }, undefined);
+        return;
+      }
       if (
         !isWebchatSessionAllowed({ cfg: config, client, sessionKey: params.sessionKey }) ||
         isUnauthorizedRawMatrixBrowserSession({
@@ -316,16 +329,6 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         })
       ) {
         throw new Error("Matrix Talk sessions require an authorized binding");
-      }
-      if (
-        await closeTalkClientGatewayControlSession({
-          voiceSessionId: params.voiceSessionId,
-          sessionKey: params.sessionKey,
-          connId: normalizeOptionalString(client?.connId),
-        })
-      ) {
-        respond(true, { ok: true }, undefined);
-        return;
       }
       const agentId = resolveTalkSessionAgentId(config, params.sessionKey);
       const origin = resolveClientVoiceSessionOrigin({
