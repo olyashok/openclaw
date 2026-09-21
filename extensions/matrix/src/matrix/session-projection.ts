@@ -110,11 +110,12 @@ function normalizeChannel(value: unknown): string {
 function resolveDeliveryIdentity(params: {
   role: ProjectionRole;
   messageId?: string;
+  runId?: string;
   publication?: MatrixPublication;
 }): string | null {
   const sourceId = params.publication
     ? `${params.publication.origin.messageId}:${params.publication.logicalPartId}:${params.publication.publicationRevision}`
-    : clean(params.messageId);
+    : clean(params.messageId) || clean(params.runId);
   if (!sourceId) {
     return null;
   }

@@ -538,6 +538,31 @@ describe("Matrix session projection", () => {
     expect(mocks.touch).toHaveBeenCalledWith(projectionBinding.bindingId);
   });
 
+  it("uses the stable run identity for native chat user messages without a message id", async () => {
+    mocks.listBySession.mockReturnValue([projectionBinding]);
+
+    await handleMatrixSessionProjectionMessageReceived(
+      {
+        content: "Continue this OpenClaw conversation",
+        runId: "native-chat-run-1",
+        sessionKey,
+      },
+      { channelId: "webchat", sessionKey, runId: "native-chat-run-1" },
+      cfg,
+    );
+
+    expect(mocks.sendMessageMatrix).toHaveBeenCalledWith(
+      "room:!room",
+      "**OpenClaw · User**\nContinue this OpenClaw conversation",
+      expect.objectContaining({
+        deliveryQueueId: "matrix-session-projection:fi-user:!room:$root:user:native-chat-run-1",
+        deliveryPartIndex: 0,
+        deliveryPartCount: 1,
+      }),
+    );
+    expect(mocks.touch).toHaveBeenCalledWith(projectionBinding.bindingId);
+  });
+
   it("projects only final visible assistant answers", async () => {
     mocks.listBySession.mockReturnValue([projectionBinding]);
     const context = { channelId: "slack", sessionKey, runId: "run-1" };
