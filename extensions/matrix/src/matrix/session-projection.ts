@@ -169,11 +169,14 @@ async function projectToMatrix(params: {
       if (!roomId || !threadId) {
         return;
       }
+      const sourceMessageId = clean(params.messageId) || clean(params.runId);
       const originalTime =
         params.publishedAtMs ??
         (sourceChannel === "slack" && /^\d+\.\d+$/.test(params.messageId ?? "")
           ? Math.floor(Number(params.messageId) * 1000)
-          : undefined);
+          : sourceMessageId
+            ? Date.now()
+            : undefined);
       const publication = params.hostEvent
         ? resolveMatrixReplyPublication(
             params.hostEvent,
@@ -181,14 +184,18 @@ async function projectToMatrix(params: {
             roomId,
             threadId,
           )
-        : originalTime !== undefined && params.messageId && params.senderId
+        : originalTime !== undefined &&
+            sourceMessageId &&
+            params.senderId &&
+            typeof binding.metadata?.environment === "string" &&
+            typeof binding.metadata?.projectedConversationId === "string"
           ? createMatrixSourcePublication({
               bindingId: binding.bindingId,
               roomId,
               threadId,
               provider: sourceChannel,
               accountId: binding.conversation.accountId,
-              messageId: params.messageId,
+              messageId: sourceMessageId,
               actorId: params.senderId,
               publishedAtMs: originalTime,
               role: params.role,
@@ -218,7 +225,11 @@ async function projectToMatrix(params: {
             channel: sourceChannel,
             role: params.role,
             text,
-            senderId: params.senderId,
+            // Native chat's gateway client id identifies transport software,
+            // not the human author. Keep it in trusted origin metadata while
+            // presenting the portable user role on Matrix.
+            senderId:
+              sourceChannel === "webchat" && params.role === "user" ? undefined : params.senderId,
             agentId: params.agentId,
           }),
           {
