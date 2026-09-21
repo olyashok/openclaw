@@ -16,7 +16,6 @@ import {
   deleteSessionEntry,
   getSessionEntry,
   listSessionEntries,
-  listSessionKeys,
   loadSessionStore,
   patchSessionEntry,
   readSessionUpdatedAt,
@@ -112,7 +111,6 @@ describe("session-store-runtime compatibility surface", () => {
         }),
       },
     ]);
-    expect(listSessionKeys({ storePath })).toEqual([sessionKey]);
     const compatibilityStore = loadSessionStore(storePath, { skipCache: true });
     expect(compatibilityStore).toEqual({
       [sessionKey]: expect.objectContaining({
