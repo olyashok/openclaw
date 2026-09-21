@@ -479,6 +479,18 @@ export function inspectMatrixSessionProjection(params: ProjectionTarget) {
   return binding
     ? {
         status: "existing" as const,
+        // Inspection is read-only, but callers that continue a conversation
+        // need the immutable identity carried by every canonical publication.
+        // Do not make a Matrix reader infer it from mutable display text.
+        bindingId: binding.bindingId,
+        environment:
+          typeof binding.metadata?.environment === "string"
+            ? binding.metadata.environment
+            : undefined,
+        conversationId:
+          typeof binding.metadata?.projectedConversationId === "string"
+            ? binding.metadata.projectedConversationId
+            : undefined,
         accountId,
         agentId,
         roomId,
