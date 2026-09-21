@@ -1,4 +1,10 @@
-export const RECONCILE_BATCH_SIZE = 8;
+// The periodic reconciler shares a single gateway with live chat, Matrix
+// projection, Slack Socket Mode, and Discord.  It may not admit a burst of
+// independent network repairs just because each individual repair is bounded.
+// One maintenance item per lane is the maximum; the owning scheduler rotates
+// lanes so ACL repair, historical recovery, and direct-message recovery remain
+// fair without competing with a live turn.
+export const RECONCILE_BATCH_SIZE = 1;
 
 // Reading a Slack history and serializing it into a projection is materially
 // more expensive than reconciling a room's membership.  Keep repair work

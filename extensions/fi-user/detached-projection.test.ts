@@ -135,16 +135,19 @@ describe("native parent-session Slack history discovery", () => {
       new AbortController().signal,
       new Set(),
     );
-    expect(f.publish).toHaveBeenCalledTimes(8);
-    expect(first.pending).toBe(4);
-    const second = await reconcile(
-      { baseUrl: "https://fi.example", token: "test" },
-      bindings,
-      new AbortController().signal,
-      new Set(),
-    );
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    expect(first.pending).toBe(11);
+    let latest = first;
+    for (let index = 1; index < 12; index++) {
+      latest = await reconcile(
+        { baseUrl: "https://fi.example", token: "test" },
+        bindings,
+        new AbortController().signal,
+        new Set(),
+      );
+    }
     expect(f.publish).toHaveBeenCalledTimes(12);
-    expect(second.pending).toBe(0);
+    expect(latest.pending).toBe(0);
   });
   it("rescans completed skipped roots after opt-out restoration and live parent activity", async () => {
     vi.useFakeTimers();

@@ -22,6 +22,12 @@ type Scope = NonNullable<ChannelProjectionParams["channelScope"]> & {
   readHistoryPage: (cursor?: string) => Promise<{ roots: string[]; nextCursor?: string }>;
 };
 type Reader = { workspaceId: string; readChannel: (channelId: string) => Promise<Scope> };
+type ReconcileBudget = {
+  /** Existing rooms only need their membership checked. */
+  maxExistingRooms?: number;
+  /** Historical root discovery is intentionally a separate maintenance lane. */
+  allowDiscovery?: boolean;
+};
 const PARENT =
   /^agent:(cellect-fi-user|cellect-fi-admin):slack:(?:channel|group):([cg][a-z0-9]+)$/i;
 const identity = (source: Source) =>
@@ -97,6 +103,7 @@ export function createDetachedProjectionReconciler(
     bindings: ProjectionInventoryBinding[],
     signal: AbortSignal,
     knownRoots: Set<string>,
+    budget: ReconcileBudget = {},
   ) => {
     const config = api.runtime.config?.current?.() ?? api.config;
     const configured = (config?.bindings ?? []).filter(
@@ -191,7 +198,7 @@ export function createDetachedProjectionReconciler(
       roomIds,
       new Set(existingOutcomes.keys()),
       existingCursor,
-      RECONCILE_BATCH_SIZE,
+      budget.maxExistingRooms ?? RECONCILE_BATCH_SIZE,
     );
     const existingRooms = scheduled.batch;
     existingCursor = scheduled.cursor;
@@ -257,6 +264,24 @@ export function createDetachedProjectionReconciler(
       }
     }
     const keys = [...parents.keys()].toSorted();
+    if (!budget.allowDiscovery && budget.maxExistingRooms !== undefined) {
+      const states = [...scans.values()];
+      return {
+        channels: parents.size,
+        pending:
+          keys.filter((candidate) => !scans.get(candidate)?.done).length +
+          roomIds.filter((roomId) => !existingOutcomes.has(roomId)).length,
+        unavailable:
+          unavailable +
+          [...existingOutcomes.values()].filter((outcome) => outcome === "unavailable").length,
+        error:
+          states.filter((state) => state.error).length +
+          [...existingOutcomes.values()].filter((outcome) => outcome === "error").length,
+        created: states.reduce((sum, state) => sum + state.created, 0),
+        existing: states.reduce((sum, state) => sum + state.existing, 0),
+        skipped: states.reduce((sum, state) => sum + state.skipped, 0),
+      };
+    }
     if (
       refreshAt &&
       Date.now() >= refreshAt &&

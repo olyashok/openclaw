@@ -351,7 +351,10 @@ describe("Fi Slack channel publisher", () => {
     service.start();
     await vi.advanceTimersByTimeAsync(5000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    for (let index = 1; index < 12; index++) {
+    // Channel maintenance receives one slot every three reconciler turns:
+    // channel, detached, direct. Historical roots remain fair, but cannot
+    // monopolize the gateway shared by live conversations.
+    for (let index = 1; index < 36; index++) {
       await vi.advanceTimersByTimeAsync(60_000);
     }
     service.stop();
@@ -421,8 +424,10 @@ describe("Fi Slack channel publisher", () => {
       await vi.advanceTimersByTimeAsync(5000);
       expect(readChannel).toHaveBeenCalledTimes(1);
       expect(readThread).not.toHaveBeenCalled();
-      expect(fetchMock).toHaveBeenCalledTimes(8);
-      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      for (let index = 0; index < 33; index++) {
+        await vi.advanceTimersByTimeAsync(60_000);
+      }
       service.stop();
       const payloads = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
       expect(payloads).toHaveLength(12);
