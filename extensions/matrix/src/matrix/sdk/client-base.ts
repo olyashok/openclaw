@@ -55,6 +55,10 @@ function disableHeadlessMatrixRtc(client: MatrixJsClient): void {
   // joined room only blocks the gateway event loop.
   if (typeof rtcControl.startMatrixRTC === "function") {
     client.off(ClientEvent.Sync, rtcControl.startMatrixRTC);
+    // startClient() registers this callback again, so removing the constructor
+    // listener alone is not sufficient. Replace the SDK-private callback before
+    // startup so the later registration is inert as well.
+    rtcControl.startMatrixRTC = () => {};
   }
   rtcControl.matrixRTC?.stop();
 }
