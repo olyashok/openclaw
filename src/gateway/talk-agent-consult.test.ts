@@ -108,8 +108,34 @@ describe("Talk Matrix consult delivery", () => {
       }),
       ["read"],
       mocks.relayAdmission,
+      {
+        inboundEventKind: "user_request",
+        sourceReplyDeliveryMode: "automatic",
+      },
     );
     expect(mocks.handleChatSendWithRuntimeTools).not.toHaveBeenCalled();
+  });
+
+  it("uses the same directed turn policy when the owner keeps the full tool profile", async () => {
+    mocks.resolveAuthority.mockReturnValueOnce({ senderIsOwner: true, toolsAllow: undefined });
+    mocks.handleTrustedInternalChatSend.mockImplementationOnce(
+      async (options: { params: { idempotencyKey: string }; respond: Function }) => {
+        options.respond(true, { status: "started", runId: options.params.idempotencyKey });
+      },
+    );
+
+    await expect(startTalkRealtimeAgentConsult(createParams())).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(mocks.handleTrustedInternalChatSend).toHaveBeenCalledWith(
+      expect.any(Object),
+      undefined,
+      mocks.relayAdmission,
+      {
+        inboundEventKind: "user_request",
+        sourceReplyDeliveryMode: "automatic",
+      },
+    );
   });
 
   it("reuses one run idempotency key for the same delayed provider call retry", async () => {

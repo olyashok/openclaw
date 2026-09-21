@@ -1,6 +1,8 @@
 // chat.send owns admission, ACK timing, and detached dispatch handoff.
 import { performance } from "node:perf_hooks";
 import { createAgentRunRestartAbortError } from "../../agents/run-termination.js";
+import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
+import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
 import {
   lookupSessionGoalOperation,
   type SessionGoalOperation,
@@ -52,7 +54,14 @@ type ChatSendInternalOptions = {
   trustedSystemInput?: boolean;
   toolsAllow?: string[];
   skillWorkshopProposalRevision?: SkillWorkshopProposalRevisionConstraint;
+  inboundEventKind?: InboundEventKind;
+  sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
 };
+
+export type TrustedInternalChatSendTurnPolicy = Pick<
+  ChatSendInternalOptions,
+  "inboundEventKind" | "sourceReplyDeliveryMode"
+>;
 
 async function handleChatSendWithOptions(
   {
@@ -220,6 +229,9 @@ async function handleChatSendWithOptions(
       logGateway: context.logGateway,
       userTurn,
     });
+    if (options?.inboundEventKind) {
+      preparedUserTurn.ctx.InboundEventKind = options.inboundEventKind;
+    }
     let goalResult: SessionGoalOperationResult | undefined;
     if (restartSafeAdmission) {
       const persistedUserTurn = await persistGatewayUserTurnTranscript();
@@ -394,6 +406,7 @@ async function handleChatSendWithOptions(
       context,
       toolsAllow: options?.toolsAllow,
       skillWorkshopProposalRevision: options?.skillWorkshopProposalRevision,
+      sourceReplyDeliveryMode: options?.sourceReplyDeliveryMode,
       cronCreatorAuthority,
       externalAuthorityAdmission,
       injection: {
@@ -456,11 +469,13 @@ export async function handleTrustedInternalChatSendWithRuntimeTools(
   options: GatewayRequestHandlerOptions,
   toolsAllow: string[],
   talkRelayAdmission?: TalkRelayConsultAdmission,
+  turnPolicy?: TrustedInternalChatSendTurnPolicy,
 ): Promise<void> {
   await handleChatSendWithOptions(options, undefined, undefined, {
     trustedSystemInput: true,
     toolsAllow,
     talkRelayAdmission,
+    ...turnPolicy,
   });
 }
 
@@ -480,9 +495,11 @@ export async function handleTrustedInternalChatSend(
   options: GatewayRequestHandlerOptions,
   onAdmissionOwned?: () => Promise<boolean>,
   talkRelayAdmission?: TalkRelayConsultAdmission,
+  turnPolicy?: TrustedInternalChatSendTurnPolicy,
 ): Promise<void> {
   await handleChatSendWithOptions(options, onAdmissionOwned, undefined, {
     trustedSystemInput: true,
     talkRelayAdmission,
+    ...turnPolicy,
   });
 }

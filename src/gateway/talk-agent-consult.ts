@@ -133,6 +133,10 @@ export async function startTalkRealtimeAgentConsult(params: {
     return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(error)) };
   }
   let acknowledgedRunId: string | undefined;
+  const trustedTurnPolicy = {
+    inboundEventKind: "user_request" as const,
+    sourceReplyDeliveryMode: "automatic" as const,
+  };
   const chatResponse = await new Promise<
     { ok: true; result: unknown } | { ok: false; error: ErrorShape } | undefined
   >((resolve) => {
@@ -221,8 +225,14 @@ export async function startTalkRealtimeAgentConsult(params: {
             chatSendOptions,
             authority.toolsAllow,
             talkRelayAdmission,
+            trustedTurnPolicy,
           )
-        : handleTrustedInternalChatSend(chatSendOptions, undefined, talkRelayAdmission)
+        : handleTrustedInternalChatSend(
+            chatSendOptions,
+            undefined,
+            talkRelayAdmission,
+            trustedTurnPolicy,
+          )
       : authority.toolsAllow !== undefined
         ? handleChatSendWithRuntimeTools(chatSendOptions, authority.toolsAllow)
         : handleChatSend(chatSendOptions);
