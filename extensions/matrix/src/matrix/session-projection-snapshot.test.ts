@@ -6,7 +6,7 @@ import {
 } from "./session-projection-snapshot.js";
 const mocks = vi.hoisted(() => ({
   events: [] as any[],
-  read: vi.fn(),
+  getRelations: vi.fn(),
   send: vi.fn(),
   redact: vi.fn(),
   note: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock("./projection-source-result.js", () => ({ noteMatrixSourceSnapshotResult
 vi.mock("./send/client.js", () => ({
   withResolvedMatrixSendClient: async (_opts: unknown, run: (client: unknown) => Promise<void>) =>
     run({
-      doRequest: mocks.read,
+      getRelations: mocks.getRelations,
       hydrateEvents: async (_room: string, events: unknown[]) => events,
       getUserId: async () => "@transport:example.org",
       redactEvent: mocks.redact,
@@ -66,7 +66,11 @@ describe("v2 source reconciliation", () => {
         sourceAccountId: "source",
       },
     });
-    mocks.read.mockImplementation(async () => ({ chunk: [...mocks.events].toReversed() }));
+    mocks.getRelations.mockImplementation(async () => ({
+      events: [...mocks.events].toReversed(),
+      nextBatch: null,
+      prevBatch: null,
+    }));
     mocks.send.mockImplementation(
       async (
         _to: string,
@@ -87,7 +91,7 @@ describe("v2 source reconciliation", () => {
     { complete: true, messages: [{ ...message, displayName: "bad\nactor" }] },
   ])("rejects invalid snapshot %# before reads", async (snapshot) => {
     await expect(reconcileMatrixProjectionSnapshot({ ...options, snapshot })).rejects.toThrow();
-    expect(mocks.read).not.toHaveBeenCalled();
+    expect(mocks.getRelations).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
   });
   it("publishes edits as new immutable revisions then retires the old batch", async () => {
@@ -176,10 +180,22 @@ describe("v2 source reconciliation", () => {
     expect(mocks.redact).toHaveBeenCalledTimes(1);
     expect(mocks.redact).toHaveBeenCalledWith("!room", "$event0", "Deleted in Slack");
   });
+  it("reads only the selected projection thread", async () => {
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [] },
+    });
+    expect(mocks.getRelations).toHaveBeenCalledWith("!room", "$root", "m.thread", undefined, {
+      dir: "b",
+      limit: 100,
+      from: undefined,
+    });
+  });
   it("makes no mutations on incomplete pagination", async () => {
-    mocks.read.mockResolvedValue({
-      chunk: [{ event_id: "$event", type: "m.room.message", content: {} }],
-      end: "repeated",
+    mocks.getRelations.mockResolvedValue({
+      events: [{ event_id: "$event", type: "m.room.message", content: {} }],
+      nextBatch: "repeated",
+      prevBatch: null,
     });
     await expect(
       reconcileMatrixProjectionSnapshot({ ...options, snapshot: { complete: true, messages: [] } }),
