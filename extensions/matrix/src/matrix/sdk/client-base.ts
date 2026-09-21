@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  ClientEvent,
   Filter,
   createClient as createMatrixJsClient,
   type IFilterDefinition,
@@ -40,6 +41,23 @@ import type { MatrixClientEventMap, MatrixCryptoBootstrapApi, MatrixRawEvent } f
 import type { MatrixVerificationSummary } from "./verification-manager.js";
 
 type MatrixCryptoRuntime = typeof import("./crypto-runtime.js");
+
+type HeadlessMatrixRtcControl = {
+  matrixRTC?: { stop: () => void };
+  startMatrixRTC?: (...args: unknown[]) => void;
+};
+
+function disableHeadlessMatrixRtc(client: MatrixJsClient): void {
+  const rtcControl = client as unknown as HeadlessMatrixRtcControl;
+  // matrix-js-sdk starts its RTC membership manager after initial sync even
+  // when VoIP is disabled. OpenClaw's Matrix plugin is a headless messaging
+  // client; voice uses the gateway Talk relay, so walking RTC state for every
+  // joined room only blocks the gateway event loop.
+  if (typeof rtcControl.startMatrixRTC === "function") {
+    client.off(ClientEvent.Sync, rtcControl.startMatrixRTC);
+  }
+  rtcControl.matrixRTC?.stop();
+}
 
 export type MatrixMessageWireDispatch = {
   roomId: string;
@@ -234,6 +252,7 @@ export abstract class MatrixClientBase {
         VerificationMethod.Reciprocate,
       ],
     });
+    disableHeadlessMatrixRtc(this.client);
   }
 
   protected async withMessageWireDispatchGuard<T>(params: {
