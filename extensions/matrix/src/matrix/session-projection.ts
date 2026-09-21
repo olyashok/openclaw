@@ -33,6 +33,7 @@ import { withResolvedMatrixSendClient } from "./send/client.js";
 import {
   projectionText,
   reconcileMatrixProjectionSnapshot,
+  sourceProjectionSnapshotDigest,
   type SourceProjectionSnapshot,
   parseSourceProjectionSnapshot,
 } from "./session-projection-snapshot.js";
@@ -50,6 +51,7 @@ const projectionCreationQueue = new KeyedAsyncQueue();
 // delivery queue remains the durable retry/idempotency layer across restarts.
 const projectedDeliveryKeys = new Set<string>();
 const MAX_PROJECTED_DELIVERY_KEYS = 10_000;
+const SOURCE_SNAPSHOT_AUDIT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 type ProjectionRole = "user" | "assistant";
 
@@ -192,9 +194,13 @@ async function projectToMatrix(params: {
               role: params.role,
             })
           : undefined;
-      if (params.hostEvent && !publication) return;
+      if (params.hostEvent && !publication) {
+        return;
+      }
       const identity = resolveDeliveryIdentity({ ...params, publication });
-      if (!identity) return;
+      if (!identity) {
+        return;
+      }
       const deliveryScope =
         binding.metadata?.boundBy === "session-projection-read-only" ? roomId : binding.bindingId;
       const projectionKey = `${deliveryScope}:${identity}`;
@@ -313,7 +319,9 @@ export async function handleMatrixSessionProjectionReplyPayloadSending(
     return;
   }
   const publication = resolveReplyPublication(event);
-  if (!publication) return;
+  if (!publication) {
+    return;
+  }
   await projectToMatrix({
     cfg,
     sessionKey: publication.sessionKey ?? "",
@@ -533,6 +541,9 @@ export async function createMatrixSessionProjection(params: {
   ) {
     throw new Error("Source snapshots require a read-only projection");
   }
+  const sourceSnapshotDigest = params.sourceSnapshot
+    ? sourceProjectionSnapshotDigest(params.sourceSnapshot)
+    : undefined;
   return await projectionCreationQueue.enqueue(
     `${accountId}\u0000${roomId}\u0000${params.readOnly || params.sourceReplyAuthorization ? "read-only" : targetSessionKey}`,
     async () => {
@@ -640,7 +651,42 @@ export async function createMatrixSessionProjection(params: {
         ) {
           throw new Error("Existing projection is writable");
         }
-        const result = {
+        // Retry callers may race the original hook or arrive after a prior
+        // bind. The narrow in-process reservation and durable delivery key
+        // make this safe without replaying any earlier transcript.
+        await projectInitialMessage({
+          cfg: params.cfg,
+          targetSessionKey,
+          initialMessage: params.initialMessage,
+          binding: existing,
+        });
+        const reconciledAt = Number(existing.metadata?.sourceSnapshotReconciledAtMs);
+        const currentSnapshot =
+          sourceSnapshotDigest !== undefined &&
+          existing.metadata?.sourceSnapshotDigest === sourceSnapshotDigest &&
+          Number.isFinite(reconciledAt) &&
+          Date.now() - reconciledAt < SOURCE_SNAPSHOT_AUDIT_INTERVAL_MS;
+        if (params.sourceSnapshot && !currentSnapshot) {
+          await reconcileMatrixProjectionSnapshot({
+            cfg: params.cfg,
+            accountId,
+            roomId,
+            threadId: existing.conversation.conversationId,
+            snapshot: params.sourceSnapshot,
+          });
+          existing = await bindingService.bind({
+            targetSessionKey,
+            targetKind: "session",
+            placement: "current",
+            conversation: existing.conversation,
+            metadata: {
+              ...existing.metadata,
+              sourceSnapshotDigest,
+              sourceSnapshotReconciledAtMs: Date.now(),
+            },
+          });
+        }
+        return {
           status: "existing" as const,
           bindingId: existing.bindingId,
           environment: existing.metadata?.environment,
@@ -655,28 +701,9 @@ export async function createMatrixSessionProjection(params: {
               ? existing.metadata.sourceReplyAuthorization
               : undefined,
         };
-        // Retry callers may race the original hook or arrive after a prior
-        // bind. The narrow in-process reservation and durable delivery key
-        // make this safe without replaying any earlier transcript.
-        await projectInitialMessage({
-          cfg: params.cfg,
-          targetSessionKey,
-          initialMessage: params.initialMessage,
-          binding: existing,
-        });
-        if (params.sourceSnapshot) {
-          await reconcileMatrixProjectionSnapshot({
-            cfg: params.cfg,
-            accountId,
-            roomId,
-            threadId: result.threadRootEventId,
-            snapshot: params.sourceSnapshot,
-          });
-        }
-        return result;
       }
 
-      const binding = await bindingService.bind({
+      let binding = await bindingService.bind({
         targetSessionKey,
         targetKind: "session",
         conversation: {
@@ -712,18 +739,6 @@ export async function createMatrixSessionProjection(params: {
         },
       });
 
-      const result = {
-        status: "created" as const,
-        bindingId: binding.bindingId,
-        environment: binding.metadata?.environment,
-        conversationId: binding.metadata?.projectedConversationId,
-        accountId,
-        agentId,
-        roomId,
-        threadRootEventId: binding.conversation.conversationId,
-        targetSessionKey,
-        sourceReplyAuthorization: params.sourceReplyAuthorization,
-      };
       await projectInitialMessage({
         cfg: params.cfg,
         targetSessionKey,
@@ -735,11 +750,33 @@ export async function createMatrixSessionProjection(params: {
           cfg: params.cfg,
           accountId,
           roomId,
-          threadId: result.threadRootEventId,
+          threadId: binding.conversation.conversationId,
           snapshot: params.sourceSnapshot,
         });
+        binding = await bindingService.bind({
+          targetSessionKey,
+          targetKind: "session",
+          placement: "current",
+          conversation: binding.conversation,
+          metadata: {
+            ...binding.metadata,
+            sourceSnapshotDigest,
+            sourceSnapshotReconciledAtMs: Date.now(),
+          },
+        });
       }
-      return result;
+      return {
+        status: "created" as const,
+        bindingId: binding.bindingId,
+        environment: binding.metadata?.environment,
+        conversationId: binding.metadata?.projectedConversationId,
+        accountId,
+        agentId,
+        roomId,
+        threadRootEventId: binding.conversation.conversationId,
+        targetSessionKey,
+        sourceReplyAuthorization: params.sourceReplyAuthorization,
+      };
     },
   );
 }
@@ -787,6 +824,8 @@ export async function handleMatrixSessionProjectionCreate(
     respond(false, { error: formatErrorMessage(error) });
   }
 }
+
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
 
 export function handleMatrixSessionProjectionInspect({
   params,

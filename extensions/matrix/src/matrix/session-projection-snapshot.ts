@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import type { Direction } from "matrix-js-sdk/lib/models/event-timeline.js";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import type { CoreConfig } from "../types.js";
@@ -12,6 +13,7 @@ import { sendMessageMatrix } from "./send.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
 export const MATRIX_SESSION_PROJECTION_CONTENT_KEY = MATRIX_PROJECTION_CONTENT_KEY;
 const SOURCE_CONTENT_REVISION_KEY = "com.openclaw.source_revision";
+const PROJECTION_DECRYPT_BATCH_SIZE = 4;
 export type SourceProjectionMessage = {
   messageId: string;
   senderId: string;
@@ -59,6 +61,26 @@ function hasAsciiControl(value: string): boolean {
   });
 }
 
+async function hydrateProjectionEvents(
+  client: MatrixClient,
+  roomId: string,
+  events: MatrixRawEvent[],
+): Promise<MatrixRawEvent[]> {
+  const hydrated: MatrixRawEvent[] = [];
+  for (let index = 0; index < events.length; index += PROJECTION_DECRYPT_BATCH_SIZE) {
+    hydrated.push(
+      ...(await client.hydrateEvents(
+        roomId,
+        events.slice(index, index + PROJECTION_DECRYPT_BATCH_SIZE),
+      )),
+    );
+    // matrix-rust-sdk decryption can be CPU-heavy for old encrypted threads.
+    // Yield between small batches so gateway health and ingress stay responsive.
+    await yieldToEventLoop();
+  }
+  return hydrated;
+}
+
 async function readProjectionHistory(
   client: MatrixClient,
   roomId: string,
@@ -82,7 +104,7 @@ async function readProjectionHistory(
     if (!Array.isArray(page.events)) {
       throw new Error("Invalid Matrix projection history");
     }
-    const hydrated = await client.hydrateEvents(roomId, page.events);
+    const hydrated = await hydrateProjectionEvents(client, roomId, page.events);
     if (hydrated.some((event) => event.type === "m.room.encrypted")) {
       throw new Error("Incomplete decrypted Matrix projection history");
     }
@@ -147,6 +169,12 @@ export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionS
     });
   }
   return { complete: true, messages };
+}
+
+export function sourceProjectionSnapshotDigest(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(parseSourceProjectionSnapshot(value)))
+    .digest("hex");
 }
 
 export async function reconcileMatrixProjectionSnapshot(params: {

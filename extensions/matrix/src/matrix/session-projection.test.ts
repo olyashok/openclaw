@@ -24,7 +24,13 @@ const mocks = vi.hoisted(() => ({
   globalSourceGuard: vi.fn(),
   resolveByConversation: vi.fn(),
   owner: vi.fn(),
+  reconcileSnapshot: vi.fn(),
 }));
+
+vi.mock("./session-projection-snapshot.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./session-projection-snapshot.js")>();
+  return { ...actual, reconcileMatrixProjectionSnapshot: mocks.reconcileSnapshot };
+});
 
 vi.mock("../runtime.js", () => ({
   getMatrixRuntime: () => ({ channel: { runtimeContexts: { get: mocks.globalSourceGuard } } }),
@@ -130,6 +136,7 @@ describe("Matrix session projection", () => {
         },
       ],
     });
+    mocks.reconcileSnapshot.mockResolvedValue(undefined);
   });
 
   it("creates one durable child-thread binding for an existing canonical session", async () => {
@@ -326,6 +333,47 @@ describe("Matrix session projection", () => {
       createMatrixSessionProjection({ cfg, targetSessionKey: sessionKey, roomId: "!room" }),
     ).resolves.toMatchObject({ status: "existing", threadRootEventId: "$root" });
     expect(mocks.bind).not.toHaveBeenCalled();
+  });
+  it("persists a snapshot digest and skips unchanged reconciliation for one day", async () => {
+    const snapshot = {
+      complete: true as const,
+      messages: [
+        {
+          messageId: "1700000000.000001",
+          senderId: "U123",
+          role: "user" as const,
+          content: "Already mirrored",
+        },
+      ],
+    };
+    let current = {
+      ...projectionBinding,
+      metadata: { ...projectionBinding.metadata, boundBy: "session-projection-read-only" },
+    };
+    mocks.listBySession.mockImplementation(() => [current]);
+    mocks.bind.mockImplementation(async (input) => {
+      current = { ...current, metadata: input.metadata };
+      return current;
+    });
+
+    const params = {
+      cfg,
+      targetSessionKey: sessionKey,
+      roomId: "!room",
+      readOnly: true,
+      sourceSnapshot: snapshot,
+    };
+    await createMatrixSessionProjection(params);
+    await createMatrixSessionProjection(params);
+
+    expect(mocks.reconcileSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.bind).toHaveBeenCalledTimes(1);
+    expect(current.metadata).toEqual(
+      expect.objectContaining({
+        sourceSnapshotDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        sourceSnapshotReconciledAtMs: expect.any(Number),
+      }),
+    );
   });
   it("shares one canonical read-only room root across concurrent agent sessions", async () => {
     const records: Array<{
