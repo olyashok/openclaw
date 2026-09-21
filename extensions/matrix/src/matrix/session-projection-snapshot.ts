@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Direction } from "matrix-js-sdk/lib/models/event-timeline.js";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import type { CoreConfig } from "../types.js";
 import {
@@ -67,7 +68,7 @@ async function readProjectionHistory(
   for (let pageIndex = 0; pageIndex < 100; pageIndex++) {
     checkDeadline();
     const page = await client.getRelations(roomId, threadId, "m.thread", undefined, {
-      dir: "b",
+      dir: "b" as Direction,
       limit: 100,
       from,
     });
