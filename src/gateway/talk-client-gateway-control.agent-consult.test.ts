@@ -149,9 +149,11 @@ describe("Talk client agent consult admission", () => {
     });
     creatingRpc.release();
 
-    mocks.runEmbeddedAgentCore.mockImplementationOnce(async () => {
+    mocks.consultRealtimeVoiceAgent.mockImplementationOnce(async (params: ConsultParams) => {
       expect(isGatewaySubordinateWorkAdmissionClosed()).toBe(false);
-      return { payloads: [] };
+      params.onRunStarted?.({ runId: "run-talk", sessionId: "session-talk", timeoutMs: 1 });
+      await params.agentRuntime.runEmbeddedAgent(coreParams);
+      return { text: "done" };
     });
     expect(delayedConsult).toBeDefined();
     await expect(delayedConsult?.()).resolves.toEqual({ text: "done" });

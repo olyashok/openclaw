@@ -140,14 +140,7 @@ function createTalkClientAgentRuntime(params: {
     runParams.abortSignal?.addEventListener("abort", close, { once: true });
     try {
       runParams.abortSignal?.throwIfAborted();
-      // Provider callbacks outlive the talk.client.create RPC that installed them.
-      // Their AsyncLocalStorage chain can therefore still point at the RPC's
-      // already-released root lease, which makes healthy subordinate work look as
-      // though the gateway is draining. Re-enter process admission for each
-      // delayed consult while retaining the normal restart/suspension fence.
-      return await runWithGatewayIndependentRootWorkAdmission(
-        async () => await execution.runEmbeddedAgent({ ...runParams, preparedRunAdmission }),
-      );
+      return await execution.runEmbeddedAgent({ ...runParams, preparedRunAdmission });
     } finally {
       runParams.abortSignal?.removeEventListener("abort", close);
       close();
@@ -288,56 +281,64 @@ export function createTalkClientAgentConsultRunner(params: {
       ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
     });
     const talkConfig = normalizeTalkSection(params.config.talk);
-    return await consultRealtimeVoiceAgent({
-      cfg: params.config,
-      agentRuntime,
-      logger: params.context.logGateway,
-      agentId: params.agentId,
-      sessionKey: params.sessionKey,
-      messageProvider: "webchat",
-      lane: "talk",
-      runIdPrefix: params.runIdPrefix ?? "talk-realtime-consult",
-      args: parsedArgs,
-      transcript: params.initialItems,
-      surface: params.surface ?? "a browser Talk session",
-      userLabel: "User",
-      questionSourceLabel: "user",
-      thinkLevel: talkConfig?.consultThinkingLevel,
-      fastMode: talkConfig?.consultFastMode,
-      ...authority,
-      abortSignal: signal,
-      onRunStarted: ({ runId, sessionId, timeoutMs }) => {
-        if (params.registerRun) {
-          params.registerRun({ runId });
-        } else {
-          registerClientVoiceConsultRun({
-            agentId: params.agentId,
-            sessionKey: params.sessionKey,
-            voiceSessionId,
-            runId,
-            config: params.config,
-          });
-        }
-        if (confirmationGrant) {
-          bindAuthorizedClientVoiceConfirmation({ grant: confirmationGrant, runId });
-        }
-        if (!params.ownerConnId) {
-          return undefined;
-        }
-        const registration = registerChatAbortController({
-          chatAbortControllers: params.context.chatAbortControllers,
-          runId,
-          sessionId,
-          sessionKey: params.sessionKey,
+    // Provider callbacks outlive the talk.client.create RPC that installed them.
+    // Their AsyncLocalStorage chain can therefore still point at the RPC's
+    // already-released root lease. Re-enter process admission before the consult
+    // prelude (including session lifecycle admission), not merely around agent
+    // execution, while retaining the normal restart/suspension fence.
+    return await runWithGatewayIndependentRootWorkAdmission(
+      async () =>
+        await consultRealtimeVoiceAgent({
+          cfg: params.config,
+          agentRuntime,
+          logger: params.context.logGateway,
           agentId: params.agentId,
-          timeoutMs,
-          ownerConnId: params.ownerConnId,
-          controlUiVisible: false,
-          kind: "chat-send",
-        });
-        return { abortSignal: registration.controller.signal, cleanup: registration.cleanup };
-      },
-    });
+          sessionKey: params.sessionKey,
+          messageProvider: "webchat",
+          lane: "talk",
+          runIdPrefix: params.runIdPrefix ?? "talk-realtime-consult",
+          args: parsedArgs,
+          transcript: params.initialItems,
+          surface: params.surface ?? "a browser Talk session",
+          userLabel: "User",
+          questionSourceLabel: "user",
+          thinkLevel: talkConfig?.consultThinkingLevel,
+          fastMode: talkConfig?.consultFastMode,
+          ...authority,
+          abortSignal: signal,
+          onRunStarted: ({ runId, sessionId, timeoutMs }) => {
+            if (params.registerRun) {
+              params.registerRun({ runId });
+            } else {
+              registerClientVoiceConsultRun({
+                agentId: params.agentId,
+                sessionKey: params.sessionKey,
+                voiceSessionId,
+                runId,
+                config: params.config,
+              });
+            }
+            if (confirmationGrant) {
+              bindAuthorizedClientVoiceConfirmation({ grant: confirmationGrant, runId });
+            }
+            if (!params.ownerConnId) {
+              return undefined;
+            }
+            const registration = registerChatAbortController({
+              chatAbortControllers: params.context.chatAbortControllers,
+              runId,
+              sessionId,
+              sessionKey: params.sessionKey,
+              agentId: params.agentId,
+              timeoutMs,
+              ownerConnId: params.ownerConnId,
+              controlUiVisible: false,
+              kind: "chat-send",
+            });
+            return { abortSignal: registration.controller.signal, cleanup: registration.cleanup };
+          },
+        }),
+    );
   };
   return {
     runArgs,
