@@ -381,6 +381,56 @@ describe("Matrix session projection", () => {
       }),
     );
   });
+  it("explicitly refreshes a changed snapshot in an existing projection", async () => {
+    const previousDigest = "a".repeat(64);
+    const snapshot = {
+      complete: true as const,
+      messages: [
+        {
+          messageId: "1700000000.000001",
+          senderId: "U123",
+          displayName: "Alex",
+          role: "user" as const,
+          content: "Already mirrored",
+        },
+      ],
+    };
+    let current = {
+      ...projectionBinding,
+      metadata: {
+        ...projectionBinding.metadata,
+        boundBy: "session-projection-read-only",
+        sourceSnapshotDigest: previousDigest,
+      },
+    };
+    mocks.listBySession.mockImplementation(() => [current]);
+    mocks.bind.mockImplementation(async (input) => {
+      current = { ...current, metadata: input.metadata };
+      return current;
+    });
+
+    await createMatrixSessionProjection({
+      cfg,
+      targetSessionKey: sessionKey,
+      roomId: "!room",
+      readOnly: true,
+      sourceSnapshot: snapshot,
+      refreshSourceSnapshot: true,
+    });
+
+    expect(mocks.reconcileSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "fi-user",
+        roomId: "!room",
+        threadId: "$root",
+        snapshot,
+      }),
+    );
+    expect(current.metadata.sourceSnapshotDigest).not.toBe(previousDigest);
+    expect((current.metadata as Record<string, unknown>).sourceSnapshotReconciledAtMs).toEqual(
+      expect.any(Number),
+    );
+  });
   it("shares one canonical read-only room root across concurrent agent sessions", async () => {
     const records: Array<{
       conversationId: string;

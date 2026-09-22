@@ -30,6 +30,7 @@ import {
 } from "./projection-target.js";
 import { sendMessageMatrix } from "./send.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
+import { maintainExistingProjectionSnapshot } from "./session-projection-refresh.js";
 import {
   projectionText,
   reconcileMatrixProjectionSnapshot,
@@ -512,6 +513,8 @@ export async function createMatrixSessionProjection(params: {
   sourceDirect?: boolean;
   sourceDetached?: boolean;
   sourceReplyAuthorization?: string;
+  /** Explicit operator/application repair: reconcile a changed complete snapshot into an existing projection. */
+  refreshSourceSnapshot?: boolean;
   externalSource?: unknown;
   sourceSnapshot?: SourceProjectionSnapshot;
   initialMessage?: {
@@ -563,6 +566,9 @@ export async function createMatrixSessionProjection(params: {
     !params.sourceReplyAuthorization
   ) {
     throw new Error("Source snapshots require a read-only projection");
+  }
+  if (params.refreshSourceSnapshot && !params.sourceSnapshot) {
+    throw new Error("Snapshot refresh requires a complete source snapshot");
   }
   const sourceSnapshotDigest = params.sourceSnapshot
     ? sourceProjectionSnapshotDigest(params.sourceSnapshot)
@@ -683,24 +689,18 @@ export async function createMatrixSessionProjection(params: {
           initialMessage: params.initialMessage,
           binding: existing,
         });
-        if (params.sourceSnapshot && !existing.metadata?.sourceSnapshotDigest) {
-          // Existing projections are maintained by live source hooks. Adopting
-          // their first observed snapshot must not turn the minute discovery
-          // sweep into an implicit full-history decrypt/replay. Operators can
-          // still request the explicit rebase path when history needs repair.
-          existing = await bindingService.bind({
-            targetSessionKey,
-            targetKind: "session",
-            placement: "current",
-            conversation: existing.conversation,
-            metadata: {
-              ...existing.metadata,
-              introText: false,
-              sourceSnapshotDigest,
-              sourceSnapshotReconciledAtMs: Date.now(),
-            },
-          });
-        }
+        // Routine discovery adopts a checkpoint without replay. An explicit
+        // application repair may reconcile changed history into this same root.
+        existing = await maintainExistingProjectionSnapshot({
+          cfg: params.cfg,
+          accountId,
+          roomId,
+          targetSessionKey,
+          existing,
+          snapshot: params.sourceSnapshot,
+          digest: sourceSnapshotDigest,
+          refresh: params.refreshSourceSnapshot,
+        });
         return {
           status: "existing" as const,
           bindingId: existing.bindingId,
@@ -815,6 +815,7 @@ export async function handleMatrixSessionProjectionCreate(
       sourceDirect: params?.sourceDirect === true,
       sourceDetached: params?.sourceDetached === true,
       sourceReplyAuthorization: clean(params?.sourceReplyAuthorization) || undefined,
+      refreshSourceSnapshot: params?.refreshSourceSnapshot === true,
       externalSource: params?.externalSource,
       sourceSnapshot: params?.sourceSnapshot as SourceProjectionSnapshot | undefined,
       initialMessage:

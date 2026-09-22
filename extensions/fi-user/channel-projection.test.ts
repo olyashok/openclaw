@@ -16,8 +16,8 @@ const discovery = vi.hoisted(() => ({
 }));
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
   getSessionEntry: discovery.entry,
-  listSessionKeys: (...args: unknown[]) =>
-    discovery.list(...args).map(({ sessionKey }) => sessionKey),
+  listSessionKeys: (params: { agentId: string; readOnly?: boolean }) =>
+    discovery.list(params).map(({ sessionKey }) => sessionKey),
   sessionDeliveryOrigin: (entry: Record<string, unknown> | undefined) => ({
     accountId: "fi-admin",
     ...entry,
