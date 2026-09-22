@@ -22,7 +22,7 @@ export async function maintainExistingProjectionSnapshot(params: {
   if (!snapshot) {
     return existing;
   }
-  if (params.refresh && existing.metadata?.sourceSnapshotDigest !== params.digest) {
+  if (params.refresh) {
     await reconcileMatrixProjectionSnapshot({
       cfg: params.cfg,
       accountId: params.accountId,

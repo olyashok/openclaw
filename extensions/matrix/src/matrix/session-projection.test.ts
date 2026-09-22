@@ -381,8 +381,7 @@ describe("Matrix session projection", () => {
       }),
     );
   });
-  it("explicitly refreshes a changed snapshot in an existing projection", async () => {
-    const previousDigest = "a".repeat(64);
+  it("explicitly refreshes an adopted snapshot in an existing projection", async () => {
     const snapshot = {
       complete: true as const,
       messages: [
@@ -400,7 +399,6 @@ describe("Matrix session projection", () => {
       metadata: {
         ...projectionBinding.metadata,
         boundBy: "session-projection-read-only",
-        sourceSnapshotDigest: previousDigest,
       },
     };
     mocks.listBySession.mockImplementation(() => [current]);
@@ -409,12 +407,19 @@ describe("Matrix session projection", () => {
       return current;
     });
 
-    await createMatrixSessionProjection({
+    const params = {
       cfg,
       targetSessionKey: sessionKey,
       roomId: "!room",
       readOnly: true,
       sourceSnapshot: snapshot,
+    };
+    await createMatrixSessionProjection(params);
+    expect(mocks.reconcileSnapshot).not.toHaveBeenCalled();
+    const adoptedDigest = (current.metadata as Record<string, unknown>).sourceSnapshotDigest;
+
+    await createMatrixSessionProjection({
+      ...params,
       refreshSourceSnapshot: true,
     });
 
@@ -426,7 +431,7 @@ describe("Matrix session projection", () => {
         snapshot,
       }),
     );
-    expect(current.metadata.sourceSnapshotDigest).not.toBe(previousDigest);
+    expect((current.metadata as Record<string, unknown>).sourceSnapshotDigest).toBe(adoptedDigest);
     expect((current.metadata as Record<string, unknown>).sourceSnapshotReconciledAtMs).toEqual(
       expect.any(Number),
     );
