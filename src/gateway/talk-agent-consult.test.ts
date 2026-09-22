@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   registerRelayRun: vi.fn<(runId: string) => "registered" | "detached">(() => "registered"),
   prepareRelayRun: vi.fn(),
   abortChatRunById: vi.fn(),
-  resolveAuthority: vi.fn(() => ({ senderIsOwner: false, toolsAllow: ["read"] })),
+  resolveAuthority: vi.fn<() => { senderIsOwner: boolean; toolsAllow?: string[] }>(() => ({
+    senderIsOwner: false,
+    toolsAllow: ["read"],
+  })),
   relayAdmission: { assertCurrent: vi.fn() },
 }));
 
