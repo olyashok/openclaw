@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getRelations: vi.fn(),
   hydrate: vi.fn(),
   send: vi.fn(),
+  edit: vi.fn(),
   redact: vi.fn(),
   note: vi.fn(),
   binding: vi.fn(),
@@ -23,10 +24,15 @@ vi.mock("./send/client.js", () => ({
       getRelations: mocks.getRelations,
       hydrateEvents: mocks.hydrate,
       getUserId: async () => "@transport:example.org",
+      getEvent: async (_roomId: string, eventId: string) =>
+        mocks.events.find((candidate) => candidate.event_id === eventId) ?? null,
       redactEvent: mocks.redact,
     }),
 }));
-vi.mock("./send.js", () => ({ sendMessageMatrix: mocks.send }));
+vi.mock("./send.js", () => ({
+  sendMessageMatrix: mocks.send,
+  editMessageMatrix: mocks.edit,
+}));
 const message = {
   messageId: "1700000000.000001",
   senderId: "U111",
@@ -80,6 +86,25 @@ describe("v2 source reconciliation", () => {
         opts: { publication: MatrixPublication; extraContent: Record<string, unknown> },
       ) => ({ messageId: insert(body, opts.publication, opts.extraContent) }),
     );
+    mocks.edit.mockImplementation(
+      async (
+        _roomId: string,
+        eventId: string,
+        body: string,
+        opts: { extraContent: Record<string, unknown> },
+      ) => {
+        const matchedEvent = mocks.events.find((candidate) => candidate.event_id === eventId);
+        if (!matchedEvent) {
+          throw new Error("missing edit target");
+        }
+        matchedEvent.content = {
+          ...matchedEvent.content,
+          ...opts.extraContent,
+          body,
+        };
+        return `$edit${mocks.edit.mock.calls.length}`;
+      },
+    );
     mocks.redact.mockImplementation(async (_room: string, id: string) => {
       const matchedEvent = mocks.events.find((candidate) => candidate.event_id === id);
       if (matchedEvent) {
@@ -98,7 +123,7 @@ describe("v2 source reconciliation", () => {
     expect(mocks.getRelations).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
   });
-  it("publishes edits as new immutable revisions then retires the old batch", async () => {
+  it("updates an existing source event in place without moderator redaction power", async () => {
     await reconcileMatrixProjectionSnapshot({
       ...options,
       snapshot: { complete: true, messages: [message] },
@@ -112,13 +137,14 @@ describe("v2 source reconciliation", () => {
       ...options,
       snapshot: { complete: true, messages: [changed] },
     });
-    expect(mocks.send).toHaveBeenCalledTimes(2);
-    expect(mocks.redact).toHaveBeenCalledTimes(1);
-    expect(mocks.events[1].content[key]).toMatchObject({
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.edit).toHaveBeenCalledTimes(1);
+    expect(mocks.redact).not.toHaveBeenCalled();
+    expect(mocks.events[0].content[key]).toMatchObject({
       publicationRevision: 2,
       origin: { messageId: message.messageId, publishedAtMs: 1700000000000 },
     });
-    expect(mocks.events[1].content.body).toBe("**Slack · Actual Actor**\nAfter");
+    expect(mocks.events[0].content.body).toBe("**Slack · Actual Actor**\nAfter");
   });
   it("preserves distinct wire parts and retires only duplicate own slots", async () => {
     mocks.send.mockImplementationOnce(async (_to: string, body: string, opts: any) => {
@@ -140,7 +166,7 @@ describe("v2 source reconciliation", () => {
     );
     expect(mocks.redact).toHaveBeenCalledTimes(1);
   });
-  it("retries incomplete publication with original revision and stable queue identity", async () => {
+  it("repairs an incomplete publication in its original event slot", async () => {
     mocks.send.mockImplementationOnce(async (_to: string, body: string, opts: any) => {
       insert(body, opts.publication, opts.extraContent, 0, 2);
       throw new Error("ambiguous send");
@@ -149,13 +175,14 @@ describe("v2 source reconciliation", () => {
     await expect(reconcileMatrixProjectionSnapshot(params)).rejects.toThrow("ambiguous");
     expect(mocks.redact).not.toHaveBeenCalled();
     await reconcileMatrixProjectionSnapshot(params);
-    const firstSend = mocks.send.mock.calls[0],
-      retry = mocks.send.mock.calls[1];
-    if (!firstSend || !retry) {
-      throw new Error("Expected ambiguous send and publication retry");
-    }
-    expect(firstSend[2].deliveryQueueId).toBe(retry[2].deliveryQueueId);
-    expect(retry[2].publication.publicationRevision).toBe(1);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.edit).toHaveBeenCalledTimes(1);
+    expect(mocks.edit.mock.calls[0]?.[3].extraContent[key]).toMatchObject({
+      publicationRevision: 1,
+      partIndex: 0,
+      partCount: 1,
+      complete: true,
+    });
   });
   it("notes exact accepted snapshot event and retries unchanged rendezvous", async () => {
     const params = { ...options, snapshot: { complete: true, messages: [message] } };
