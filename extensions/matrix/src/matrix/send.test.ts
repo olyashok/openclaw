@@ -19,6 +19,22 @@ import {
   resolveMatrixDurableDeliveryIdentity,
 } from "./delivery-plan.js";
 import { createMatrixDraftStream } from "./draft-stream.js";
+import { createMatrixSourcePublication } from "./projection-publication.js";
+
+const projectionBinding = vi.hoisted(() => ({ override: undefined as unknown }));
+vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("openclaw/plugin-sdk/conversation-binding-runtime")>();
+  return {
+    ...actual,
+    getSessionBindingService: () => {
+      const service = actual.getSessionBindingService();
+      return projectionBinding.override
+        ? { ...service, resolveByConversation: () => projectionBinding.override }
+        : service;
+    },
+  };
+});
 import { markdownToMatrixBody, markdownToMatrixHtml } from "./format.js";
 import { createBundledReplacementEvent } from "./monitor/test-events.js";
 import { matrixEventToRaw } from "./sdk/event-helpers.js";
@@ -1633,6 +1649,52 @@ describe("sendSingleTextMessageMatrix", () => {
     expect(result.receipt.platformMessageIds).toEqual(["evt1"]);
     expectTextReceiptPart(result.receipt.parts[0], "evt1");
     expect(result.content).toBe("done");
+  });
+});
+
+describe("editMessageMatrix projection publication", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetMatrixSendRuntimeMocks();
+  });
+
+  it("carries only the trusted publication into the replacement", async () => {
+    const { client, sendMessage, getEvent } = makeClient();
+    getEvent.mockResolvedValue({ content: { body: "before" } });
+    projectionBinding.override = {
+      bindingId: "binding",
+      metadata: {
+        environment: "test",
+        projectedConversationId: "conversation",
+        sourceAccountId: "T1",
+      },
+    };
+    const publication = createMatrixSourcePublication({
+      bindingId: "binding",
+      roomId: "!room:example",
+      threadId: "$root",
+      provider: "slack",
+      accountId: "default",
+      messageId: "1700000000.000001",
+      actorId: "U111",
+      publishedAtMs: 1700000000000,
+      role: "user",
+      publicationRevision: 2,
+    })!;
+    await editMessageMatrix("room:!room:example", "$original", "after", {
+      client,
+      cfg: {} as never,
+      publication,
+      extraContent: { "ai.cellect.projection": { forged: true }, "com.example.kept": 1 },
+    });
+    const replacement = newContent(sentContent(sendMessage));
+    expect(replacement["ai.cellect.projection"]).toMatchObject({
+      publicationRevision: 2,
+      origin: { provider: "slack", messageId: "1700000000.000001" },
+    });
+    expect(replacement["ai.cellect.projection"]).not.toHaveProperty("forged");
+    expect(replacement["com.example.kept"]).toBe(1);
+    projectionBinding.override = undefined;
   });
 });
 

@@ -106,8 +106,17 @@ describe("v2 source reconciliation", () => {
         _roomId: string,
         eventId: string,
         body: string,
-        opts: { extraContent: Record<string, unknown> },
+        opts: { extraContent: Record<string, unknown>; publication?: MatrixPublication },
       ) => {
+        // Mirror send.ts: caller-supplied projection metadata is a forgery and
+        // is stripped; only the trusted publication capability is applied.
+        const { [key]: _forged, ...ordinary } = opts.extraContent ?? {};
+        const replacement = {
+          ...ordinary,
+          ...(opts.publication
+            ? { [key]: matrixPublicationContent(opts.publication, "!room", 0, 1) }
+            : {}),
+        };
         const matchedEvent = mocks.events.find((candidate) => candidate.event_id === eventId);
         if (!matchedEvent) {
           throw new Error("missing edit target");
@@ -119,7 +128,7 @@ describe("v2 source reconciliation", () => {
             type: "m.room.message",
             content: {
               body: `* ${body}`,
-              "m.new_content": { body, ...opts.extraContent },
+              "m.new_content": { body, ...replacement },
               "m.relates_to": { rel_type: "m.replace", event_id: eventId },
             },
           });
@@ -127,7 +136,7 @@ describe("v2 source reconciliation", () => {
         }
         matchedEvent.content = {
           ...matchedEvent.content,
-          ...opts.extraContent,
+          ...replacement,
           body,
         };
         return `$edit${mocks.edit.mock.calls.length}`;
@@ -205,7 +214,9 @@ describe("v2 source reconciliation", () => {
     await reconcileMatrixProjectionSnapshot(params);
     expect(mocks.send).toHaveBeenCalledTimes(1);
     expect(mocks.edit).toHaveBeenCalledTimes(1);
-    expect(mocks.edit.mock.calls[0]?.[3].extraContent[key]).toMatchObject({
+    expect(
+      matrixPublicationContent(mocks.edit.mock.calls[0]?.[3].publication, "!room", 0, 1),
+    ).toMatchObject({
       publicationRevision: 1,
       partIndex: 0,
       partCount: 1,
@@ -328,6 +339,34 @@ describe("v2 source reconciliation", () => {
       "$event3",
     ]);
 
+    vi.clearAllMocks();
+    await reconcileMatrixProjectionSnapshot({ ...options, snapshot });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.edit).not.toHaveBeenCalled();
+    expect(mocks.redact).not.toHaveBeenCalled();
+  });
+  it("recognizes a source message whose earlier edit lost its projection marker", async () => {
+    mocks.realEdits = true;
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [message] },
+    });
+    // A replacement written before edits carried the trusted publication.
+    mocks.edits.push({
+      event_id: "$markerless",
+      sender: "@transport:example.org",
+      type: "m.room.message",
+      content: {
+        body: "* **Slack · Actor**\nBefore",
+        "m.new_content": { body: "**Slack · Actor**\nBefore" },
+        "m.relates_to": { rel_type: "m.replace", event_id: "$event0" },
+      },
+    });
+    const snapshot = { complete: true, messages: [{ ...message, displayName: "Actor" }] };
+    vi.clearAllMocks();
+    await reconcileMatrixProjectionSnapshot({ ...options, snapshot });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.edit).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
     await reconcileMatrixProjectionSnapshot({ ...options, snapshot });
     expect(mocks.send).not.toHaveBeenCalled();

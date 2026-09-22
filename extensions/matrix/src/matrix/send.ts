@@ -15,6 +15,7 @@ import {
   MATRIX_PROJECTION_CONTENT_KEY,
   matrixPublicationContent,
   noteMatrixPublicationAccepted,
+  type MatrixPublication,
 } from "./projection-publication.js";
 import { buildMatrixReactionContent } from "./reaction-common.js";
 import { buildMatrixMessageRelation, resolveMatrixReplyToEventId } from "./relations.js";
@@ -575,6 +576,13 @@ export async function editMessageMatrix(
     msgtype?: MatrixTextMsgType;
     includeMentions?: boolean;
     extraContent?: MatrixExtraContentFields;
+    /**
+     * Trusted projection capability for the replacement. Caller-supplied
+     * projection metadata is stripped as a forgery, so an in-place edit of a
+     * projected event must carry its publication through this option or the
+     * replacement stops identifying its source message.
+     */
+    publication?: MatrixPublication;
     /** When true, marks the edit as a live/streaming update (MSC4357). */
     live?: boolean;
     /** Whether this edit is technical progress or user-facing answer text. */
@@ -602,6 +610,10 @@ export async function editMessageMatrix(
         }),
         opts.extraContent,
       );
+      if (opts.publication) {
+        (newContent as Record<string, unknown>)[MATRIX_PROJECTION_CONTENT_KEY] =
+          matrixPublicationContent(opts.publication, resolvedRoom, 0, 1);
+      }
       await enrichMatrixFormattedContent({
         client,
         content: newContent,
