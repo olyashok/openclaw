@@ -5,11 +5,12 @@ import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-bindi
 import type { CoreConfig } from "../types.js";
 import {
   createMatrixSourcePublication,
+  matrixPublicationContent,
   MATRIX_PROJECTION_CONTENT_KEY,
 } from "./projection-publication.js";
 import { noteMatrixSourceSnapshotResult } from "./projection-source-result.js";
 import type { MatrixClient, MatrixRawEvent } from "./sdk.js";
-import { sendMessageMatrix } from "./send.js";
+import { editMessageMatrix, sendMessageMatrix } from "./send.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
 export const MATRIX_SESSION_PROJECTION_CONTENT_KEY = MATRIX_PROJECTION_CONTENT_KEY;
 const SOURCE_CONTENT_REVISION_KEY = "com.openclaw.source_revision";
@@ -330,24 +331,44 @@ export async function reconcileMatrixProjectionSnapshot(params: {
           agentId: message.agentId,
           displayName: message.displayName,
         });
+        let retainedEventId: string | undefined;
         if (!unchanged) {
-          const accepted = await sendMessageMatrix(`room:${params.roomId}`, body, {
-            cfg: params.cfg,
-            accountId: params.accountId,
-            client,
-            threadId: params.threadId,
-            extraContent,
-            publication,
-            deliveryQueueId: `matrix-slack-source:${params.roomId}:${params.threadId}:${message.messageId}:${targetRevision}`,
-            deliveryPartIndex: 0,
-            deliveryPartCount: 1,
-          });
+          const editable = currentParts[0] ?? existing[0];
+          const acceptedMessageId =
+            editable && publication
+              ? await editMessageMatrix(params.roomId, editable.eventId, body, {
+                  cfg: params.cfg,
+                  accountId: params.accountId,
+                  client,
+                  threadId: params.threadId,
+                  extraContent: {
+                    ...extraContent,
+                    [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: matrixPublicationContent(
+                      publication,
+                      params.roomId,
+                      0,
+                      1,
+                    ),
+                  },
+                }).then(() => editable.eventId)
+              : await sendMessageMatrix(`room:${params.roomId}`, body, {
+                  cfg: params.cfg,
+                  accountId: params.accountId,
+                  client,
+                  threadId: params.threadId,
+                  extraContent,
+                  publication,
+                  deliveryQueueId: `matrix-slack-source:${params.roomId}:${params.threadId}:${message.messageId}:${targetRevision}`,
+                  deliveryPartIndex: 0,
+                  deliveryPartCount: 1,
+                }).then((accepted) => accepted.messageId);
+          retainedEventId = editable?.eventId;
           if (binding && publication) {
             await noteMatrixSourceSnapshotResult(
               binding.bindingId,
               message.messageId,
               params.roomId,
-              accepted.messageId,
+              acceptedMessageId,
             );
           }
         } else if (binding && publication) {
@@ -381,7 +402,7 @@ export async function reconcileMatrixProjectionSnapshot(params: {
               slots.add(slot);
               return false;
             })
-          : existing;
+          : existing.filter((event) => event.eventId !== retainedEventId);
         for (const duplicate of obsolete) {
           for (const eventId of [...(editIds.get(duplicate.eventId) ?? []), duplicate.eventId]) {
             checkDeadline();
