@@ -19,7 +19,16 @@ describe("Matrix browser read authorization", () => {
       const sessionKey = "agent:main:matrix:channel:!secret:example.org:thread:$root";
       await upsertSessionEntryCore(
         { agentId: "main", sessionKey },
-        { sessionId: "matrix-secret", updatedAt: 1, lastChannel: "slack", lastTo: "user:U123" },
+        {
+          sessionId: "matrix-secret",
+          updatedAt: 1,
+          delivery: {
+            kind: "external",
+            route: { channel: "slack", target: { to: "user:U123" } },
+            context: { channel: "slack", to: "user:U123" },
+            origin: { provider: "slack", to: "user:U123" },
+          },
+        },
       );
       const context = { getRuntimeConfig: () => ({}) } as unknown as GatewayRequestContext;
       const client = { connect: { client: WEBCHAT } } as never;
