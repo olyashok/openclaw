@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  listAccountIds: vi.fn(() => ["user-prod", "admin-prod"]),
-  resolveAccount: vi.fn(({ accountId }: { accountId: string }) => ({
+const mocks = vi.hoisted(() => {
+  const listAccountIds = vi.fn(() => ["user-prod", "admin-prod"]);
+  const resolveAccount = vi.fn((_cfg: unknown, accountId: string) => ({
     userId: accountId === "admin-prod" ? "@admin:matrix.test" : "@user:matrix.test",
-  })),
-  resolveRoute: vi.fn(async () => ({ sessionKey: "agent:admin:matrix:room:thread:root" })),
-  resolveOwner: vi.fn(() => ({ agentId: "admin" })),
-}));
+  }));
+  return {
+    listAccountIds,
+    resolveAccount,
+    getLoadedChannelPlugin: vi.fn(() => ({ config: { listAccountIds, resolveAccount } })),
+    resolveRoute: vi.fn(async () => ({ sessionKey: "agent:admin:matrix:room:thread:root" })),
+    resolveOwner: vi.fn(() => ({ agentId: "admin" })),
+  };
+});
 
-vi.mock("../../extensions/matrix/account-resolver-api.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../extensions/matrix/account-resolver-api.js")>()),
-  listMatrixAccountIds: mocks.listAccountIds,
-  resolveMatrixAccount: mocks.resolveAccount,
+vi.mock("../channels/plugins/index.js", () => ({
+  getLoadedChannelPlugin: mocks.getLoadedChannelPlugin,
 }));
 vi.mock("../infra/outbound/outbound-session.js", () => ({
   resolveOutboundSessionRoute: mocks.resolveRoute,
@@ -100,6 +103,19 @@ describe("resolveMatrixTalkBinding", () => {
         agentMxid: "@unknown:matrix.test",
       }),
     ).rejects.toThrow("did not resolve uniquely");
+    expect(mocks.resolveRoute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the Matrix plugin is not loaded", async () => {
+    mocks.getLoadedChannelPlugin.mockReturnValueOnce(undefined);
+    await expect(
+      resolveMatrixTalkBinding({
+        cfg: {} as never,
+        roomId: "!room:matrix.test",
+        threadRootEventId: "$root",
+        agentMxid: "@admin:matrix.test",
+      }),
+    ).rejects.toThrow("Matrix Talk channel is unavailable");
     expect(mocks.resolveRoute).not.toHaveBeenCalled();
   });
 });

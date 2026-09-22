@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { getLoadedChannelPlugin } from "../channels/plugins/index.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveOutboundSessionRoute } from "../infra/outbound/outbound-session.js";
 import { resolveLoadedPluginConversationRouteOwner } from "./conversation-route-ownership.js";
@@ -17,12 +18,19 @@ export async function resolveMatrixTalkBinding(params: {
   }
 
   // Account credentials may come from the Matrix credential store rather than
-  // openclaw.json, so account identity must be resolved by the owning plugin.
-  const { listMatrixAccountIds, resolveMatrixAccount } =
-    await import("../../extensions/matrix/account-resolver-api.js");
-  const matches = listMatrixAccountIds(params.cfg).filter(
-    (accountId) => resolveMatrixAccount({ cfg: params.cfg, accountId }).userId === agentMxid,
-  );
+  // openclaw.json, so account identity must be resolved by the loaded channel
+  // plugin. Core must not import an optional extension: plugin-pruned Docker
+  // images otherwise retain a dangling dist import.
+  const matrixPlugin = getLoadedChannelPlugin("matrix");
+  if (!matrixPlugin) {
+    throw new Error("Matrix Talk channel is unavailable");
+  }
+  const matches = matrixPlugin.config.listAccountIds(params.cfg).filter((accountId) => {
+    const account = matrixPlugin.config.resolveAccount(params.cfg, accountId) as {
+      userId?: unknown;
+    };
+    return normalizeOptionalString(account.userId) === agentMxid;
+  });
   if (matches.length !== 1) {
     throw new Error("Matrix Talk agent account did not resolve uniquely");
   }
