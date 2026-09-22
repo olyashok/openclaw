@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   handleTrustedInternalChatSend: vi.fn(),
-  resolveAuthority: vi.fn(() => ({ senderIsOwner: false, toolsAllow: ["read"] })),
+  resolveAuthority: vi.fn<() => { senderIsOwner: boolean; toolsAllow?: string[] }>(() => ({
+    senderIsOwner: false,
+    toolsAllow: ["read"],
+  })),
   prepareRelayRun: vi.fn(),
-  registerRelayRun: vi.fn(() => "registered" as const),
+  registerRelayRun: vi.fn<(runId: string) => "registered" | "detached">(() => "registered"),
   abortChatRunById: vi.fn(),
   relayAdmission: { assertCurrent: vi.fn() },
 }));
