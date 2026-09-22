@@ -17,7 +17,7 @@ const SOURCE_CONTENT_REVISION_KEY = "com.openclaw.source_revision";
 // First-generation projections carried only this marker. They are the same
 // source message as any later v2 publication and must converge with it.
 const LEGACY_SESSION_PROJECTION_KEY = "com.openclaw.session_projection";
-const EDIT_READ_CONCURRENCY = 8;
+const EDIT_READ_CONCURRENCY = 16;
 const PROJECTION_DECRYPT_BATCH_SIZE = 4;
 export type SourceProjectionMessage = {
   messageId: string;
@@ -426,7 +426,9 @@ export async function reconcileMatrixProjectionSnapshot(params: {
                   deliveryPartIndex: 0,
                   deliveryPartCount: 1,
                 }).then((accepted) => accepted.messageId);
-          retainedEventId = editable?.eventId;
+          // Only an in-place edit keeps the old slot; a fresh send replaces it,
+          // so every earlier copy (including `editable`) is obsolete.
+          retainedEventId = editable && publication ? editable.eventId : acceptedMessageId;
           if (binding && publication) {
             await noteMatrixSourceSnapshotResult(
               binding.bindingId,
