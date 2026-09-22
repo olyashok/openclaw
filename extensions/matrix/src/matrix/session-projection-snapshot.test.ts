@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { matrixPublicationContent, type MatrixPublication } from "./projection-publication.js";
+import {
+  createMatrixSourcePublication,
+  matrixPublicationContent,
+  type MatrixPublication,
+} from "./projection-publication.js";
 import {
   reconcileMatrixProjectionSnapshot,
   MATRIX_SESSION_PROJECTION_CONTENT_KEY as key,
 } from "./session-projection-snapshot.js";
 const mocks = vi.hoisted(() => ({
   events: [] as any[],
+  // Tuwunel neither bundles edits nor lists them under a thread relation;
+  // with realEdits they are visible only through their own m.replace read.
+  realEdits: false,
+  edits: [] as any[],
   getRelations: vi.fn(),
   hydrate: vi.fn(),
   send: vi.fn(),
@@ -65,6 +73,8 @@ describe("v2 source reconciliation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.events.length = 0;
+    mocks.edits.length = 0;
+    mocks.realEdits = false;
     mocks.binding.mockReturnValue({
       bindingId: "binding",
       metadata: {
@@ -73,8 +83,13 @@ describe("v2 source reconciliation", () => {
         sourceAccountId: "source",
       },
     });
-    mocks.getRelations.mockImplementation(async () => ({
-      events: [...mocks.events].toReversed(),
+    mocks.getRelations.mockImplementation(async (_room: string, eventId: string, rel: string) => ({
+      events:
+        rel === "m.replace"
+          ? mocks.edits
+              .filter((edit) => edit.content["m.relates_to"].event_id === eventId)
+              .toReversed()
+          : [...mocks.events].toReversed(),
       nextBatch: null,
       prevBatch: null,
     }));
@@ -96,6 +111,19 @@ describe("v2 source reconciliation", () => {
         const matchedEvent = mocks.events.find((candidate) => candidate.event_id === eventId);
         if (!matchedEvent) {
           throw new Error("missing edit target");
+        }
+        if (mocks.realEdits) {
+          mocks.edits.push({
+            event_id: `$edit${mocks.edits.length}`,
+            sender: "@transport:example.org",
+            type: "m.room.message",
+            content: {
+              body: `* ${body}`,
+              "m.new_content": { body, ...opts.extraContent },
+              "m.relates_to": { rel_type: "m.replace", event_id: eventId },
+            },
+          });
+          return `$edit${mocks.edits.length}`;
         }
         matchedEvent.content = {
           ...matchedEvent.content,
@@ -250,5 +278,84 @@ describe("v2 source reconciliation", () => {
     ).rejects.toThrow("pagination");
     expect(mocks.send).not.toHaveBeenCalled();
     expect(mocks.redact).not.toHaveBeenCalled();
+  });
+  it("converges legacy v1 and repeated v2 copies into the earliest event, then stays idle", async () => {
+    mocks.realEdits = true;
+    const thread = { "m.relates_to": { rel_type: "m.thread", event_id: "$root" } };
+    mocks.events.push({
+      event_id: "$legacy",
+      sender: "@transport:example.org",
+      type: "m.room.message",
+      content: {
+        body: "**Slack · U111**\nBefore",
+        "com.openclaw.session_projection": {
+          version: 1,
+          sourceChannel: "slack",
+          messageId: message.messageId,
+          senderId: "U111",
+          role: "user",
+        },
+        ...thread,
+      },
+    });
+    const publication = (publicationRevision: number, displayName?: string) =>
+      createMatrixSourcePublication({
+        bindingId: "binding",
+        roomId: "!room",
+        threadId: "$root",
+        provider: "slack",
+        accountId: "account",
+        messageId: message.messageId,
+        actorId: "U111",
+        publishedAtMs: 1700000000000,
+        role: "user",
+        displayName,
+        publicationRevision,
+      });
+    // Three historical revisions whose superseded copies could not be retired.
+    insert("**Slack · Actor**\nBefore", publication(1, "Actor")!, {});
+    insert("**Slack · U111**\nBefore", publication(2)!, {});
+    insert("**Slack · Actor**\nBefore", publication(3, "Actor")!, {});
+    const snapshot = { complete: true, messages: [{ ...message, displayName: "Actor" }] };
+
+    await reconcileMatrixProjectionSnapshot({ ...options, snapshot });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.edit).toHaveBeenCalledTimes(1);
+    expect(mocks.edit.mock.calls[0]?.[1]).toBe("$legacy");
+    expect(mocks.redact.mock.calls.map((call) => call[1]).toSorted()).toEqual([
+      "$event1",
+      "$event2",
+      "$event3",
+    ]);
+
+    vi.clearAllMocks();
+    await reconcileMatrixProjectionSnapshot({ ...options, snapshot });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.edit).not.toHaveBeenCalled();
+    expect(mocks.redact).not.toHaveBeenCalled();
+  });
+  it("retires own binding notices from the transcript and nothing else", async () => {
+    const thread = { "m.relates_to": { rel_type: "m.thread", event_id: "$root" } };
+    const own = (event_id: string, body: string, sender = "@transport:example.org") =>
+      mocks.events.push({ event_id, sender, type: "m.room.message", content: { body, ...thread } });
+    own("$intro", "Read-only Slack conversation history. Continue in Slack.");
+    own(
+      "$active",
+      "⚙️ Slack channel thread session active. Messages here go directly to this session.",
+    );
+    own("$reply", "Here is the budget variance you asked for.");
+    own(
+      "$foreign",
+      "⚙️ x session active. Messages here go directly to this session.",
+      "@human:example.org",
+    );
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [message] },
+    });
+    expect(mocks.redact.mock.calls.map((call) => call[1]).toSorted()).toEqual([
+      "$active",
+      "$intro",
+    ]);
   });
 });

@@ -1,9 +1,10 @@
 import type { WebClient } from "@slack/web-api";
-import { describe, expect, it, vi } from "vitest";
-import { hydrateSlackProjectionNames } from "./projection-actor.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { hydrateSlackProjectionNames, resetSlackProjectionNameCache } from "./projection-actor.js";
 
 describe("source-authorized Slack projection names", () => {
   const read = <T>(operation: () => Promise<T>) => operation();
+  beforeEach(() => resetSlackProjectionNameCache());
   it("hydrates names only from the exact verified Slack actor and workspace, never message prose", async () => {
     const info = vi.fn().mockResolvedValue({
       ok: true,
@@ -48,5 +49,25 @@ describe("source-authorized Slack projection names", () => {
     expect(await hydrateSlackProjectionNames(client, "T123", [{ senderId: "U123" }], read)).toEqual(
       [{ senderId: "U123" }],
     );
+  });
+  it("keeps the last Slack name when a later lookup is rate limited", async () => {
+    const info = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        user: { id: "U123", team_id: "T123", profile: { display_name: "Alex Lyashok" } },
+      })
+      .mockRejectedValue(new Error("ratelimited"));
+    const client = { users: { info } } as unknown as WebClient;
+    const first = await hydrateSlackProjectionNames(client, "T123", [{ senderId: "U123" }], read);
+    vi.useFakeTimers({ now: Date.now() + 7 * 60 * 60 * 1000 });
+    try {
+      const later = await hydrateSlackProjectionNames(client, "T123", [{ senderId: "U123" }], read);
+      expect(info).toHaveBeenCalledTimes(2);
+      expect(later).toEqual(first);
+      expect(later[0]?.displayName).toBe("Alex Lyashok");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

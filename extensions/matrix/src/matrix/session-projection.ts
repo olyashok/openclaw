@@ -12,6 +12,10 @@ import {
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CoreConfig } from "../types.js";
 import {
+  READ_ONLY_SOURCE_HISTORY_NOTICE,
+  SOURCE_HISTORY_SYNCHRONIZED_NOTICE,
+} from "./binding-notice.js";
+import {
   createMatrixSourcePublication,
   resolveMatrixReplyPublication,
   type MatrixPublication,
@@ -416,7 +420,7 @@ export async function rebaseMatrixSessionProjection(params: {
               agentId,
               boundBy: "session-projection-read-only",
               externalSource: existing.metadata?.externalSource,
-              introText: "Read-only Slack conversation history. Continue in Slack.",
+              introText: READ_ONLY_SOURCE_HISTORY_NOTICE,
               idleTimeoutMs: 0,
               maxAgeMs: 0,
             },
@@ -610,6 +614,9 @@ export async function createMatrixSessionProjection(params: {
               label,
               boundBy: SOURCE_AUTHORIZED_PROJECTION,
               ...authorizedSource,
+              // A metadata-only rebind of an existing thread must not re-post
+              // the binder's "session active" intro into the transcript.
+              introText: false,
               idleTimeoutMs: 0,
               maxAgeMs: 0,
             },
@@ -634,6 +641,7 @@ export async function createMatrixSessionProjection(params: {
               ...existing.metadata,
               environment,
               projectedConversationId: conversationId,
+              introText: false,
             },
           });
         }
@@ -668,7 +676,7 @@ export async function createMatrixSessionProjection(params: {
               agentId,
               label,
               boundBy: "session-projection-slack-direct",
-              introText: "Slack conversation history synchronized.",
+              introText: SOURCE_HISTORY_SYNCHRONIZED_NOTICE,
               idleTimeoutMs: 0,
               maxAgeMs: 0,
             },

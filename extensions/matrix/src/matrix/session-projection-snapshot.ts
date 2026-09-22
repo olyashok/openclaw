@@ -3,6 +3,7 @@ import { setTimeout as yieldToEventLoop } from "node:timers/promises";
 import type { Direction } from "matrix-js-sdk/lib/models/event-timeline.js";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import type { CoreConfig } from "../types.js";
+import { isMatrixBindingNoticeText } from "./binding-notice.js";
 import {
   createMatrixSourcePublication,
   matrixPublicationContent,
@@ -14,6 +15,10 @@ import { editMessageMatrix, sendMessageMatrix } from "./send.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
 export const MATRIX_SESSION_PROJECTION_CONTENT_KEY = MATRIX_PROJECTION_CONTENT_KEY;
 const SOURCE_CONTENT_REVISION_KEY = "com.openclaw.source_revision";
+// First-generation projections carried only this marker. They are the same
+// source message as any later v2 publication and must converge with it.
+const LEGACY_SESSION_PROJECTION_KEY = "com.openclaw.session_projection";
+const EDIT_READ_CONCURRENCY = 8;
 const PROJECTION_DECRYPT_BATCH_SIZE = 4;
 export type SourceProjectionMessage = {
   messageId: string;
@@ -123,6 +128,67 @@ async function readProjectionHistory(
   throw new Error("Matrix projection history exceeds reconciliation bound");
 }
 
+/**
+ * Latest same-author replacement per original. Edits relate to their target
+ * with m.replace, so a thread-relations read never returns them, and Tuwunel
+ * does not bundle them into `unsigned`. Without this read the reconciler
+ * compares against stale original content and re-edits on every refresh.
+ */
+async function readSelfEdits(
+  client: MatrixClient,
+  roomId: string,
+  originalIds: string[],
+  self: string,
+  checkDeadline: () => void,
+) {
+  const latest = new Map<string, Record<string, unknown>>();
+  const editIds = new Map<string, string[]>();
+  for (let index = 0; index < originalIds.length; index += EDIT_READ_CONCURRENCY) {
+    checkDeadline();
+    await Promise.all(
+      originalIds.slice(index, index + EDIT_READ_CONCURRENCY).map(async (eventId) => {
+        const page = await client.getRelations(roomId, eventId, "m.replace", undefined, {
+          dir: "b" as Direction,
+          limit: 100,
+        });
+        if (!Array.isArray(page.events)) {
+          throw new Error("Invalid Matrix edit history");
+        }
+        // Newest first: the first same-author replacement is authoritative.
+        for (const edit of await hydrateProjectionEvents(client, roomId, page.events)) {
+          if (edit.sender !== self || edit.unsigned?.redacted_because) {
+            continue;
+          }
+          const content = object(edit.content);
+          if (object(content?.["m.relates_to"])?.event_id !== eventId) {
+            continue;
+          }
+          editIds.set(eventId, [...(editIds.get(eventId) ?? []), edit.event_id]);
+          const replacement = object(content?.["m.new_content"]);
+          if (replacement && !latest.has(eventId)) {
+            latest.set(eventId, replacement);
+          }
+        }
+      }),
+    );
+  }
+  return { latest, editIds };
+}
+
+/** Slack message id for current (v2) or first-generation (v1) projections. */
+function projectedSlackMessageId(content: Record<string, unknown>): string | undefined {
+  const origin = object(object(content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.origin);
+  if (origin) {
+    return origin.provider === "slack" && typeof origin.messageId === "string"
+      ? origin.messageId
+      : undefined;
+  }
+  const legacy = object(content[LEGACY_SESSION_PROJECTION_KEY]);
+  return legacy?.sourceChannel === "slack" && typeof legacy.messageId === "string"
+    ? legacy.messageId
+    : undefined;
+}
+
 export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionSnapshot {
   const rawSnapshot = object(value);
   if (
@@ -204,58 +270,44 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         checkDeadline,
       );
       const self = await client.getUserId();
-      const latestEdits = new Map<string, Record<string, unknown>>();
-      const editIds = new Map<string, string[]>();
+      const threadOriginals = events.toReversed().filter((event) => {
+        if (
+          event.sender !== self ||
+          event.unsigned?.redacted_because ||
+          event.type !== "m.room.message"
+        ) {
+          return false;
+        }
+        const relation = object(object(event.content)?.["m.relates_to"]);
+        return relation?.rel_type === "m.thread" && relation.event_id === params.threadId;
+      });
+      const { latest: latestEdits, editIds } = await readSelfEdits(
+        client,
+        params.roomId,
+        threadOriginals.map((event) => event.event_id),
+        self,
+        checkDeadline,
+      );
       const originals = new Map<
         string,
         Array<{ eventId: string; content: Record<string, unknown> }>
       >();
-      // History is newest first, so the first same-author replacement wins.
-      for (const event of events) {
-        if (
-          event.sender !== self ||
-          event.unsigned?.redacted_because ||
-          event.type !== "m.room.message"
-        ) {
+      const notices: string[] = [];
+      for (const event of threadOriginals) {
+        const current = latestEdits.get(event.event_id) ?? object(event.content);
+        if (!current) {
           continue;
         }
-        const content = object(event.content);
-        const relation = object(content?.["m.relates_to"]);
-        if (relation?.rel_type === "m.replace" && typeof relation.event_id === "string") {
-          const ids = editIds.get(relation.event_id) ?? [];
-          ids.push(event.event_id);
-          editIds.set(relation.event_id, ids);
-          const replacement = object(content?.["m.new_content"]);
-          if (replacement && !latestEdits.has(relation.event_id)) {
-            latestEdits.set(relation.event_id, replacement);
+        const messageId = projectedSlackMessageId(current);
+        if (!messageId) {
+          if (isMatrixBindingNoticeText(current.body)) {
+            notices.push(event.event_id);
           }
-        }
-      }
-      for (const event of events.toReversed()) {
-        if (
-          event.sender !== self ||
-          event.unsigned?.redacted_because ||
-          event.type !== "m.room.message"
-        ) {
           continue;
         }
-        const content = object(event.content);
-        if (object(content?.["m.relates_to"])?.rel_type === "m.replace") {
-          continue;
-        }
-        const relation = object(content?.["m.relates_to"]);
-        if (relation?.rel_type !== "m.thread" || relation.event_id !== params.threadId) {
-          continue;
-        }
-        const current = latestEdits.get(event.event_id) ?? content;
-        const metadata = object(current?.[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
-        const origin = object(metadata?.origin);
-        if (origin?.provider !== "slack" || typeof origin.messageId !== "string" || !current) {
-          continue;
-        }
-        const group = originals.get(origin.messageId) ?? [];
+        const group = originals.get(messageId) ?? [];
         group.push({ eventId: event.event_id, content: current });
-        originals.set(origin.messageId, group);
+        originals.set(messageId, group);
       }
       for (const message of snapshot.messages) {
         checkDeadline();
@@ -287,7 +339,7 @@ export async function reconcileMatrixProjectionSnapshot(params: {
             (event) => object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.partIndex,
           ),
         );
-        const unchanged =
+        const complete =
           sameRevision &&
           Number.isSafeInteger(expectedParts) &&
           expectedParts > 0 &&
@@ -300,6 +352,21 @@ export async function reconcileMatrixProjectionSnapshot(params: {
             (event) =>
               object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.complete === true,
           );
+        // The earliest copy of each current wire part is kept; any other copy
+        // (a repeated slot, an older revision or a legacy v1 mirror) converges.
+        const kept = new Map<unknown, string>();
+        for (const event of currentParts) {
+          const index = object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.partIndex;
+          if (!kept.has(index)) {
+            kept.set(index, event.eventId);
+          }
+        }
+        const keptIds = new Set(complete ? kept.values() : []);
+        // Clients order a thread by Matrix event time. A single-part message
+        // whose earliest copy is not current is re-published into that slot;
+        // chunked parts cannot be merged into one event and keep their slots.
+        const unchanged =
+          complete && (expectedParts > 1 || keptIds.has(existing[0]?.eventId ?? ""));
         const targetRevision = sameRevision ? revision : revision + 1;
         const binding = getSessionBindingService().resolveByConversation({
           channel: "matrix",
@@ -333,7 +400,9 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         });
         let retainedEventId: string | undefined;
         if (!unchanged) {
-          const editable = currentParts[0] ?? existing[0];
+          // Clients order a thread by Matrix event time, not source time. Keep
+          // the earliest copy so converged history retains Slack's order.
+          const editable = existing[0];
           const acceptedMessageId =
             editable && publication
               ? await editMessageMatrix(params.roomId, editable.eventId, body, {
@@ -374,8 +443,9 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         } else if (binding && publication) {
           const final = currentParts.find(
             (part) =>
+              keptIds.has(part.eventId) &&
               object(part.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY])?.partIndex ===
-              expectedParts - 1,
+                expectedParts - 1,
           );
           if (final) {
             await noteMatrixSourceSnapshotResult(
@@ -386,22 +456,9 @@ export async function reconcileMatrixProjectionSnapshot(params: {
             );
           }
         }
-        // Replace only after every new wire part was accepted. Chunked original
-        // events are parts, not duplicate source messages; preserve their slots.
-        const slots = new Set<string>();
-        const obsolete = sameRevision
-          ? existing.filter((event) => {
-              const metadata = object(event.content[MATRIX_SESSION_PROJECTION_CONTENT_KEY]);
-              if (metadata?.publicationRevision !== targetRevision) {
-                return true;
-              }
-              const slot = JSON.stringify([metadata?.publicationRevision, metadata?.partIndex]);
-              if (slots.has(slot)) {
-                return true;
-              }
-              slots.add(slot);
-              return false;
-            })
+        // Retire copies only after the retained event was accepted.
+        const obsolete = unchanged
+          ? existing.filter((event) => !keptIds.has(event.eventId))
           : existing.filter((event) => event.eventId !== retainedEventId);
         for (const duplicate of obsolete) {
           for (const eventId of [...(editIds.get(duplicate.eventId) ?? []), duplicate.eventId]) {
@@ -419,6 +476,14 @@ export async function reconcileMatrixProjectionSnapshot(params: {
           for (const eventId of [...(editIds.get(original.eventId) ?? []), original.eventId]) {
             await client.redactEvent(params.roomId, eventId, "Deleted in Slack");
           }
+        }
+      }
+      // A source transcript contains source messages only; binder chatter
+      // (intro and "session active" notices) is retired once history is present.
+      for (const notice of notices) {
+        for (const eventId of [...(editIds.get(notice) ?? []), notice]) {
+          checkDeadline();
+          await client.redactEvent(params.roomId, eventId, "Retired binding notice");
         }
       }
       // Only after the complete new generation is present may hidden legacy
