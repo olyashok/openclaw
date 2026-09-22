@@ -6,7 +6,6 @@ import type { CoreConfig } from "../types.js";
 import { isMatrixBindingNoticeText } from "./binding-notice.js";
 import {
   createMatrixSourcePublication,
-  matrixPublicationContent,
   MATRIX_PROJECTION_CONTENT_KEY,
 } from "./projection-publication.js";
 import { noteMatrixSourceSnapshotResult } from "./projection-source-result.js";
@@ -298,7 +297,10 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         if (!current) {
           continue;
         }
-        const messageId = projectedSlackMessageId(current);
+        // Earlier in-place edits could drop the projection marker; the original
+        // event still identifies the source message, and the next edit restores it.
+        const messageId =
+          projectedSlackMessageId(current) ?? projectedSlackMessageId(object(event.content) ?? {});
         if (!messageId) {
           if (isMatrixBindingNoticeText(current.body)) {
             notices.push(event.event_id);
@@ -410,15 +412,8 @@ export async function reconcileMatrixProjectionSnapshot(params: {
                   accountId: params.accountId,
                   client,
                   threadId: params.threadId,
-                  extraContent: {
-                    ...extraContent,
-                    [MATRIX_SESSION_PROJECTION_CONTENT_KEY]: matrixPublicationContent(
-                      publication,
-                      params.roomId,
-                      0,
-                      1,
-                    ),
-                  },
+                  extraContent,
+                  publication,
                 }).then(() => editable.eventId)
               : await sendMessageMatrix(`room:${params.roomId}`, body, {
                   cfg: params.cfg,
