@@ -373,6 +373,22 @@ describe("v2 source reconciliation", () => {
     expect(mocks.edit).not.toHaveBeenCalled();
     expect(mocks.redact).not.toHaveBeenCalled();
   });
+  it("retires the old copy when an unbound refresh must send instead of edit", async () => {
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [message] },
+    });
+    mocks.binding.mockReturnValue(null);
+    vi.clearAllMocks();
+    mocks.send.mockImplementationOnce(async () => ({ messageId: "$unbound" }));
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [{ ...message, content: "After" }] },
+    });
+    expect(mocks.edit).not.toHaveBeenCalled();
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.redact.mock.calls.map((call) => call[1])).toEqual(["$event0"]);
+  });
   it("retires own binding notices from the transcript and nothing else", async () => {
     const thread = { "m.relates_to": { rel_type: "m.thread", event_id: "$root" } };
     const own = (event_id: string, body: string, sender = "@transport:example.org") =>
