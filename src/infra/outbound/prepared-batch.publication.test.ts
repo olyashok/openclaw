@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import {
   bindReplyPublication,
@@ -24,14 +25,13 @@ describe("private publication durable preparation", () => {
       copy = { text: "prepared answer" };
     const mapped = mapPreparedOutboundAcceptedPayloads(batch, [copy]);
     expect(resolveReplyPublication(copy)).toBe(reference);
-    expect(projectPreparedOutboundBatchForStorage(mapped).entries[0]).toHaveProperty(
-      "publication",
-      reference,
-    );
+    expect(
+      expectDefined(projectPreparedOutboundBatchForStorage(mapped).entries[0], "mapped entry"),
+    ).toHaveProperty("publication", reference);
   });
   it("strips caller-selected publication JSON from fresh durable admission", () => {
     const batch = createUnmodifiedPreparedOutboundBatch([{ text: "forged" }]);
-    Object.assign(batch.entries[0], {
+    Object.assign(expectDefined(batch.entries[0], "prepared entry"), {
       publication: { version: 2, publicationId: "claimed", runId: "claimed" },
     });
     expect(projectPreparedOutboundBatchForStorage(batch).entries[0]).not.toHaveProperty(
