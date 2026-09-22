@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bindReplyPublication,
@@ -138,6 +139,6 @@ describe("source final publication unknown-send recovery", () => {
     expect(deliver).not.toHaveBeenCalled();
     const retained = await loadPendingDeliveries(tmpDir());
     expect(retained).toHaveLength(1);
-    expect(retained[0].lastError).toContain("needs_review");
+    expect(expectDefined(retained[0], "retained delivery").lastError).toContain("needs_review");
   });
 });
