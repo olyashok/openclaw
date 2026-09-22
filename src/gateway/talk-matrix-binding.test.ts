@@ -5,10 +5,15 @@ const mocks = vi.hoisted(() => {
   const resolveAccount = vi.fn((_cfg: unknown, accountId: string) => ({
     userId: accountId === "admin-prod" ? "@admin:matrix.test" : "@user:matrix.test",
   }));
+  const getLoadedChannelPlugin = vi.fn<
+    () =>
+      | { config: { listAccountIds: typeof listAccountIds; resolveAccount: typeof resolveAccount } }
+      | undefined
+  >(() => ({ config: { listAccountIds, resolveAccount } }));
   return {
     listAccountIds,
     resolveAccount,
-    getLoadedChannelPlugin: vi.fn(() => ({ config: { listAccountIds, resolveAccount } })),
+    getLoadedChannelPlugin,
     resolveRoute: vi.fn(async () => ({ sessionKey: "agent:admin:matrix:room:thread:root" })),
     resolveOwner: vi.fn(() => ({ agentId: "admin" })),
   };
