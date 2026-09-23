@@ -3,7 +3,10 @@ import type {
   RealtimeVoiceBridgeCreateRequest,
   RealtimeVoiceProviderConfig,
 } from "openclaw/plugin-sdk/realtime-voice";
-import { normalizeResolvedSecretInputString } from "openclaw/plugin-sdk/secret-input";
+import {
+  normalizeResolvedSecretInputString,
+  resolveSecretInputString,
+} from "openclaw/plugin-sdk/secret-input";
 import {
   asFiniteNumberInRange,
   asOptionalObjectRecord as readXaiObjectRecord,
@@ -195,11 +198,23 @@ export function normalizeXaiRealtimeProviderConfig(
   providerId = "xai",
 ): XaiRealtimeVoiceProviderConfig {
   const raw = readNestedXaiConfig(config, providerId);
+  const apiKeyPath = `talk.realtime.providers.${providerId}.apiKey`;
+  // OpenClaw deliberately leaves SecretRefs for non-selected Talk providers
+  // unresolved in the active runtime snapshot. LiteLLM's credential is still
+  // available to the gateway process from its role-scoped environment, so
+  // cataloging this selectable provider must not strictly read the inactive
+  // SecretRef. At connection time resolveLiteLlmRealtimeApiKey uses that
+  // gateway-only environment value; active/resolved refs continue to win.
+  const apiKey =
+    providerId === "litellm"
+      ? resolveSecretInputString({
+          value: raw.apiKey,
+          path: apiKeyPath,
+          mode: "configured_unavailable",
+        }).value
+      : normalizeResolvedSecretInputString({ value: raw.apiKey, path: apiKeyPath });
   return {
-    apiKey: normalizeResolvedSecretInputString({
-      value: raw.apiKey,
-      path: `talk.realtime.providers.${providerId}.apiKey`,
-    }),
+    apiKey,
     baseUrl: normalizeOptionalString(raw.baseUrl),
     model: normalizeOptionalString(raw.model),
     voice: normalizeXaiRealtimeVoice(raw.speakerVoice ?? raw.voice),
