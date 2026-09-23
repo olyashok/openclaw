@@ -29,7 +29,7 @@ type ReconcileBudget = {
   allowDiscovery?: boolean;
 };
 const PARENT =
-  /^agent:(cellect-fi-user|cellect-fi-admin):slack:(?:channel|group):([cg][a-z0-9]+)$/i;
+  /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:(?:channel|group):([cg][a-z0-9]+)$/i;
 const identity = (source: Source) =>
   `${source.workspaceId}:${source.channelId}:${source.rootMessageId}`;
 const safeError = (error: unknown) =>
@@ -109,7 +109,7 @@ export function createDetachedProjectionReconciler(
     const configured = (config?.bindings ?? []).filter(
       (binding) =>
         binding.match.channel === "slack" &&
-        ["cellect-fi-user", "cellect-fi-admin"].includes(binding.agentId) &&
+        ["cellect-fi-user", "cellect-fi-admin", "cellect-main"].includes(binding.agentId) &&
         binding.match.accountId &&
         binding.match.accountId !== "*",
     );

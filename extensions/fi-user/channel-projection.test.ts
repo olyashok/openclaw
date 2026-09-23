@@ -87,42 +87,47 @@ describe("Fi Slack channel publisher", () => {
       await expect(projectSlackChannelThread(params)).rejects.toThrow("native parent origin");
     },
   );
-  it("projects an admin channel thread with membership evidence and actual source authors", async () => {
-    const readThread = vi.fn().mockResolvedValue({
-      workspaceId: "T123",
-      channelId: "C123",
-      rootMessageId: "1700000000.000001",
-      memberSenderIds: ["U111"],
-      messages: [
-        { messageId: "1700000000.000001", senderId: "U111", content: "hi", bot: false },
-        { messageId: "1700000000.000002", senderId: "U222", content: "hello", bot: true },
-        { messageId: "1700000000.000003", senderId: "U333", content: "another bot", bot: true },
-      ],
-    });
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-    vi.stubGlobal("fetch", fetchMock);
-    const api = {
-      runtime: { channel: { runtimeContexts: { get: () => ({ readThread, botUserId: "U222" }) } } },
-    } as unknown as OpenClawPluginApi;
-    await projectSlackChannelThread({
-      api,
-      sessionKey: "agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001",
-      accountId: "fi-admin",
-      requesterSenderId: "U111",
-      baseUrl: "https://fi.example",
-      token: "test-token",
-    });
-    expect(readThread).toHaveBeenCalledWith("C123", "1700000000.000001");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const payload = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body))[0];
-    expect(payload.source).toMatchObject({ memberSenderIds: ["U111"] });
-    expect(payload.snapshot.messages[1]).toMatchObject({
-      agentId: "cellect-fi-admin",
-      role: "assistant",
-      senderId: "U222",
-    });
-    expect(payload.snapshot.messages[2]).not.toHaveProperty("agentId");
-  });
+  it.each(["cellect-fi-admin", "cellect-main"])(
+    "projects a %s channel thread with membership evidence and actual source authors",
+    async (agentId) => {
+      const readThread = vi.fn().mockResolvedValue({
+        workspaceId: "T123",
+        channelId: "C123",
+        rootMessageId: "1700000000.000001",
+        memberSenderIds: ["U111"],
+        messages: [
+          { messageId: "1700000000.000001", senderId: "U111", content: "hi", bot: false },
+          { messageId: "1700000000.000002", senderId: "U222", content: "hello", bot: true },
+          { messageId: "1700000000.000003", senderId: "U333", content: "another bot", bot: true },
+        ],
+      });
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal("fetch", fetchMock);
+      const api = {
+        runtime: {
+          channel: { runtimeContexts: { get: () => ({ readThread, botUserId: "U222" }) } },
+        },
+      } as unknown as OpenClawPluginApi;
+      await projectSlackChannelThread({
+        api,
+        sessionKey: `agent:${agentId}:slack:channel:c123:thread:1700000000.000001`,
+        accountId: "fi-admin",
+        requesterSenderId: "U111",
+        baseUrl: "https://fi.example",
+        token: "test-token",
+      });
+      expect(readThread).toHaveBeenCalledWith("C123", "1700000000.000001");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const payload = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body))[0];
+      expect(payload.source).toMatchObject({ memberSenderIds: ["U111"] });
+      expect(payload.snapshot.messages[1]).toMatchObject({
+        agentId,
+        role: "assistant",
+        senderId: "U222",
+      });
+      expect(payload.snapshot.messages[2]).not.toHaveProperty("agentId");
+    },
+  );
   it("revokes existing readers on source failure without treating it as message deletion", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
@@ -284,7 +289,7 @@ describe("Fi Slack channel publisher", () => {
   );
   it("discovers unbound historical roots in bounded batches and deduplicates cross-agent roots", async () => {
     vi.useFakeTimers();
-    const agents = ["cellect-fi-user", "cellect-fi-admin"];
+    const agents = ["cellect-fi-user", "cellect-fi-admin", "cellect-main"];
     discovery.entry.mockReturnValue({});
     discovery.list.mockImplementation(({ agentId }: { agentId: string }) =>
       Array.from({ length: 12 }, (_, index) => ({
@@ -364,6 +369,7 @@ describe("Fi Slack channel publisher", () => {
     expect(payloads.every((payload) => payload.discover === true && !payload.reconcile)).toBe(true);
     expect(payloads.every((payload) => payload.source.memberSenderIds.includes("U333"))).toBe(true);
     expect(discovery.list).toHaveBeenCalledWith({ agentId: "cellect-fi-user" });
+    expect(discovery.list).toHaveBeenCalledWith({ agentId: "cellect-main" });
   });
   it.each([false, true])(
     "refreshes every room ACL with bounded history, source outage=%s",
