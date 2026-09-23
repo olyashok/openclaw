@@ -2614,6 +2614,32 @@ describe("buildLiteLlmRealtimeVoiceProvider", () => {
     });
   });
 
+  it("accepts LiteLLM's session.created event as the Gemini setup acknowledgement", async () => {
+    const provider = buildLiteLlmRealtimeVoiceProvider();
+    const onReady = vi.fn();
+    const bridge = provider.createBridge({
+      providerConfig: {
+        apiKey: "litellm-fi-test-key", // pragma: allowlist secret
+        baseUrl: "http://192.168.5.139:4000/v1",
+        model: "gemini-3.8-live",
+      },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+      onReady,
+    });
+    const connecting = bridge.connect();
+    await waitForRealtimeState(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = requireSocket();
+    socket.open();
+    socket.emitServer({ type: "session.created", session: { model: "gemini-3.8-live" } });
+
+    await connecting;
+
+    expect(bridge.isConnected()).toBe(true);
+    expect(onReady).toHaveBeenCalledOnce();
+    bridge.close();
+  });
+
   it.each([
     { model: "grok-voice-think-fast-2.0", voice: "eve" },
     { model: "gemini-3.8-live", voice: "Kore" },

@@ -52,6 +52,13 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
     }
     switch (event.type) {
       case "session.created":
+        // LiteLLM currently normalizes Gemini Live's setupComplete response to
+        // session.created even when it acknowledges our session.update. Treat
+        // that event as setup-complete only for the proxy adapter; native xAI
+        // sessions still wait for the explicit session.updated event.
+        if (this.config.providerId === "litellm") {
+          this.onSessionUpdated(connection);
+        }
         return;
       case "conversation.created": {
         const conversationId = normalizeOptionalString(event.conversation?.id);
