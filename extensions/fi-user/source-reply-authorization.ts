@@ -33,11 +33,16 @@ export function registerSourceReplyAuthorization(
     params: SourceBinding,
   ): Promise<{ externalSource: Source; sourceAccountId: string; memberSenderIds?: string[] }> => {
     const match =
-      /^agent:(cellect-fi-user|cellect-fi-admin):slack:(channel|group|direct):([a-z0-9]+)(?::thread:(\d+\.\d+))?$/i.exec(
+      /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:(channel|group|direct):([a-z0-9]+)(?::thread:(\d+\.\d+))?$/i.exec(
         params.targetSessionKey,
       );
     const [, agentId, kind, nativeId, root] = match ?? [];
     if (!agentId || !kind || !nativeId) {
+      throw new Error("Unsupported source session");
+    }
+    // The global superadmin agent may project channel work into Fi, but its
+    // direct Slack conversations are not tenant-owned projection sources.
+    if (kind === "direct" && agentId === "cellect-main") {
       throw new Error("Unsupported source session");
     }
     const entry = getSessionEntry({

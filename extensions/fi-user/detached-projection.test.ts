@@ -15,9 +15,9 @@ afterEach(() => {
 });
 
 describe("native parent-session Slack history discovery", () => {
-  function fixture() {
-    const sessionKey = "agent:cellect-fi-admin:slack:group:c123";
-    const entry = { accountId: "fi-admin", nativeChannelId: "C123" };
+  function fixture(agentId = "cellect-fi-admin") {
+    const sessionKey = `agent:${agentId}:slack:group:c123`;
+    const entry = { accountId: agentId, nativeChannelId: "C123" };
     mocks.list.mockReturnValue([{ sessionKey, entry }]);
     mocks.get.mockReturnValue(entry);
     const readHistoryPage = vi.fn().mockResolvedValue({ roots: [], nextCursor: undefined });
@@ -31,9 +31,7 @@ describe("native parent-session Slack history discovery", () => {
     const readChannel = vi.fn().mockResolvedValue(scope);
     const api = {
       config: {
-        bindings: [
-          { agentId: "cellect-fi-admin", match: { channel: "slack", accountId: "fi-admin" } },
-        ],
+        bindings: [{ agentId, match: { channel: "slack", accountId: agentId } }],
       },
       runtime: {
         channel: { runtimeContexts: { get: () => ({ workspaceId: "T123", readChannel }) } },
@@ -87,6 +85,24 @@ describe("native parent-session Slack history discovery", () => {
         discover: true,
       });
     }
+  });
+  it("discovers superadmin parent-channel history through its configured Slack account", async () => {
+    const f = fixture("cellect-main");
+    f.readHistoryPage.mockResolvedValue({ roots: ["1700000000.000001"], nextCursor: undefined });
+    const { reconcile } = createDetachedProjectionReconciler(f.api, f.publish);
+    await reconcile(
+      { baseUrl: "https://fi.example", token: "test" },
+      [],
+      new AbortController().signal,
+      new Set(),
+    );
+    expect(f.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "agent:cellect-main:slack:group:c123",
+        detachedSource: expect.objectContaining({ channelId: "C123" }),
+        discover: true,
+      }),
+    );
   });
   it("revokes an existing detached room when its native parent disappears", async () => {
     const f = fixture();

@@ -163,4 +163,63 @@ describe("source reply authorization", () => {
     ).rejects.toThrow("not authorized");
     expect(request).toHaveBeenCalledTimes(2);
   });
+  it("preserves superadmin channel identity through Matrix continuation without allowing superadmin DMs", async () => {
+    const source = {
+      provider: "slack",
+      workspaceId: "T123",
+      channelId: "C123",
+      rootMessageId: "1700000000.000001",
+    };
+    const sessionKey = "agent:cellect-main:slack:channel:c123:thread:1700000000.000001";
+    const readChannel = vi.fn().mockResolvedValue({
+      workspaceId: "T123",
+      channelId: "C123",
+      memberSenderIds: ["U123"],
+    });
+    const bindings = [
+      { agentId: "cellect-main", match: { channel: "slack", accountId: "superadmin" } },
+    ];
+    let guard:
+      | {
+          resolveSource: (params: {
+            targetSessionKey: string;
+            externalSource?: typeof source;
+          }) => Promise<{ sourceAccountId: string }>;
+        }
+      | undefined;
+    entry.mockReturnValue({ provider: "slack", accountId: "superadmin", nativeChannelId: "C123" });
+    const api = {
+      config: { bindings },
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: () => ({ workspaceId: "T123", readChannel }),
+            register: (params: { context: typeof guard }) => {
+              guard = params.context;
+            },
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    registerSourceReplyAuthorization(api, () => ({
+      baseUrl: "https://fi.example.test",
+      token: "test-bridge",
+    }));
+    if (!guard) throw new Error("Expected source guard");
+    await expect(
+      guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
+    ).resolves.toMatchObject({ sourceAccountId: "superadmin", externalSource: source });
+    expect(readChannel).toHaveBeenCalledWith("C123");
+    await expect(
+      guard.resolveSource({
+        targetSessionKey: "agent:cellect-main:slack:direct:u123",
+        externalSource: {
+          ...source,
+          channelId: "D123",
+          rootMessageId: "agent:cellect-main:slack:direct:u123",
+          peerSenderId: "U123",
+        },
+      }),
+    ).rejects.toThrow("Unsupported source session");
+  });
 });

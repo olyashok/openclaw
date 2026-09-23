@@ -31,7 +31,7 @@ type SlackSnapshot = {
 };
 
 const CHANNEL_SESSION =
-  /^agent:(cellect-fi-user|cellect-fi-admin):slack:channel:([cg][a-z0-9]+):thread:(\d+\.\d+)$/i;
+  /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:channel:([cg][a-z0-9]+):thread:(\d+\.\d+)$/i;
 const snapshotQueue = new KeyedAsyncQueue();
 type SlackThreadReader = {
   workspaceId: string;
@@ -68,7 +68,7 @@ export type ChannelProjectionParams = {
 
 export async function projectSlackChannelThread(params: ChannelProjectionParams): Promise<boolean> {
   const match = params.detachedSource
-    ? /^agent:(cellect-fi-user|cellect-fi-admin):slack:(?:channel|group):([cg][a-z0-9]+)$/i.exec(
+    ? /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:(?:channel|group):([cg][a-z0-9]+)$/i.exec(
         params.sessionKey,
       )
     : CHANNEL_SESSION.exec(params.sessionKey);
@@ -195,7 +195,7 @@ async function publishSlackThreadSnapshot(
     if (
       binding.match.channel !== "slack" ||
       !binding.match.accountId ||
-      !["cellect-fi-user", "cellect-fi-admin"].includes(binding.agentId)
+      !["cellect-fi-user", "cellect-fi-admin", "cellect-main"].includes(binding.agentId)
     ) {
       continue;
     }
@@ -328,7 +328,7 @@ export function registerSlackProjectionReconciler(
         (binding) =>
           binding.match.channel === "slack" &&
           Boolean(binding.match.accountId && binding.match.accountId !== "*") &&
-          ["cellect-fi-user", "cellect-fi-admin"].includes(binding.agentId),
+          ["cellect-fi-user", "cellect-fi-admin", "cellect-main"].includes(binding.agentId),
       );
       const resolveAccount = (
         agentId: string,
