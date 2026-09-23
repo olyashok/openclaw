@@ -1,5 +1,6 @@
 import type { WebClient } from "@slack/web-api";
 import { hydrateSlackProjectionNames } from "./projection-actor.js";
+import { slackProjectionContent } from "./projection-content.js";
 import { createProjectionDeadline } from "./projection-deadline.js";
 
 type Message = { ts?: string; user?: string; text?: string; bot_id?: string; reply_count?: number };
@@ -106,7 +107,7 @@ export async function readSlackDirectSnapshot(
                 {
                   messageId: message.ts,
                   senderId: message.user,
-                  content: message.text,
+                  content: slackProjectionContent(message),
                   bot: Boolean(message.bot_id),
                 },
               ]
