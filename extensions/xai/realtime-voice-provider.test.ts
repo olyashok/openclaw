@@ -1,7 +1,10 @@
 // Xai tests cover realtime voice provider plugin behavior.
 import { REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ } from "openclaw/plugin-sdk/realtime-voice";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { XAI_REALTIME_MAX_PENDING_PLAYBACK_MARKS } from "./realtime-voice-config.js";
+import {
+  normalizeXaiRealtimeProviderConfig,
+  XAI_REALTIME_MAX_PENDING_PLAYBACK_MARKS,
+} from "./realtime-voice-config.js";
 import {
   buildLiteLlmRealtimeVoiceProvider,
   buildXaiRealtimeVoiceProvider,
@@ -2243,6 +2246,47 @@ describe("buildLiteLlmRealtimeVoiceProvider", () => {
         providerConfig: { baseUrl: "https://attacker.example/v1" },
       }),
     ).toBe(false);
+  });
+
+  it("keeps the inactive Fi-scoped key reference selectable without resolving it into config", () => {
+    process.env.FI_USER_LITELLM_API_KEY = "litellm-fi-test-key"; // pragma: allowlist secret
+    const provider = buildLiteLlmRealtimeVoiceProvider();
+    const unresolvedRef = {
+      source: "env",
+      provider: "default",
+      id: "FI_USER_LITELLM_API_KEY",
+    } as never;
+    const config = normalizeXaiRealtimeProviderConfig(
+      {
+        apiKey: unresolvedRef,
+        baseUrl: "http://192.168.5.139:4000/v1",
+      } as never,
+      "litellm",
+    );
+
+    expect(config.apiKey).toBeUndefined();
+    expect(provider.isConfigured({ providerConfig: config } as never)).toBe(true);
+
+    const bridge = provider.createBridge({
+      providerConfig: {
+        apiKey: unresolvedRef,
+        baseUrl: "http://192.168.5.139:4000/v1",
+        model: "grok-voice-think-fast-2.0",
+      },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+    });
+    const connecting = bridge.connect();
+    return waitForRealtimeState(() => expect(FakeWebSocket.instances).toHaveLength(1)).then(() => {
+      const socket = requireSocket();
+      socket.open();
+      socket.emitServer({ type: "session.updated" });
+      return connecting.then(() => {
+        const [, options] = socket.args as [string, { headers: Record<string, string> }];
+        expect(options.headers.Authorization).toBe("Bearer litellm-fi-test-key");
+        bridge.close();
+      });
+    });
   });
 
   it.each([
