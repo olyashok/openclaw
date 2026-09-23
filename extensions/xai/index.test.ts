@@ -524,6 +524,10 @@ describe("xai provider plugin", () => {
     expect(realtimeVoiceProvider.label).toBe("xAI Grok Voice");
     expect(realtimeVoiceProvider.aliases).toContain("grok-voice");
     expect(realtimeVoiceProvider.capabilities?.transports).toEqual(["gateway-relay"]);
+    const litellmProvider = requireEntry(captured.realtimeVoiceProviders, "litellm");
+    expect(litellmProvider.label).toBe("LiteLLM Realtime");
+    expect(litellmProvider.models).toEqual(["grok-voice-think-fast-2.0", "gemini-3.8-live"]);
+    expect(litellmProvider.capabilities?.transports).toEqual(["gateway-relay"]);
   });
 
   it("forwards exact caller cancellation through the registered lazy X search factory", async () => {

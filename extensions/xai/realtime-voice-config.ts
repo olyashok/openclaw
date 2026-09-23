@@ -39,6 +39,9 @@ export type XaiRealtimeVoiceBridgeConfig = RealtimeVoiceBridgeCreateRequest & {
   baseUrl: string;
   model?: string;
   voice?: string;
+  providerId?: string;
+  providerLabel?: string;
+  supportsServerVadAssistantAudioTruncation?: boolean;
   vadThreshold?: number;
   silenceDurationMs?: number;
   prefixPaddingMs?: number;
@@ -97,7 +100,10 @@ export type XaiRealtimeSessionUpdate = {
         format: OpenAICompatibleRealtimeAudioFormat;
         transcription: { model: string };
       };
-      output: { format: OpenAICompatibleRealtimeAudioFormat };
+      output: {
+        format: OpenAICompatibleRealtimeAudioFormat;
+        transcription?: Record<string, never>;
+      };
     };
     reasoning?: { effort: XaiRealtimeReasoningEffort };
     resumption?: { enabled: boolean };
@@ -107,6 +113,11 @@ export type XaiRealtimeSessionUpdate = {
 };
 
 export const XAI_REALTIME_DEFAULT_MODEL = "grok-voice-latest";
+export const LITELLM_REALTIME_VOICE_MODELS = [
+  "grok-voice-think-fast-2.0",
+  "gemini-3.8-live",
+] as const;
+export const LITELLM_REALTIME_BASE_URL = "http://192.168.5.139:4000/v1";
 export const XAI_REALTIME_CONNECT_TIMEOUT_MS = 10_000;
 export const XAI_REALTIME_WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 export const XAI_REALTIME_MAX_RECONNECT_ATTEMPTS = 5;
@@ -144,10 +155,10 @@ export function serializeXaiRealtimeToolResult(result: unknown): string {
   throw new Error(message);
 }
 
-function readNestedXaiConfig(rawConfig: RealtimeVoiceProviderConfig) {
+function readNestedXaiConfig(rawConfig: RealtimeVoiceProviderConfig, providerId = "xai") {
   const raw = readXaiObjectRecord(rawConfig);
   const providers = readXaiObjectRecord(raw?.providers);
-  return readXaiObjectRecord(providers?.xai ?? raw?.xai ?? raw) ?? {};
+  return readXaiObjectRecord(providers?.[providerId] ?? raw?.[providerId] ?? raw) ?? {};
 }
 
 export function normalizeXaiRealtimeBaseUrl(value?: string): string {
@@ -186,12 +197,13 @@ function asXaiReasoningEffort(value: unknown): XaiRealtimeReasoningEffort | unde
 
 export function normalizeXaiRealtimeProviderConfig(
   config: RealtimeVoiceProviderConfig,
+  providerId = "xai",
 ): XaiRealtimeVoiceProviderConfig {
-  const raw = readNestedXaiConfig(config);
+  const raw = readNestedXaiConfig(config, providerId);
   return {
     apiKey: normalizeResolvedSecretInputString({
       value: raw.apiKey,
-      path: "plugins.entries.voice-call.config.realtime.providers.xai.apiKey",
+      path: `talk.realtime.providers.${providerId}.apiKey`,
     }),
     baseUrl: normalizeOptionalString(raw.baseUrl),
     model: normalizeOptionalString(raw.model),
@@ -205,7 +217,10 @@ export function normalizeXaiRealtimeProviderConfig(
   };
 }
 
-export function readXaiRealtimeErrorDetail(error: unknown): string {
+export function readXaiRealtimeErrorDetail(
+  error: unknown,
+  providerLabel = "xAI realtime voice",
+): string {
   if (typeof error === "string" && error) {
     return error;
   }
@@ -213,7 +228,7 @@ export function readXaiRealtimeErrorDetail(error: unknown): string {
   return (
     normalizeOptionalString(record?.message) ??
     normalizeOptionalString(record?.code) ??
-    "xAI realtime voice error"
+    `${providerLabel} error`
   );
 }
 
