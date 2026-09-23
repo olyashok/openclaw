@@ -253,7 +253,8 @@ export class XaiRealtimeVoiceBridge extends XaiRealtimeVoiceEvents implements Re
           }
           this.handleEvent(event, connection);
           if (
-            event.type === "session.updated" &&
+            (event.type === "session.updated" ||
+              (this.config.providerId === "litellm" && event.type === "session.created")) &&
             this.lifecycle.isCurrent(connection) &&
             this.lifecycle.isReady()
           ) {
