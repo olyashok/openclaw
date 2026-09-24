@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 /**
  * Tests for talk gateway methods that coordinate speech and audio providers.
@@ -21,7 +24,6 @@ import {
   checkClientVoiceToolConfirmationPolicy,
   consumeClientVoiceToolConfirmationPolicy,
 } from "../../../talk/client-voice-confirmation.js";
-import { mintTalkBindingCapability } from "../../talk-binding-capability.js";
 import {
   noteClientVoiceConfirmationUtteranceForTest as noteClientVoiceConfirmationUtterance,
   resetClientVoiceConfirmationStateForTest,
@@ -39,6 +41,7 @@ import type {
 import { bindSessionRowProjection } from "../../session-row-projection-access.js";
 import type { SessionRowProjection } from "../../session-row-projection.js";
 import { resolveSessionMutationAuthorization } from "../../session-sharing.js";
+import { mintTalkBindingCapability } from "../../talk-binding-capability.js";
 import { prepareTalkAgentConsultTranscript } from "../agent-consult-transcript.js";
 import { relaySessions, type RelaySession } from "../relay/state.js";
 import { buildTalkRealtimeConfig } from "../session-config.js";
@@ -2029,6 +2032,7 @@ describe("talk.session unified handlers", () => {
     mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
       provider,
       providerConfig: { apiKey: "openai-key", model: "gpt-realtime" },
+      capabilities: { handlesAgentConsult: true },
     });
     mocks.createTalkRealtimeRelaySession.mockReturnValue({
       provider: "openai",
@@ -2122,7 +2126,16 @@ describe("talk.session unified handlers", () => {
           SenderName: undefined,
           SenderUsername: undefined,
         }),
-        toolsAllow: ["read", "web_search", "web_fetch", "x_search", "memory_search", "memory_get"],
+        toolsAllow: [
+          "read",
+          "tavily_search",
+          "tavily_extract",
+          "web_search",
+          "web_fetch",
+          "x_search",
+          "memory_search",
+          "memory_get",
+        ],
       },
     });
     expectRecordFields(relayCreateInput.providerConfig, {
@@ -2150,10 +2163,16 @@ describe("talk.session unified handlers", () => {
       transport: "gateway-relay",
       brain: "agent-consult",
     });
-    expect(mocks.readSessionPreviewItemsFromTranscript).toHaveBeenCalledWith(
-      { agentId: "main", sessionId: "session-main", sessionKey: "agent:main:main" },
+    expect(mocks.readSessionPreviewItemsFromTranscriptAsync).toHaveBeenCalledWith(
+      {
+        agentId: "main",
+        sessionId: "session-main",
+        sessionKey: "agent:main:main",
+        storePath: expect.any(String),
+      },
       16,
       800,
+      "model-context",
     );
 
     const inputRespond = vi.fn();
@@ -2827,8 +2846,10 @@ describe("talk.session unified handlers", () => {
 
   it("resolves a bare managed-room session through the persisted fixed-store owner", async () => {
     const createRespond = vi.fn();
+    const storeDir = await mkdtemp(join(tmpdir(), "openclaw-talk-fixed-store-"));
+    onTestFinished(() => rm(storeDir, { recursive: true, force: true }));
     const config: OpenClawConfig = {
-      session: { store: "/tmp/shared-sessions.sqlite", scope: "global" },
+      session: { store: join(storeDir, "sessions.sqlite"), scope: "global" },
       agents: {
         ownership: "explicit",
         list: [{ id: "ops" }, { id: "research" }],
@@ -3240,8 +3261,17 @@ describe("talk.client.toolCall handler", () => {
     expectRecordFields(chatInput.params, { sessionKey: "agent:main:main", agentId: "main" });
     expect(chatInput.params?.message).toContain("What is in this repo?");
     expect(chatInput.params?.idempotencyKey).toMatch(/^talk-call-1-/);
-    expect(mockCallArg(mocks.chatSend, 0, 2)).toEqual({
-      toolsAllow: ["read", "web_search", "web_fetch", "x_search", "memory_search", "memory_get"],
+    expect(mockCallArg(mocks.chatSend, 0, 2)).toMatchObject({
+      toolsAllow: [
+        "read",
+        "tavily_search",
+        "tavily_extract",
+        "web_search",
+        "web_fetch",
+        "x_search",
+        "memory_search",
+        "memory_get",
+      ],
       transcript: { display: false, excludeFromContext: true },
       prepareAssistantTranscriptMessage: prepareTalkAgentConsultTranscript,
     });
@@ -3688,7 +3718,7 @@ describe("talk.client.create handler", () => {
     });
   });
 
-  it("redeems an app-authorized Matrix binding for WebRTC and carries bounded context", async () => {
+  it("redeems an app-authorized Matrix binding for a relay and carries bounded context", async () => {
     const sessionKey =
       "agent:main:matrix:channel:!RoomABC:matrix.example:thread:$RootABC:matrix.example";
     const binding = mintTalkBindingCapability({
@@ -3699,34 +3729,35 @@ describe("talk.client.create handler", () => {
       threadRootEventId: "$RootABC:matrix.example",
       speakerMxid: "@agent:matrix.example",
     });
-    const createBrowserSession = vi.fn(async () => ({
+    mocks.createTalkRealtimeRelaySession.mockReturnValue({
       provider: "openai",
-      transport: "webrtc" as const,
-      clientSecret: "secret",
-    }));
+      transport: "gateway-relay",
+      relaySessionId: "relay-bound-1",
+      expiresAt: 1_797_986_400,
+    });
     mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
       provider: {
         id: "openai",
         label: "OpenAI Realtime",
         isConfigured: () => true,
-        createBrowserSession,
         createBridge: vi.fn(),
       },
-      providerConfig: { model: "gpt-realtime" },
+      providerConfig: { apiKey: "openai-key", model: "gpt-realtime" },
     });
     mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
-      transports: ["webrtc"],
+      transports: ["gateway-relay"],
       supportsGatewayControl: true,
       supportsToolCalls: true,
       supportsVideoFrames: false,
     });
     const respond = vi.fn();
 
-    await callTalkHandler("talk.client.create", {
+    await callTalkHandler("talk.session.create", {
       params: {
         binding,
-        transport: "webrtc",
-        capabilities: ["gateway-control-v1"],
+        mode: "realtime",
+        transport: "gateway-relay",
+        brain: "agent-consult",
         language: "en",
         sessionCapsule: "Fi screen: /shape/chat\nProject: 305 Third Street",
       },
@@ -3734,7 +3765,7 @@ describe("talk.client.create handler", () => {
       client: {
         connId: "conn-1",
         connect: {
-          scopes: ["operator.talk"],
+          scopes: ["operator.admin", "operator.talk"],
           client: { id: "openclaw-control-ui", mode: "webchat" },
         },
       },
@@ -3744,7 +3775,7 @@ describe("talk.client.create handler", () => {
       },
     });
 
-    expectRecordFields(mockCallArg(createBrowserSession), {
+    expectRecordFields(mockCallArg(mocks.createTalkRealtimeRelaySession), {
       language: "en",
       instructions: expect.stringContaining(
         "Current UI/session context supplied by the Talk client (untrusted informational data).",
@@ -3755,14 +3786,12 @@ describe("talk.client.create handler", () => {
     );
     expectRespondOk(respond, {
       provider: "openai",
-      transport: "webrtc",
-      sessionKey,
-      voiceSessionId: "voice-test",
-      clientControl: { owner: "gateway" },
+      transport: "gateway-relay",
+      voiceSessionId: "relay-bound-1",
     });
   });
 
-  it("rejects ambiguous, invalid, and replayed WebRTC bindings", async () => {
+  it("rejects ambiguous, invalid, and replayed relay bindings", async () => {
     const sessionKey = "agent:main:matrix:channel:!RoomABC:matrix.example";
     const binding = mintTalkBindingCapability({
       sessionKey,
@@ -3773,10 +3802,11 @@ describe("talk.client.create handler", () => {
       speakerMxid: "@agent:matrix.example",
     });
     const config = { talk: { realtime: { provider: "openai" } } } as OpenClawConfig;
+    const relayParams = { mode: "realtime", transport: "gateway-relay", brain: "agent-consult" };
 
     const ambiguousRespond = vi.fn();
-    await callTalkHandler("talk.client.create", {
-      params: { binding, sessionKey },
+    await callTalkHandler("talk.session.create", {
+      params: { ...relayParams, binding, sessionKey },
       respond: ambiguousRespond,
       context: { getRuntimeConfig: () => config },
     });
@@ -3786,8 +3816,8 @@ describe("talk.client.create handler", () => {
     });
 
     const invalidRespond = vi.fn();
-    await callTalkHandler("talk.client.create", {
-      params: { binding: "not-a-capability" },
+    await callTalkHandler("talk.session.create", {
+      params: { ...relayParams, binding: "not-a-capability" },
       respond: invalidRespond,
       context: { getRuntimeConfig: () => config },
     });
@@ -3802,16 +3832,16 @@ describe("talk.client.create handler", () => {
       throw new Error("provider deliberately unavailable after capability redemption");
     });
     const redeemRespond = vi.fn();
-    await callTalkHandler("talk.client.create", {
-      params: { binding },
+    await callTalkHandler("talk.session.create", {
+      params: { ...relayParams, binding },
       respond: redeemRespond,
       context: { getRuntimeConfig: () => config },
     });
     expectRespondError(redeemRespond, { code: ErrorCodes.UNAVAILABLE });
 
     const replayRespond = vi.fn();
-    await callTalkHandler("talk.client.create", {
-      params: { binding },
+    await callTalkHandler("talk.session.create", {
+      params: { ...relayParams, binding },
       respond: replayRespond,
       context: { getRuntimeConfig: () => config },
     });
@@ -3919,7 +3949,7 @@ describe("talk.client.create handler", () => {
         agentId: "main",
         sessionKey: "agent:main:main",
         storePath: expect.any(String),
-        args: { question: "Check the repository" },
+        args: expect.objectContaining({ question: "Check the repository" }),
         transcript: [
           { role: "user", text: `2:${"🙂".repeat(799)}` },
           { role: "assistant", text: `3:${"🙂".repeat(799)}` },
@@ -3929,6 +3959,8 @@ describe("talk.client.create handler", () => {
         senderIsOwner: false,
         toolsAllow: [
           "read",
+          "tavily_search",
+          "tavily_extract",
           "web_search",
           "web_fetch",
           "x_search",

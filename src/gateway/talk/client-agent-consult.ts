@@ -36,11 +36,11 @@ import {
   bindAuthorizedClientVoiceConfirmation,
   observeClientVoiceConfirmationRun,
 } from "../../talk/client-voice-confirmation.js";
-import { buildRealtimeTalkSessionContextInstructions } from "../../talk/session-context.js";
 import {
   assertClientVoiceSessionOpen,
   registerClientVoiceConsultRun,
 } from "../../talk/client-voice-session.js";
+import { buildRealtimeTalkSessionContextInstructions } from "../../talk/session-context.js";
 import { registerChatAbortController } from "../chat-abort.js";
 import type { GatewayRequestContext } from "../server-methods/shared-types.js";
 import type {

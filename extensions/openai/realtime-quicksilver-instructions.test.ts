@@ -3,7 +3,7 @@ import { buildOpenAIQuicksilverInstructions } from "./realtime-quicksilver-instr
 
 describe("OpenAI GPT-Live delegation instructions", () => {
   it("preserves agent identity and delivers one result or failure per check", () => {
-    const instructions = buildOpenAIQuicksilverInstructions("Speak warmly.");
+    const instructions = buildOpenAIQuicksilverInstructions("gpt-live", "Speak warmly.");
 
     expect(instructions).toContain("configured OpenClaw agent speaking through realtime voice");
     expect(instructions).toContain("do not identify as ChatGPT or a different service");
@@ -12,7 +12,7 @@ describe("OpenAI GPT-Live delegation instructions", () => {
   });
 
   it("keeps confirmation ids silent while allowing the same request to be retried", () => {
-    const instructions = buildOpenAIQuicksilverInstructions();
+    const instructions = buildOpenAIQuicksilverInstructions("gpt-live");
 
     expect(instructions).toContain("VOICE_CONFIRMATION_REQUIRED:<id>");
     expect(instructions).toContain("do not read the id aloud");
