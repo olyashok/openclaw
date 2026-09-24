@@ -154,7 +154,7 @@ describe("Matrix projection history generation repair", () => {
       }),
     );
     expect(mocks.reconcile).toHaveBeenCalledWith(
-      expect.objectContaining({ retireLegacyDirectReplies: true }),
+      expect.objectContaining({ roomId: expect.any(String), threadId: "$new" }),
     );
   });
   it("resumes the persisted new generation after replay failure without making another root", async () => {
