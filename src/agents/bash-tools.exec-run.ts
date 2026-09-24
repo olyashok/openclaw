@@ -568,6 +568,7 @@ export function createExecTool(
           await validateScriptFileForShellBleed({
             command: params.command,
             workdir: scriptPreflightCwd,
+            resolveCompoundCommands: host === "sandbox",
           });
         }
 
