@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DRIFT_ACTIVITY_SETTLE_MS,
+  DRIFT_DECLINED_BACKOFF_MS,
   DRIFT_REFRESH_BACKOFF_MS,
   DRIFT_SUSPECT_REPLAN_MS,
   createProjectionDriftScheduler,
@@ -152,6 +153,46 @@ describe("projection drift scheduler", () => {
       refreshedAgain = tick(drifted);
     }
     expect(refreshedAgain).toBe(1);
+  });
+
+  it("does not refresh a room Fi declined until it has new activity or a week passes", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(1);
+    const room = bound[0]!;
+    const tick = () => {
+      for (const planned of drift.selectPlans(bound)) {
+        drift.recordPlan(planned, drifted);
+      }
+      const refreshes = drift.selectRefreshes(bound, 1);
+      time.advance(TICK);
+      return refreshes;
+    };
+    expect(tick()).toEqual([room.roomId]);
+    drift.recordRefresh(room.roomId);
+    drift.recordDeclined(room.roomId);
+    let refreshes = 0;
+    for (let minute = 0; minute < 2 * 24 * 60; minute++) {
+      refreshes += tick().length;
+    }
+    expect(refreshes).toBe(0);
+    expect(drift.summary()).toMatchObject({ drifted: 1, declined: 1 });
+    // New activity in the room (e.g. someone used Claw in it again) re-admits it.
+    drift.noteActivity(room.sessionKey);
+    time.advance(DRIFT_ACTIVITY_SETTLE_MS);
+    expect(tick()).toEqual([room.roomId]);
+    // Without activity, the week-long backoff still expires.
+    const quiet = createProjectionDriftScheduler(time.now);
+    for (const planned of quiet.selectPlans(bound)) {
+      quiet.recordPlan(planned, drifted);
+    }
+    quiet.recordRefresh(room.roomId);
+    quiet.recordDeclined(room.roomId);
+    time.advance(DRIFT_DECLINED_BACKOFF_MS);
+    for (const planned of quiet.selectPlans(bound)) {
+      quiet.recordPlan(planned, drifted);
+    }
+    expect(quiet.selectRefreshes(bound, 1)).toEqual([room.roomId]);
   });
 
   it("forgets rooms that are no longer bound", () => {

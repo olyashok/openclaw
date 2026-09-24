@@ -37,6 +37,12 @@ export const DRIFT_REFRESH_BACKOFF_MS = [
   9 * 60 * 60_000,
   24 * 60 * 60_000,
 ] as const;
+/**
+ * A room Fi declined to publish (a retired conversation, a source with no
+ * eligible readers) is not refreshed again for this long unless the room has
+ * new activity: a refresh would only re-read Slack for Fi to decline again.
+ */
+export const DRIFT_DECLINED_BACKOFF_MS = 7 * 24 * 60 * 60_000;
 const ACTIVITY_RETENTION_MS = 24 * 60 * 60_000;
 
 export type DriftPlanVerdict = { converged: boolean; invariantsOk: boolean };
@@ -48,6 +54,8 @@ type RoomState = {
   driftSince?: number;
   refreshAttempts: number;
   refreshAfter: number;
+  /** When Fi last declined a refresh of this room. */
+  declinedAt?: number;
 };
 
 export function createProjectionDriftScheduler(now: () => number = Date.now) {
@@ -124,9 +132,12 @@ export function createProjectionDriftScheduler(now: () => number = Date.now) {
         return;
       }
       const drifted = verdict ? !verdict.converged : false;
+      const declinedAt = drifted ? previous?.declinedAt : undefined;
       rooms.set(roomId, {
         plannedAt: at,
-        replanAt: at + DRIFT_SUSPECT_REPLAN_MS,
+        // A declined room is left to the rotation; it cannot jump the queue.
+        replanAt: declinedAt ? Number.POSITIVE_INFINITY : at + DRIFT_SUSPECT_REPLAN_MS,
+        declinedAt,
         verdict: !verdict ? "failed" : drifted ? "drifted" : "invariant",
         driftSince: drifted ? (previous?.driftSince ?? at) : undefined,
         // A refresh cannot repair an invariant the plan does not act on, and a
@@ -150,7 +161,8 @@ export function createProjectionDriftScheduler(now: () => number = Date.now) {
           const state = rooms.get(room.roomId);
           return state?.verdict === "drifted" &&
             state.plannedAt >= tickStartedAt &&
-            state.refreshAfter <= at
+            (state.refreshAfter <= at ||
+              (state.declinedAt !== undefined && activityAt(room) > state.declinedAt))
             ? [{ roomId: room.roomId, active: activityAt(room), since: state.driftSince ?? at }]
             : [];
         })
@@ -174,9 +186,20 @@ export function createProjectionDriftScheduler(now: () => number = Date.now) {
       state.refreshAfter = now() + delay;
       state.replanAt = now() + DRIFT_REFRESH_CONFIRM_MS;
     },
+    /** Fi accepted the refresh but declined to publish it (status `skipped`). */
+    recordDeclined(roomId: string) {
+      const state = rooms.get(roomId);
+      if (!state) {
+        return;
+      }
+      state.declinedAt = now();
+      state.refreshAfter = now() + DRIFT_DECLINED_BACKOFF_MS;
+      state.replanAt = Number.POSITIVE_INFINITY;
+    },
     summary() {
       const states = [...rooms.values()];
       return {
+        declined: states.filter((state) => state.declinedAt !== undefined).length,
         tracked: states.length,
         drifted: states.filter((state) => state.verdict === "drifted").length,
         invariant: states.filter((state) => state.verdict === "invariant").length,
@@ -208,7 +231,7 @@ export async function runProjectionDriftPass(params: {
   publish: (
     params: Pick<
       ChannelProjectionParams,
-      "api" | "sessionKey" | "accountId" | "reconcile" | "refresh" | "projectionRoomId"
+      "api" | "sessionKey" | "accountId" | "reconcile" | "refresh" | "projectionRoomId" | "onResult"
     > &
       Pick<ChannelProjectionParams, "detachedSource">,
   ) => Promise<boolean>;
@@ -232,6 +255,7 @@ export async function runProjectionDriftPass(params: {
   }
   let refreshed = 0;
   let refreshFailed = 0;
+  let refreshDeclined = 0;
   for (const roomId of drift.selectRefreshes(rooms, params.budget)) {
     const binding = rooms.find((candidate) => candidate.roomId === roomId);
     if (!binding || !params.active()) {
@@ -253,6 +277,7 @@ export async function runProjectionDriftPass(params: {
       if (!accountId) {
         throw new Error("Slack source account unavailable");
       }
+      let status: string | undefined;
       await params.publish({
         api: api as OpenClawPluginApi,
         sessionKey: binding.sessionKey,
@@ -261,7 +286,18 @@ export async function runProjectionDriftPass(params: {
         refresh: true,
         projectionRoomId: roomId,
         ...(detachedSource ? { detachedSource } : {}),
+        onResult: (result) => {
+          status = result;
+        },
       });
+      if (status === "skipped") {
+        drift.recordDeclined(roomId);
+        api.logger.info(
+          `fi-user: projection refresh lane=${lane} room=${roomId} session=${binding.sessionKey} outcome=declined`,
+        );
+        refreshDeclined++;
+        continue;
+      }
       logProjectionRefresh(api.logger, lane, roomId, binding.sessionKey);
       refreshed++;
     } catch (error) {
@@ -269,5 +305,5 @@ export async function runProjectionDriftPass(params: {
       refreshFailed++;
     }
   }
-  return { rooms: rooms.length, planned, refreshed, refreshFailed };
+  return { rooms: rooms.length, planned, refreshed, refreshFailed, refreshDeclined };
 }
