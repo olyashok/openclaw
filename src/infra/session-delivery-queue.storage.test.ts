@@ -97,7 +97,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("persists a delayed completion fallback with its original session binding", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (_stateDir, queueContext) => {
       const queued = await enqueueClaimedSessionDelivery(
         {
           kind: "completionFallback",
@@ -111,10 +111,10 @@ describe("session-delivery queue storage", () => {
           idempotencyKey: "webchat-completion:agent:cellect-fi-admin:device:abc:run-1",
         },
         60_000,
-        tempDir,
+        queueContext,
       );
 
-      expect(await loadPendingSessionDelivery(queued.id, tempDir)).toMatchObject({
+      expect(await loadPendingSessionDelivery(queued.id, queueContext)).toMatchObject({
         kind: "completionFallback",
         sessionKey: "agent:cellect-fi-admin:device:abc",
         runId: "run-1",
