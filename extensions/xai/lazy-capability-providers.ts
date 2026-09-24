@@ -22,11 +22,13 @@ import type {
 } from "openclaw/plugin-sdk/speech";
 import type { VideoGenerationProvider } from "openclaw/plugin-sdk/video-generation";
 import {
+  assertLiteLlmRealtimeVoiceRequestSupported,
   assertXaiRealtimeVoiceRequestSupported,
   createXaiImageGenerationProviderMetadata,
   createXaiMediaUnderstandingProviderMetadata,
   createXaiRealtimeTranscriptionProviderMetadata,
   createXaiRealtimeVoiceProviderMetadata,
+  createLiteLlmRealtimeVoiceProviderMetadata,
   createXaiVideoGenerationProviderMetadata,
   normalizeXaiRealtimeTranscriptionProviderConfig,
 } from "./capability-provider-metadata.js";
@@ -50,6 +52,9 @@ const loadXaiRealtimeTranscriptionProvider = createLazyRuntimeModule(async () =>
 );
 const loadXaiRealtimeVoiceProvider = createLazyRuntimeModule(async () =>
   (await import("./realtime-voice-provider.js")).buildXaiRealtimeVoiceProvider(),
+);
+const loadLiteLlmRealtimeVoiceProvider = createLazyRuntimeModule(async () =>
+  (await import("./realtime-voice-provider.js")).buildLiteLlmRealtimeVoiceProvider(),
 );
 const loadXaiSpeechProvider = createLazyRuntimeModule(async () =>
   (await import("./speech-provider.js")).buildXaiSpeechProvider(),
@@ -199,10 +204,15 @@ function createLazyXaiRealtimeTranscriptionSession(
   };
 }
 
-function createLazyXaiRealtimeVoiceBridge(
+function createLazyRealtimeVoiceBridge(
   req: RealtimeVoiceBridgeCreateRequest,
+  options: {
+    loadProvider: () => Promise<RealtimeVoiceProviderPlugin>;
+    label: string;
+    validate: (req: RealtimeVoiceBridgeCreateRequest) => void;
+  },
 ): RealtimeVoiceBridge {
-  assertXaiRealtimeVoiceRequestSupported(req);
+  options.validate(req);
   type PendingVoiceOperation =
     | { type: "audio" }
     | { timestamp: number; type: "media-timestamp" }
@@ -226,7 +236,7 @@ function createLazyXaiRealtimeVoiceBridge(
       }
     | undefined;
   let acceptsInput = false;
-  const lifecycle = new RealtimeVoiceSessionLifecycle("xAI lazy");
+  const lifecycle = new RealtimeVoiceSessionLifecycle(`${options.label} lazy`);
   let pendingMediaTimestamp: PendingMediaTimestamp | undefined;
   let pendingGreeting: PendingVoiceGreeting | undefined;
   let pendingUserMessageCount = 0;
@@ -311,7 +321,7 @@ function createLazyXaiRealtimeVoiceBridge(
         ? existingState
         : {
             connection,
-            promise: loadXaiRealtimeVoiceProvider().then((provider) =>
+            promise: options.loadProvider().then((provider) =>
               provider.createBridge({
                 ...req,
                 // An explicit wrapper reconnect owns a new provider bridge. Guard every
@@ -380,7 +390,9 @@ function createLazyXaiRealtimeVoiceBridge(
         case "audio": {
           const chunk = pendingAudio.dequeue();
           if (!chunk) {
-            throw new Error("xAI realtime voice pending audio queue invariant violated");
+            throw new Error(
+              `${options.label} realtime voice pending audio queue invariant violated`,
+            );
           }
           loadedBridge.sendAudio(chunk);
           break;
@@ -491,7 +503,9 @@ function createLazyXaiRealtimeVoiceBridge(
         pendingUserMessageBytes + messageBytes > MAX_LAZY_REALTIME_VOICE_USER_MESSAGE_BYTES
       ) {
         req.onError?.(
-          new Error("xAI realtime voice pending user message overflow during lazy startup"),
+          new Error(
+            `${options.label} realtime voice pending user message overflow during lazy startup`,
+          ),
         );
         return;
       }
@@ -546,7 +560,7 @@ function createLazyXaiRealtimeVoiceBridge(
         pendingToolResultBytes + resultBytes > MAX_LAZY_REALTIME_VOICE_TOOL_RESULT_BYTES
       ) {
         const error = new Error(
-          "xAI realtime voice pending tool result overflow during lazy startup",
+          `${options.label} realtime voice pending tool result overflow during lazy startup`,
         );
         req.onError?.(error);
         throw error;
@@ -651,6 +665,23 @@ export function createLazyXaiRealtimeTranscriptionProvider(): RealtimeTranscript
 export function createLazyXaiRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
   return {
     ...createXaiRealtimeVoiceProviderMetadata(),
-    createBridge: createLazyXaiRealtimeVoiceBridge,
+    createBridge: (req) =>
+      createLazyRealtimeVoiceBridge(req, {
+        loadProvider: loadXaiRealtimeVoiceProvider,
+        label: "xAI",
+        validate: assertXaiRealtimeVoiceRequestSupported,
+      }),
+  };
+}
+
+export function createLazyLiteLlmRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
+  return {
+    ...createLiteLlmRealtimeVoiceProviderMetadata(),
+    createBridge: (req) =>
+      createLazyRealtimeVoiceBridge(req, {
+        loadProvider: loadLiteLlmRealtimeVoiceProvider,
+        label: "LiteLLM",
+        validate: assertLiteLlmRealtimeVoiceRequestSupported,
+      }),
   };
 }
