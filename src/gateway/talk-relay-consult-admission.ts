@@ -35,7 +35,7 @@ export function prepareTalkRelayConsultAdmission(params: {
       relay.expiresAtMs <= Date.now() ||
       relay.connId !== ownerConnId ||
       connId !== ownerConnId ||
-      relay.sessionKey !== ownerSessionKey ||
+      relay.sessionTarget.canonicalKey !== ownerSessionKey ||
       sessionKey !== ownerSessionKey ||
       relay.matrixRoute?.channel !== route.channel ||
       relay.matrixRoute.roomId !== route.roomId ||

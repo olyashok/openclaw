@@ -434,10 +434,10 @@ export function listSessionEntries(
 }
 
 /** Lists durable session keys without materializing entry JSON. */
-export function listSessionKeys(
+export async function listSessionKeys(
   params: Partial<Omit<SessionStoreReadParams, "sessionKey">> = {},
-): string[] {
-  return listAccessorSessionEntryKeysReadOnly({
+): Promise<string[]> {
+  return await listAccessorSessionEntryKeysReadOnly({
     ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
     ...(params.env !== undefined ? { env: params.env } : {}),
     ...(params.storePath !== undefined ? { storePath: params.storePath } : {}),

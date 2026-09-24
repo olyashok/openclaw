@@ -106,10 +106,10 @@ function listSessionEntries(
   });
 }
 
-function listSessionKeys(
+async function listSessionKeys(
   params: Partial<Omit<RuntimeSessionStoreReadParams, "sessionKey">> = {},
-): string[] {
-  return listAccessorSessionEntryKeysReadOnly({
+): Promise<string[]> {
+  return await listAccessorSessionEntryKeysReadOnly({
     ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
     ...(params.env !== undefined ? { env: params.env } : {}),
     ...(params.storePath !== undefined ? { storePath: params.storePath } : {}),

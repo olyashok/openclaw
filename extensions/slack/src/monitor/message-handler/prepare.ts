@@ -13,6 +13,7 @@ import {
   resolveGroupThreadMentionFacts,
   resolveGroupThreadConfig,
   isGroupThreadRouteExclusive,
+  logInboundDrop,
   resolveEnvelopeFormatOptions,
   resolveUnmentionedGroupInboundPolicy,
   toInboundMediaFactsWithMetadata,

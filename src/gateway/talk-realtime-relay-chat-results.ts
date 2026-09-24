@@ -1,6 +1,6 @@
 import { observeChatTerminal } from "./chat-terminal-observer.js";
 import { formatError } from "./server-utils.js";
-import type { submitTalkRealtimeRelayToolResult } from "./talk-realtime-relay-operations.js";
+import type { submitTalkRealtimeRelayToolResult } from "./talk/relay/operations.js";
 import { relaySessions, type RelaySession } from "./talk/relay/state.js";
 
 /** The ACK registers this listener before dispatch starts; no browser echo is required. */

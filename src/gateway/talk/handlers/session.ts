@@ -358,7 +358,6 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           agentId,
           configuredInstructions: realtimeConfig.instructions,
           sessionKey: target.canonicalKey,
-          requireSessionKeyForProfile: true,
           warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
         });
         assertCommitAllowed();

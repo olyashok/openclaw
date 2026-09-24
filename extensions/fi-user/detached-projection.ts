@@ -119,7 +119,7 @@ export function createDetachedProjectionReconciler(
     >();
     let unavailable = 0;
     for (const agentId of new Set(configured.map((binding) => binding.agentId))) {
-      for (const sessionKey of listSessionKeys({ agentId })) {
+      for (const sessionKey of await listSessionKeys({ agentId })) {
         const channelId = PARENT.exec(sessionKey)?.[2]?.toUpperCase();
         if (!channelId) {
           continue;

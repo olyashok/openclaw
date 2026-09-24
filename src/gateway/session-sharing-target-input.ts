@@ -12,8 +12,8 @@ import {
 import type { SessionMutationTarget } from "./session-mutation-authorization-error.js";
 import { getSessionRowProjection } from "./session-row-projection-access.js";
 import { canonicalizeSessionKeyForAgent } from "./session-store-key.js";
-import { resolveUnifiedTalkSessionTarget } from "./talk/session-registry.js";
 import { resolveOwnedTalkRealtimeRelaySession } from "./talk/relay/state.js";
+import { resolveUnifiedTalkSessionTarget } from "./talk/session-registry.js";
 
 export type { SessionMutationTarget } from "./session-mutation-authorization-error.js";
 
@@ -184,8 +184,9 @@ export function resolveSessionMutationTargets(params: {
       // Resolve it before the sharing fence using the same owner as the handler.
       const relay = resolveOwnedTalkRealtimeRelaySession(relaySessionId, params.client?.connId);
       const requestedKey = readSessionSharingStringParam(params.requestParams, "sessionKey");
-      return relay?.sessionKey && (!requestedKey || requestedKey === relay.sessionKey)
-        ? [{ sessionKey: relay.sessionKey }]
+      const relaySessionKey = relay?.sessionTarget.canonicalKey;
+      return relaySessionKey && (!requestedKey || requestedKey === relaySessionKey)
+        ? [{ sessionKey: relaySessionKey }]
         : undefined;
     }
   }

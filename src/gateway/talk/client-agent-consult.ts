@@ -14,6 +14,7 @@ import { createPluginRuntime } from "../../plugins/runtime/index.js";
 import {
   GatewayDrainingError,
   runOutsideGatewayRootWorkAdmission,
+  runWithGatewayIndependentRootWorkAdmission,
   tryBeginGatewayRootWorkAdmission,
 } from "../../process/gateway-work-admission.js";
 import {
@@ -112,33 +113,41 @@ function createTalkClientAgentRuntime(params: {
       // Provider-owned work can outlive or replace its audio transport. Unlike
       // chat-backed Talk, it has no independent Chat terminal delivery; hiding
       // its final transcript would lose the answer when no spoken replacement arrives.
-      return await execution.runEmbeddedAgent({
-        ...runParams,
-        extraSystemPrompt: [runParams.extraSystemPrompt, params.getAdditionalSystemPrompt?.()]
-          .filter(Boolean)
-          .join("\n\n"),
-        preparedRunAdmission,
-        // Speech is mirrored separately. Keep generated input in current-turn custody,
-        // but never display it or replay it as a later user request.
-        userTurnTranscriptRecorder: createUserTurnTranscriptRecorder({
-          input: {
-            text: runParams.prompt,
-            display: false,
-            excludeFromContext: true,
-            idempotencyKey: buildRunUserTurnIdempotencyKey(runParams.runId),
-          },
-          target: {
-            agentId,
-            sessionId,
-            sessionKey,
-            storePath,
-            expectedSessionId: sessionId,
-            sessionEntry: undefined,
-            config: params.config,
-            cwd: runParams.workspaceDir,
-          },
-        }),
-      });
+      // Provider callbacks outlive the talk.client.create RPC that installed them.
+      // Their AsyncLocalStorage chain can therefore still point at the RPC's
+      // already-released root lease, which makes healthy subordinate work look as
+      // though the gateway is draining. Re-enter process admission for each
+      // delayed consult while retaining the normal restart/suspension fence.
+      return await runWithGatewayIndependentRootWorkAdmission(
+        async () =>
+          await execution.runEmbeddedAgent({
+            ...runParams,
+            extraSystemPrompt: [runParams.extraSystemPrompt, params.getAdditionalSystemPrompt?.()]
+              .filter(Boolean)
+              .join("\n\n"),
+            preparedRunAdmission,
+            // Speech is mirrored separately. Keep generated input in current-turn custody,
+            // but never display it or replay it as a later user request.
+            userTurnTranscriptRecorder: createUserTurnTranscriptRecorder({
+              input: {
+                text: runParams.prompt,
+                display: false,
+                excludeFromContext: true,
+                idempotencyKey: buildRunUserTurnIdempotencyKey(runParams.runId),
+              },
+              target: {
+                agentId,
+                sessionId,
+                sessionKey,
+                storePath,
+                expectedSessionId: sessionId,
+                sessionEntry: undefined,
+                config: params.config,
+                cwd: runParams.workspaceDir,
+              },
+            }),
+          }),
+      );
     } finally {
       runParams.abortSignal?.removeEventListener("abort", close);
       close();

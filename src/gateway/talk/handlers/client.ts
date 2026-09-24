@@ -51,7 +51,7 @@ import {
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
 } from "../relay/index.js";
-import { relaySessions, resolveOwnedTalkRealtimeRelaySession } from "../relay/state.js";
+import { resolveOwnedTalkRealtimeRelaySession } from "../relay/state.js";
 import { resolveOwnedActiveTalkRunTarget } from "../run-ownership.js";
 import { prepareTalkSessionTarget, requirePreparedTalkSessionTarget } from "../session-target.js";
 import { unregisterTalkVoiceSession } from "../voice-selection.js";

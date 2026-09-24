@@ -18,14 +18,14 @@ import {
 import { abortChatRunById } from "../chat-abort.js";
 import { handleTrustedInternalChatSend } from "../server-methods/chat-send-handler.js";
 import type { GatewayRequestHandlerOptions } from "../server-methods/shared-types.js";
-import { formatForLog } from "../ws-log.js";
-import { prepareTalkAgentConsultTranscript } from "./agent-consult-transcript.js";
-import { resolveTalkAgentConsultAuthority } from "./client-gateway-control.js";
-import { prepareTalkRealtimeRelayAgentRunRegistration } from "./relay/index.js";
 import {
   prepareTalkRelayConsultAdmission,
   type TalkRelayConsultAdmission,
 } from "../talk-relay-consult-admission.js";
+import { formatForLog } from "../ws-log.js";
+import { prepareTalkAgentConsultTranscript } from "./agent-consult-transcript.js";
+import { resolveTalkAgentConsultAuthority } from "./client-gateway-control.js";
+import { prepareTalkRealtimeRelayAgentRunRegistration } from "./relay/index.js";
 import type { PreparedTalkSessionTarget } from "./session-target.types.js";
 
 type TalkChatSendAckStatus = "started" | "in_flight" | "ok" | "timeout" | "error";
@@ -235,16 +235,12 @@ export async function startTalkRealtimeAgentConsult(
       : {};
     const inputOptions = {
       toolsAllow: authority.toolsAllow,
-      transcript: { display: false, excludeFromContext: true },
+      transcript: { display: false as const, excludeFromContext: true as const },
       prepareAssistantTranscriptMessage: prepareTalkAgentConsultTranscript,
       talkRelayAdmission,
       ...trustedTurnPolicy,
     };
-    const chatSendResult = handleTrustedInternalChatSend(
-      chatSendOptions,
-      undefined,
-      inputOptions,
-    );
+    const chatSendResult = handleTrustedInternalChatSend(chatSendOptions, undefined, inputOptions);
     void Promise.resolve(chatSendResult).then(
       () => {
         if (!acknowledged) {

@@ -3,9 +3,9 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getAgentRunContext } from "../../infra/agent-run-registry.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { projectChatDisplayMessage } from "../chat-display-projection.js";
+import { publishChatTerminal } from "../chat-terminal-observer.js";
 import { capLiveAssistantText } from "../live-chat-projector.js";
 import type { GatewayBroadcastOpts } from "../server-broadcast-types.js";
-import { publishChatTerminal } from "../chat-terminal-observer.js";
 import { tryResolveSessionCompatibilityOwnerAgentId } from "../session-request-agent.js";
 import type { GatewayRequestContext } from "./types.js";
 
@@ -143,7 +143,9 @@ function broadcastChatFrame(
     ...frame,
   };
   const group = params.context.chatRunState?.runs.get(params.runId)?.liveTextGroup?.signal;
-  publishChatTerminal(payload);
+  if (payload.state !== "delta") {
+    publishChatTerminal(payload);
+  }
   params.context.broadcast("chat", payload, {
     ...(liveText ? { liveText, dropIfSlow: true } : group ? { liveText: { group } } : {}),
     sessionKeys: resolveChatSessionKeys({

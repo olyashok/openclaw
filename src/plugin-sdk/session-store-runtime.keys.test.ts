@@ -22,6 +22,6 @@ describe("session-store key inventory", () => {
       storePath,
       entry: { sessionId: "session-1", updatedAt: 10 },
     });
-    expect(listSessionKeys({ storePath })).toEqual([sessionKey]);
+    await expect(listSessionKeys({ storePath })).resolves.toEqual([sessionKey]);
   });
 });

@@ -818,7 +818,13 @@ async function drainQueuedEntry(
           "needs_review: source final publication lacks a complete authenticated provider receipt; preserving ambiguous journal custody";
         opts.log.warn(`Delivery entry ${entry.id} ${error}`);
         opts.onFailed?.(entry, error);
-        await recordRecoveredFailure(failDelivery, entry, error, opts.stateDir);
+        try {
+          await owner.fail(failDelivery, error);
+        } catch (failErr) {
+          if (getErrnoCode(failErr) === "ENOENT") {
+            return "already-gone";
+          }
+        }
         return "failed";
       }
       let errMsg = `delivery state is ${entry.recoveryState}; refusing blind replay without adapter reconciliation`;

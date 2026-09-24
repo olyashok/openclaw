@@ -400,7 +400,7 @@ export type PluginRuntimeCore = {
       /** Lists durable keys without parsing per-session entry JSON. */
       listSessionKeys: (
         params?: Partial<Omit<RuntimeSessionStoreReadParams, "sessionKey">>,
-      ) => string[];
+      ) => Promise<string[]>;
       patchSessionEntry: (
         params: RuntimeSessionStoreEntryPatchParams,
       ) => Promise<RuntimeSessionEntry | null>;

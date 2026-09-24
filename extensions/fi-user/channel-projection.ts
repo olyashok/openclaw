@@ -386,7 +386,7 @@ export function registerSlackProjectionReconciler(
         }
       }
       for (const agentId of new Set(configuredBindings.map((binding) => binding.agentId))) {
-        for (const sessionKey of listSessionKeys({ agentId })) {
+        for (const sessionKey of await listSessionKeys({ agentId })) {
           const [, sourceAgentId, channelId] = CHANNEL_SESSION.exec(sessionKey) ?? [];
           if (sourceAgentId !== agentId || !channelId) {
             continue;

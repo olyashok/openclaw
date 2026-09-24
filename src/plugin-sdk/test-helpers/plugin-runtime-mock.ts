@@ -619,7 +619,9 @@ export function createPluginRuntimeMock(overrides: PluginRuntimeMockOverrides = 
         listSessionEntries: vi.fn<PluginRuntime["agent"]["session"]["listSessionEntries"]>(
           () => [],
         ),
-        listSessionKeys: vi.fn<PluginRuntime["agent"]["session"]["listSessionKeys"]>(() => []),
+        listSessionKeys: vi.fn<PluginRuntime["agent"]["session"]["listSessionKeys"]>(
+          async () => [],
+        ),
         patchSessionEntry: vi
           .fn<PluginRuntime["agent"]["session"]["patchSessionEntry"]>()
           .mockResolvedValue(null),

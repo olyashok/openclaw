@@ -138,7 +138,7 @@ export async function reconcileSlackDirectProjections(
       .map((binding) => binding.sessionKey),
   );
   for (const agentId of new Set(configured.map((binding) => binding.agentId))) {
-    for (const sessionKey of listSessionKeys({ agentId })) {
+    for (const sessionKey of await listSessionKeys({ agentId })) {
       if (DIRECT_SESSION.test(sessionKey)) {
         sessions.add(sessionKey);
       }

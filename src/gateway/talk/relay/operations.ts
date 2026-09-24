@@ -400,7 +400,13 @@ export function prepareTalkRealtimeRelayAgentRunRegistration(params: {
 }): (runId: string) => "registered" | "detached" {
   const session = getRelaySession(params.relaySessionId, params.connId);
   const sessionKey = session.sessionTarget.canonicalKey;
-  if (sessionKey !== params.sessionKey.trim()) {
+  const requestedSessionKey = params.sessionKey.trim();
+  // The relay is pre-bound to one prepared target; accept either its client key or its
+  // canonical storage key, and reject any other session.
+  if (
+    requestedSessionKey !== sessionKey &&
+    requestedSessionKey !== session.sessionTarget.sessionKey
+  ) {
     throw new Error("Realtime relay session belongs to another agent session");
   }
   const callId = params.callId?.trim();
