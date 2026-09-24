@@ -181,15 +181,15 @@ export function createDetachedProjectionReconciler(
     // workspace makes a thread a Claw conversation.
     const clawBots = new Map<string, Set<string>>();
     for (const binding of configured) {
-      const identity = api.runtime.channel.runtimeContexts.get<Reader>({
+      const bot = api.runtime.channel.runtimeContexts.get<Reader>({
         channelId: "slack",
         accountId: binding.match.accountId,
         capability: "thread-read-projection",
       });
-      if (identity?.botUserId) {
-        const bots = clawBots.get(identity.workspaceId) ?? new Set<string>();
-        bots.add(identity.botUserId);
-        clawBots.set(identity.workspaceId, bots);
+      if (bot?.botUserId) {
+        const bots = clawBots.get(bot.workspaceId) ?? new Set<string>();
+        bots.add(bot.botUserId);
+        clawBots.set(bot.workspaceId, bots);
       }
     }
     const scopes = new Map<string, { at: number; scope: Promise<Scope> }>();
