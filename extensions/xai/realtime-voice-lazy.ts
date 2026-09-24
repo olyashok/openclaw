@@ -48,13 +48,13 @@ export function createLazyLiteLlmRealtimeVoiceBridge(
 
 function createLazyRealtimeVoiceBridge(
   req: RealtimeVoiceBridgeCreateRequest,
-  options: {
+  bridgeOptions: {
     loadProvider: () => Promise<RealtimeVoiceProviderPlugin>;
     label: string;
     validate: (req: RealtimeVoiceBridgeCreateRequest) => void;
   },
 ): RealtimeVoiceBridge {
-  options.validate(req);
+  bridgeOptions.validate(req);
   type PendingVoiceOperation =
     | { type: "audio" }
     | { timestamp: number; type: "media-timestamp" }
@@ -80,9 +80,9 @@ function createLazyRealtimeVoiceBridge(
   const pendingAudio = createRealtimeVoiceAudioQueue("reject-newest");
   const pendingOperations: PendingVoiceOperation[] = [];
   const lifecycle = createLazyRealtimeVoiceBridgeLifecycle({
-    label: options.label,
+    label: bridgeOptions.label,
     request: req,
-    load: async (request) => (await options.loadProvider()).createBridge(request),
+    load: async (request) => (await bridgeOptions.loadProvider()).createBridge(request),
     clearPending: () => {
       acceptsInput = false;
       pendingAudio.clear();
@@ -129,7 +129,7 @@ function createLazyRealtimeVoiceBridge(
           const chunk = pendingAudio.dequeue();
           if (!chunk) {
             throw new Error(
-              `${options.label} realtime voice pending audio queue invariant violated`,
+              `${bridgeOptions.label} realtime voice pending audio queue invariant violated`,
             );
           }
           loadedBridge.sendAudio(chunk);
@@ -219,7 +219,7 @@ function createLazyRealtimeVoiceBridge(
       ) {
         req.onError?.(
           new Error(
-            `${options.label} realtime voice pending user message overflow during lazy startup`,
+            `${bridgeOptions.label} realtime voice pending user message overflow during lazy startup`,
           ),
         );
         return;
@@ -278,7 +278,7 @@ function createLazyRealtimeVoiceBridge(
         pendingToolResultBytes + resultBytes > MAX_LAZY_REALTIME_VOICE_TOOL_RESULT_BYTES
       ) {
         const error = new Error(
-          `${options.label} realtime voice pending tool result overflow during lazy startup`,
+          `${bridgeOptions.label} realtime voice pending tool result overflow during lazy startup`,
         );
         req.onError?.(error);
         throw error;

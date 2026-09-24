@@ -121,7 +121,7 @@ export function buildLiteLlmRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin
         // or reasoning extension fields.
         sessionResumption: false,
         reasoningEffort: undefined,
-        resolveApiKey: () => resolveLiteLlmRealtimeApiKey(config.apiKey),
+        resolveApiKey: async () => resolveLiteLlmRealtimeApiKey(config.apiKey),
       });
     },
   };

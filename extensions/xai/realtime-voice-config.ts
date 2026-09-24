@@ -210,7 +210,7 @@ export function normalizeXaiRealtimeProviderConfig(
       ? resolveSecretInputString({
           value: raw.apiKey,
           path: apiKeyPath,
-          mode: "configured_unavailable",
+          mode: "inspect",
         }).value
       : normalizeResolvedSecretInputString({ value: raw.apiKey, path: apiKeyPath });
   return {
