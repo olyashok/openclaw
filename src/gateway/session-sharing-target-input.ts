@@ -12,6 +12,7 @@ import {
 import type { SessionMutationTarget } from "./session-mutation-authorization-error.js";
 import { getSessionRowProjection } from "./session-row-projection-access.js";
 import { canonicalizeSessionKeyForAgent } from "./session-store-key.js";
+import { peekTalkBindingCapability } from "./talk-binding-capability.js";
 import { resolveOwnedTalkRealtimeRelaySession } from "./talk/relay/state.js";
 import { resolveUnifiedTalkSessionTarget } from "./talk/session-registry.js";
 
@@ -181,6 +182,14 @@ export function resolveTalkSessionTargetInput(
     method !== "talk.client.steer"
   ) {
     return undefined;
+  }
+  if (method === "talk.session.create") {
+    // A Matrix Talk binding carries the authorized session; the handler redeems it.
+    const binding = readSessionSharingStringParam(params, "binding");
+    if (binding) {
+      const bound = peekTalkBindingCapability(binding);
+      return bound ? { kind: "request", sessionKey: bound.sessionKey } : undefined;
+    }
   }
   const sessionKey = readSessionSharingStringParam(params, "sessionKey");
   if (sessionKey) {

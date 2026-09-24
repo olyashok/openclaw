@@ -185,12 +185,24 @@ describe("Matrix-bound Talk over a real isolated Gateway socket", () => {
         onEvent: (event) => relayEvents.push(event),
       });
       clients.push(server, browser);
-      const minted = await server.request<{ binding: string }>("talk.binding.resolve", {
-        roomId: ROOM_ID,
-        threadRootEventId: ROOT_ID,
-        agentMxid: BOT_MXID,
-        speakerMxid: SPEAKER_MXID,
-      });
+      // 2026.9.6 reports Matrix routes as temporarily unavailable until the channel's
+      // binding adapter registers after startup; retry that transient state only.
+      let minted: { binding: string } | undefined;
+      for (let attempt = 0; !minted; attempt += 1) {
+        try {
+          minted = await server.request<{ binding: string }>("talk.binding.resolve", {
+            roomId: ROOM_ID,
+            threadRootEventId: ROOT_ID,
+            agentMxid: BOT_MXID,
+            speakerMxid: SPEAKER_MXID,
+          });
+        } catch (error) {
+          if (attempt >= 100 || !String(error).includes("temporarily unavailable")) {
+            throw error;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
       let created: { sessionId: string };
       try {
         created = await browser.request<{ sessionId: string }>("talk.session.create", {

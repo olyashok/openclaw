@@ -38,4 +38,10 @@ export function consumeTalkBindingCapability(token: string): TalkBindingCapabili
   return record.expiresAt > Date.now() ? record : undefined;
 }
 
+/** Reads a live capability without redeeming it (authorization pre-flight only). */
+export function peekTalkBindingCapability(token: string): TalkBindingCapability | undefined {
+  const record = records.get(token);
+  return record && record.expiresAt > Date.now() ? record : undefined;
+}
+
 export const talkBindingCapabilityTesting = { clear: () => records.clear() };
