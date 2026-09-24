@@ -118,8 +118,19 @@ export function createTalkRealtimeRelaySession(
   const outputOwnership = new TalkRealtimeRelayOutputOwnership(
     () => harness.talk.activeTurnId,
     () => harness.ensureTurn(),
-    (message) => {
+    (message, diagnostics) => {
       const relay = getActiveRelay();
+      if (diagnostics) {
+        const providerModel =
+          typeof params.providerConfig.model === "string"
+            ? params.providerConfig.model
+            : params.model;
+        params.context.logGateway.warn(
+          `talk relay provider event ownership failure: provider=${params.provider.id}${
+            providerModel ? ` model=${providerModel}` : ""
+          } diagnostics=${JSON.stringify(diagnostics)}`,
+        );
+      }
       relay?.failSession(message);
       if (!relay) {
         constructionTerminal.current ??= { kind: "error", error: new Error(message) };
@@ -220,7 +231,7 @@ export function createTalkRealtimeRelaySession(
         if (outputOwnership.phase === "cancelling") {
           return;
         }
-        const outputTurnId = outputOwnership.resolve(true);
+        const outputTurnId = outputOwnership.resolve(true, "audio");
         if (!outputTurnId) {
           return;
         }
@@ -250,7 +261,7 @@ export function createTalkRealtimeRelaySession(
         if (!relay) {
           return;
         }
-        const outputTurnId = outputOwnership.resolve(false);
+        const outputTurnId = outputOwnership.resolve(false, "clear");
         if (!outputTurnId) {
           return;
         }
@@ -269,7 +280,7 @@ export function createTalkRealtimeRelaySession(
         if (!relay) {
           return;
         }
-        const outputTurnId = outputOwnership.resolve(false);
+        const outputTurnId = outputOwnership.resolve(false, "mark");
         if (!outputTurnId) {
           if (outputOwnership.phase !== "owned") {
             bridgeRef.current?.acknowledgeMark(markName);
@@ -409,7 +420,8 @@ export function createTalkRealtimeRelaySession(
       if (final && !enqueueRelayVoiceTranscript(relay, role, text)) {
         return;
       }
-      const outputTurnId = role === "assistant" ? outputOwnership.resolve(true) : undefined;
+      const outputTurnId =
+        role === "assistant" ? outputOwnership.resolve(true, "assistant-transcript") : undefined;
       if (role === "assistant" && !outputTurnId) {
         return;
       }

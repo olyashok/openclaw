@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "../config/types.js";
 import type { RealtimeVoiceProviderPlugin } from "../plugins/types.js";
 import type { BoundedSerialQueue } from "../shared/bounded-serial-queue.js";
@@ -26,6 +26,29 @@ export const MAX_RELAY_SESSIONS_PER_CONN = 2;
 export const MAX_RELAY_SESSIONS_GLOBAL = 64;
 const RELAY_EVENT = "talk.event";
 export const RELAY_TRANSCRIPT_ECHO_LOOKBACK_MS = 12_000;
+const RELAY_DIAGNOSTIC_PROVIDER_EVENTS = new Set([
+  "input_audio_buffer.speech_started",
+  "input_audio_buffer.speech_stopped",
+  "response.cancel",
+  "response.cancelled",
+  "response.created",
+  "response.create",
+  "response.done",
+]);
+const RELAY_DIAGNOSTIC_RESPONSE_STATUSES = new Set([
+  "completed",
+  "cancelled",
+  "failed",
+  "incomplete",
+]);
+
+type RelayOutputOwnershipFailureSite =
+  | "response-created"
+  | "audio"
+  | "clear"
+  | "mark"
+  | "assistant-transcript"
+  | "tool-call";
 
 export const noFallbackRelayOutputFlush = () => {};
 
@@ -102,12 +125,88 @@ export class TalkRealtimeRelayOutputOwnership {
   // synchronous tool callback, but fence it as soon as a replacement response
   // is created.
   private terminalToolTurnId?: string;
+  private readonly diagnosticSalt = randomUUID();
+  private readonly diagnosticStartedAtMs = Date.now();
+  private readonly recentProviderEvents: Array<Record<string, unknown>> = [];
+  private lastProviderEvent?: Record<string, unknown>;
 
   constructor(
     private readonly activeTurnId: () => string | undefined,
     private readonly ensureTurn: () => string,
-    private readonly fail: (message: string) => void,
+    private readonly fail: (message: string, diagnostics?: Record<string, unknown>) => void,
   ) {}
+
+  private hashDiagnosticId(value: string | undefined): string | undefined {
+    const normalized = value?.trim();
+    if (!normalized) {
+      return undefined;
+    }
+    return createHash("sha256")
+      .update(`${this.diagnosticSalt}:${normalized}`)
+      .digest("hex")
+      .slice(0, 10);
+  }
+
+  private recordProviderEvent(event: {
+    direction: string;
+    type: string;
+    responseId?: string;
+    itemId?: string;
+    status?: string;
+    callback?: "onResponseDone";
+  }): void {
+    const response = this.hashDiagnosticId(event.responseId);
+    const item = this.hashDiagnosticId(event.itemId);
+    const ownerResponse = this.hashDiagnosticId(this.responseId);
+    const ownerTurn = this.hashDiagnosticId(this.turnId);
+    const activeTurn = this.hashDiagnosticId(this.activeTurnId());
+    const eventType = /^[a-z][a-z0-9_.-]{0,63}$/.test(event.type) ? event.type : "unknown";
+    const status =
+      event.status && RELAY_DIAGNOSTIC_RESPONSE_STATUSES.has(event.status)
+        ? event.status
+        : undefined;
+    const summary = {
+      offsetMs: Math.max(0, Date.now() - this.diagnosticStartedAtMs),
+      direction:
+        event.direction === "server" || event.direction === "client" ? event.direction : "unknown",
+      type: eventType,
+      ...(event.callback ? { callback: event.callback } : {}),
+      ...(status ? { status } : {}),
+      ...(response ? { response } : {}),
+      ...(item ? { item } : {}),
+      ownerPhase: this.phase,
+      ownerMode: this.mode,
+      ...(ownerResponse ? { ownerResponse } : {}),
+      ...(ownerTurn ? { ownerTurn } : {}),
+      ...(activeTurn ? { activeTurn } : {}),
+    };
+    this.lastProviderEvent = summary;
+    if (!RELAY_DIAGNOSTIC_PROVIDER_EVENTS.has(event.type) && !event.callback) {
+      return;
+    }
+    this.recentProviderEvents.push(summary);
+    if (this.recentProviderEvents.length > 24) {
+      this.recentProviderEvents.shift();
+    }
+  }
+
+  private diagnosticSnapshot(
+    failureSite: RelayOutputOwnershipFailureSite,
+  ): Record<string, unknown> {
+    const ownerResponse = this.hashDiagnosticId(this.responseId);
+    const ownerTurn = this.hashDiagnosticId(this.turnId);
+    const activeTurn = this.hashDiagnosticId(this.activeTurnId());
+    return {
+      failureSite,
+      ownerPhase: this.phase,
+      ownerMode: this.mode,
+      ...(ownerResponse ? { ownerResponse } : {}),
+      ...(ownerTurn ? { ownerTurn } : {}),
+      ...(activeTurn ? { activeTurn } : {}),
+      ...(this.lastProviderEvent ? { lastProviderEvent: this.lastProviderEvent } : {}),
+      recentProviderEvents: [...this.recentProviderEvents],
+    };
+  }
 
   responseCreated(responseId: string | undefined): boolean {
     const normalizedResponseId = responseId?.trim();
@@ -129,11 +228,14 @@ export class TalkRealtimeRelayOutputOwnership {
     ) {
       return true;
     }
-    this.fail("Realtime provider output has no live response owner.");
+    this.fail(
+      "Realtime provider output has no live response owner.",
+      this.diagnosticSnapshot("response-created"),
+    );
     return false;
   }
 
-  resolve(claim: boolean): string | undefined {
+  resolve(claim: boolean, failureSite: RelayOutputOwnershipFailureSite): string | undefined {
     const activeTurnId = this.activeTurnId();
     if (
       this.phase !== "cancelling" &&
@@ -147,7 +249,10 @@ export class TalkRealtimeRelayOutputOwnership {
     const turnId =
       this.phase === "owned" && this.turnId === activeTurnId ? activeTurnId : undefined;
     if (!turnId && (claim || this.phase === "owned")) {
-      this.fail("Realtime provider output has no live response owner.");
+      this.fail(
+        "Realtime provider output has no live response owner.",
+        this.diagnosticSnapshot(failureSite),
+      );
     }
     return turnId;
   }
@@ -158,15 +263,18 @@ export class TalkRealtimeRelayOutputOwnership {
       return undefined;
     }
     if (this.phase === "owned") {
-      return this.resolve(true);
+      return this.resolve(true, "tool-call");
     }
     if (activeTurnId && this.mode === "turn-bound") {
-      return this.resolve(true);
+      return this.resolve(true, "tool-call");
     }
     if (this.terminalToolTurnId && (!activeTurnId || activeTurnId === this.terminalToolTurnId)) {
       return this.terminalToolTurnId;
     }
-    this.fail("Realtime provider output has no live response owner.");
+    this.fail(
+      "Realtime provider output has no live response owner.",
+      this.diagnosticSnapshot("tool-call"),
+    );
     return undefined;
   }
 
@@ -196,6 +304,9 @@ export class TalkRealtimeRelayOutputOwnership {
         provider.createBridge({
           ...request,
           onEvent: (event) => {
+            if (event.direction === "server" || RELAY_DIAGNOSTIC_PROVIDER_EVENTS.has(event.type)) {
+              this.recordProviderEvent(event);
+            }
             if (
               event.direction === "server" &&
               event.type === "response.created" &&
@@ -204,6 +315,16 @@ export class TalkRealtimeRelayOutputOwnership {
               return;
             }
             request.onEvent?.(event);
+          },
+          onResponseDone: (outcome) => {
+            this.recordProviderEvent({
+              direction: "server",
+              type: "response.done",
+              responseId: outcome.responseId,
+              status: outcome.status,
+              callback: "onResponseDone",
+            });
+            request.onResponseDone?.(outcome);
           },
           runAgentConsult,
         }),
