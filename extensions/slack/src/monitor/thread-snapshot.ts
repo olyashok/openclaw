@@ -54,15 +54,21 @@ export async function readSlackProjectionChannel(
     user?: string;
     bot_id?: string;
     text?: string;
+    reply_count?: number;
     reply_users?: string[];
-  }) =>
-    Boolean(
-      (readerBotId && message.bot_id === readerBotId) ||
-      (readerUserId &&
-        (message.user === readerUserId ||
-          message.reply_users?.includes(readerUserId) ||
-          (message.text ?? "").includes(`<@${readerUserId}>`))),
+  }) => {
+    const authored =
+      Boolean(readerBotId && message.bot_id === readerBotId) ||
+      Boolean(readerUserId && message.user === readerUserId);
+    return (
+      (authored && (message.reply_count ?? 0) > 0) ||
+      Boolean(
+        readerUserId &&
+        (message.reply_users?.includes(readerUserId) ||
+          (message.text ?? "").includes(`<@${readerUserId}>`)),
+      )
     );
+  };
   return {
     ...source,
     readHistoryPage: async (historyCursor?: string) => {
@@ -76,9 +82,10 @@ export async function readSlackProjectionChannel(
       if ((page.has_more && !nextCursor) || (nextCursor && nextCursor === historyCursor)) {
         throw new Error("Incomplete Slack channel history pagination");
       }
-      // Only threads this bot is part of are projected: it wrote the root, was
-      // mentioned in it, or replied in it. Human-only threads, and other apps'
-      // posts, stay in Slack.
+      // Only conversations this bot is part of are projected: it was mentioned
+      // in the root, replied in the thread, or wrote a root someone answered.
+      // A bot post nobody replied to (a notification) is not a conversation;
+      // human-only threads and other apps' posts stay in Slack.
       return {
         roots: page.messages.flatMap((message) =>
           message.ts && involvesReader(message) ? [message.ts] : [],
