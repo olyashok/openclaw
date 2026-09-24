@@ -109,6 +109,29 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
     },
     { scope: "operator.admin" },
   );
+  api.registerGatewayMethod(
+    "matrix.sessionProjection.registryBackfill",
+    async ({ params, respond }) => {
+      // Writes the room's current mapping to the source registry only; never Matrix.
+      try {
+        const { backfillMatrixProjectionRegistry } =
+          await import("./src/matrix/session-projection-snapshot.js");
+        respond(
+          true,
+          await backfillMatrixProjectionRegistry({
+            cfg: (api.runtime.config?.current?.() ?? api.config) as CoreConfig,
+            roomId: params?.roomId,
+            accountId: params?.accountId,
+            archived: params?.archived,
+          }),
+        );
+      } catch (error) {
+        const failure = projectionFailure(error);
+        respond(false, failure.payload, failure.error);
+      }
+    },
+    { scope: "operator.admin" },
+  );
   // Minimal plugin hosts (lifecycle tests, tooling) may omit channel runtime contexts.
   api.runtime.channel?.runtimeContexts?.register({
     channelId: "matrix",
@@ -123,9 +146,12 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
       plan: async (roomId: string) => {
         const { planMatrixProjectionRoom } =
           await import("./src/matrix/session-projection-snapshot.js");
+        // The same read keeps the source registry current: it PUTs only when
+        // the room's mapping changed or its last PUT failed (never on error).
         const result = await planMatrixProjectionRoom({
           cfg: (api.runtime.config?.current?.() ?? api.config) as CoreConfig,
           roomId,
+          syncRegistry: true,
         });
         return {
           converged: result.converged,

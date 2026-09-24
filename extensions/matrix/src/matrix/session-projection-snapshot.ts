@@ -10,12 +10,13 @@ import {
   MATRIX_PROJECTION_CONTENT_KEY,
 } from "./projection-publication.js";
 import { noteMatrixSourceSnapshotResult } from "./projection-source-result.js";
-import { getMatrixProjectionStatus } from "./projection-source.js";
+import { getMatrixProjectionStatus, parseProjectionExternalSource } from "./projection-source.js";
 import type { MatrixClient, MatrixRawEvent } from "./sdk.js";
 import { editMessageMatrix, sendMessageMatrix } from "./send.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
 import { checkProjectionInvariants } from "./session-projection-invariants.js";
 import {
+  DEFAULT_SOURCE_PROVIDER,
   object,
   planProjectionReconcile,
   projectionMapping,
@@ -27,6 +28,18 @@ import {
   type SourceProjectionMessage,
   type SourceProjectionSnapshot,
 } from "./session-projection-plan.js";
+import { sourceProjectionAdapter } from "./source-projection-adapter.js";
+import {
+  redactionSlot,
+  registryBackfillActions,
+  registryMessages,
+  registryRoomIdentity,
+  sourceRegistryConfig,
+  syncSourceRegistry,
+  type RegistryAction,
+  type RegistrySyncResult,
+} from "./source-registry.js";
+import { setMatrixBindingRegistryGeneration } from "./thread-bindings-shared.js";
 export type {
   SourceProjectionMessage,
   SourceProjectionSnapshot,
@@ -161,7 +174,14 @@ async function readSelfEdits(
   return edits;
 }
 
-export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionSnapshot {
+export function parseSourceProjectionSnapshot(
+  value: unknown,
+  provider = DEFAULT_SOURCE_PROVIDER,
+): SourceProjectionSnapshot {
+  const adapter = sourceProjectionAdapter(provider);
+  if (!adapter) {
+    throw new Error(`No source projection adapter for provider ${provider}`);
+  }
   const rawSnapshot = object(value);
   if (
     rawSnapshot?.complete !== true ||
@@ -178,8 +198,7 @@ export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionS
     if (
       !message ||
       typeof message.messageId !== "string" ||
-      message.messageId.length > 64 ||
-      !/^\d+\.\d+$/.test(message.messageId) ||
+      !adapter.validMessageId(message.messageId) ||
       sourceIds.has(message.messageId) ||
       typeof message.content !== "string" ||
       message.content.length > 100_000 ||
@@ -189,7 +208,9 @@ export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionS
       (message.displayName !== undefined &&
         (typeof message.displayName !== "string" ||
           message.displayName.length > 200 ||
-          hasAsciiControl(message.displayName)))
+          hasAsciiControl(message.displayName))) ||
+      (message.sourceTs !== undefined &&
+        (!Number.isSafeInteger(message.sourceTs) || Number(message.sourceTs) < 0))
     ) {
       throw new Error("Invalid source snapshot message");
     }
@@ -205,6 +226,7 @@ export function parseSourceProjectionSnapshot(value: unknown): SourceProjectionS
       role: message.role,
       agentId: message.agentId,
       ...(typeof message.displayName === "string" ? { displayName: message.displayName } : {}),
+      ...(typeof message.sourceTs === "number" ? { sourceTs: message.sourceTs } : {}),
     });
   }
   return { complete: true, messages };
@@ -231,6 +253,7 @@ async function recordProjectionHistory(
   roomId: string,
   threadId: string,
   checkDeadline: () => void,
+  provider = DEFAULT_SOURCE_PROVIDER,
 ): Promise<ProjectionHistory> {
   const events = await readProjectionHistory(client, roomId, threadId, checkDeadline);
   const self = await client.getUserId();
@@ -240,7 +263,7 @@ async function recordProjectionHistory(
     projectionThreadOriginals(events, self, threadId).map((event) => event.event_id),
     checkDeadline,
   );
-  return { self, threadId, events, edits };
+  return { self, provider, threadId, events, edits };
 }
 
 function resolveProjectionBinding(accountId: string, roomId: string, threadId: string) {
@@ -262,13 +285,30 @@ function bindingPublishes(binding: ReturnType<typeof resolveProjectionBinding>):
   );
 }
 
-const REDACTION_REASONS = {
-  duplicate: "Reconciled duplicate source message",
-  deleted_in_source: "Deleted in Slack",
-  rebased_history: "Rebased shared projection history",
-} as const;
+/** The room's source provider, from its binding; Slack for bindings that predate it. */
+function bindingProvider(binding: ReturnType<typeof resolveProjectionBinding>): string {
+  return (
+    parseProjectionExternalSource(binding?.metadata?.externalSource)?.provider ??
+    DEFAULT_SOURCE_PROVIDER
+  );
+}
 
-/** Performs a plan's Matrix writes in order; the only writer in reconciliation. */
+function redactionReason(
+  reason: Extract<ProjectionAction, { kind: "redact" }>["reason"],
+  label: string,
+) {
+  return {
+    duplicate: "Reconciled duplicate source message",
+    deleted_in_source: `Deleted in ${label}`,
+    rebased_history: "Rebased shared projection history",
+  }[reason];
+}
+
+/**
+ * Performs a plan's Matrix writes in order; the only writer in reconciliation.
+ * Pushes each accepted write onto `applied` as a source-registry action (also
+ * when a later write throws), keyed per the shared idempotency derivation.
+ */
 export async function applyProjectionPlan(params: {
   cfg: CoreConfig;
   accountId: string;
@@ -278,18 +318,55 @@ export async function applyProjectionPlan(params: {
   snapshot: SourceProjectionSnapshot;
   actions: ProjectionAction[];
   checkDeadline: () => void;
+  /** Source provider of the room; default "slack". */
+  provider?: string;
+  /** The history the plan was made from; keys redactions by the copy's slot. */
+  history?: ProjectionHistory;
+  applied?: RegistryAction[];
 }) {
+  const provider = params.provider ?? DEFAULT_SOURCE_PROVIDER;
+  const adapter = sourceProjectionAdapter(provider);
+  if (!adapter) {
+    throw new Error(`No source projection adapter for provider ${provider}`);
+  }
+  const applied = params.applied ?? [];
   const messages = new Map<string, SourceProjectionMessage>(
     params.snapshot.messages.map((message) => [message.messageId, message]),
+  );
+  // Redactions are keyed by the copy's slot as read before this pass wrote anything.
+  const history = params.history;
+  const slots = new Map(
+    params.actions.flatMap((action) =>
+      action.kind === "redact" && history
+        ? [[action.eventId, redactionSlot(history, action.targetEventId)] as const]
+        : [],
+    ),
   );
   for (const action of params.actions) {
     params.checkDeadline();
     if (action.kind === "redact" || action.kind === "retire_notice") {
+      const slot = slots.get(action.eventId) ?? {
+        revision: undefined,
+        partIndex: undefined,
+      };
       await params.client.redactEvent(
         params.roomId,
         action.eventId,
-        action.kind === "redact" ? REDACTION_REASONS[action.reason] : "Retired binding notice",
+        action.kind === "redact"
+          ? redactionReason(action.reason, adapter.label)
+          : "Retired binding notice",
       );
+      if (action.kind === "retire_notice") {
+        applied.push({ kind: "retire_notice", eventId: action.eventId });
+      } else {
+        applied.push({
+          kind: "redact",
+          eventId: action.eventId,
+          ...(action.messageId ? { messageId: action.messageId } : {}),
+          ...(slot.revision !== undefined ? { revision: slot.revision } : {}),
+          ...(slot.partIndex !== undefined ? { partIndex: slot.partIndex } : {}),
+        });
+      }
       continue;
     }
     const message = messages.get(action.messageId);
@@ -302,11 +379,11 @@ export async function applyProjectionPlan(params: {
           bindingId: binding.bindingId,
           roomId: params.roomId,
           threadId: params.threadId,
-          provider: "slack",
+          provider,
           accountId: params.accountId,
           messageId: message.messageId,
           actorId: message.senderId,
-          publishedAtMs: Math.floor(Number(message.messageId) * 1000),
+          publishedAtMs: message.sourceTs ?? adapter.publishedAtMs(message.messageId) ?? Date.now(),
           role: message.role,
           displayName: message.displayName,
           publicationRevision: action.revision,
@@ -323,11 +400,12 @@ export async function applyProjectionPlan(params: {
       }
       continue;
     }
+    const contentHash = sourceMessageContentHash(message);
     const extraContent = {
-      [SOURCE_CONTENT_REVISION_KEY]: { contentHash: sourceMessageContentHash(message) },
+      [SOURCE_CONTENT_REVISION_KEY]: { contentHash },
     };
     const body = projectionText({
-      channel: "slack",
+      channel: provider,
       role: message.role,
       text: message.content || "[Message has no text]",
       senderId: message.senderId,
@@ -344,7 +422,7 @@ export async function applyProjectionPlan(params: {
           "Projection binding changed during reconciliation",
         );
       }
-      await editMessageMatrix(params.roomId, action.eventId, body, {
+      const editEventId = await editMessageMatrix(params.roomId, action.eventId, body, {
         cfg: params.cfg,
         accountId: params.accountId,
         client: params.client,
@@ -353,20 +431,43 @@ export async function applyProjectionPlan(params: {
         publication,
       });
       acceptedMessageId = action.eventId;
+      applied.push({
+        kind: "edit",
+        messageId: message.messageId,
+        revision: action.revision,
+        partIndex: 0,
+        eventId: editEventId,
+        replacesEventId: action.eventId,
+        contentHash,
+      });
     } else {
-      acceptedMessageId = (
-        await sendMessageMatrix(`room:${params.roomId}`, body, {
-          cfg: params.cfg,
-          accountId: params.accountId,
-          client: params.client,
-          threadId: params.threadId,
-          extraContent,
-          publication,
-          deliveryQueueId: `matrix-slack-source:${params.roomId}:${params.threadId}:${message.messageId}:${action.revision}`,
-          deliveryPartIndex: 0,
-          deliveryPartCount: 1,
-        })
-      ).messageId;
+      const sent = await sendMessageMatrix(`room:${params.roomId}`, body, {
+        cfg: params.cfg,
+        accountId: params.accountId,
+        client: params.client,
+        threadId: params.threadId,
+        extraContent,
+        publication,
+        // The provider segment keeps Slack's existing queue ids unchanged, so
+        // in-flight deliveries stay idempotent across the upgrade.
+        deliveryQueueId: `matrix-${provider}-source:${params.roomId}:${params.threadId}:${message.messageId}:${action.revision}`,
+        deliveryPartIndex: 0,
+        deliveryPartCount: 1,
+      });
+      acceptedMessageId = sent.messageId;
+      const partIds = sent.receipt?.platformMessageIds?.length
+        ? sent.receipt.platformMessageIds
+        : [sent.messageId];
+      partIds.forEach((eventId, partIndex) =>
+        applied.push({
+          kind: "publish",
+          messageId: message.messageId,
+          revision: action.revision,
+          partIndex,
+          eventId,
+          contentHash,
+        }),
+      );
     }
     if (binding && publication) {
       await noteMatrixSourceSnapshotResult(
@@ -376,6 +477,47 @@ export async function applyProjectionPlan(params: {
         acceptedMessageId,
       );
     }
+  }
+  return applied;
+}
+
+/**
+ * Writes the room's mapping to the source registry. Fail-open by contract:
+ * nothing here may change a reconcile's outcome, so every error is swallowed
+ * (the registry module logs `registry_unavailable` and marks the room dirty).
+ */
+async function recordRoomInRegistry(params: {
+  accountId: string;
+  roomId: string;
+  threadId: string;
+  history: ProjectionHistory;
+  applied?: RegistryAction[];
+  actor?: "gateway" | "backfill";
+  archived?: boolean;
+}): Promise<RegistrySyncResult | { status: "no_source" }> {
+  try {
+    const binding = resolveProjectionBinding(params.accountId, params.roomId, params.threadId);
+    const identity =
+      binding &&
+      registryRoomIdentity(
+        binding.metadata,
+        params.accountId,
+        params.threadId,
+        params.history.self,
+      );
+    if (!binding || !identity) {
+      return { status: "no_source" };
+    }
+    const stored = binding.metadata?.registryGeneration;
+    return await syncSourceRegistry({
+      ...params,
+      identity,
+      storedGeneration: typeof stored === "number" ? stored : undefined,
+      persistGeneration: (generation) =>
+        setMatrixBindingRegistryGeneration(binding.bindingId, generation),
+    });
+  } catch {
+    return { status: "disabled" };
   }
 }
 
@@ -388,7 +530,10 @@ export async function reconcileMatrixProjectionSnapshot(params: {
   retireThreadId?: string;
 }) {
   const checkDeadline = reconcileDeadline();
-  const snapshot = parseSourceProjectionSnapshot(params.snapshot);
+  const provider = bindingProvider(
+    resolveProjectionBinding(params.accountId, params.roomId, params.threadId),
+  );
+  const snapshot = parseSourceProjectionSnapshot(params.snapshot, provider);
   await withResolvedMatrixSendClient(
     { cfg: params.cfg, accountId: params.accountId, timeoutMs: 10_000 },
     async (client) => {
@@ -397,6 +542,7 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         params.roomId,
         params.threadId,
         checkDeadline,
+        provider,
       );
       const actions = planProjectionReconcile(history, snapshot, {
         publishable: bindingPublishes(
@@ -404,15 +550,60 @@ export async function reconcileMatrixProjectionSnapshot(params: {
         ),
         retireThreadId: params.retireThreadId,
       });
-      await applyProjectionPlan({
-        cfg: params.cfg,
+      const applied: RegistryAction[] = [];
+      const registry = sourceRegistryConfig();
+      try {
+        await applyProjectionPlan({
+          cfg: params.cfg,
+          accountId: params.accountId,
+          roomId: params.roomId,
+          threadId: params.threadId,
+          client,
+          snapshot,
+          actions,
+          checkDeadline,
+          provider,
+          history,
+          applied,
+        });
+      } catch (error) {
+        // Keep what was applied for the room's next registry PUT.
+        if (registry && applied.length > 0) {
+          await recordRoomInRegistry({
+            accountId: params.accountId,
+            roomId: params.roomId,
+            threadId: params.threadId,
+            history,
+            applied,
+          }).catch(() => undefined);
+        }
+        throw error;
+      }
+      if (!registry) {
+        return;
+      }
+      // The registry stores the mapping after this pass: re-read only when
+      // the pass wrote something, so a converged pass costs no extra reads.
+      let current = history;
+      if (applied.length > 0) {
+        try {
+          current = await recordProjectionHistory(
+            client,
+            params.roomId,
+            params.threadId,
+            () => undefined,
+            provider,
+          );
+        } catch {
+          current = history;
+        }
+      }
+      await recordRoomInRegistry({
         accountId: params.accountId,
         roomId: params.roomId,
         threadId: params.threadId,
-        client,
-        snapshot,
-        actions,
-        checkDeadline,
+        history: current,
+        applied,
       });
     },
   );
@@ -420,14 +611,18 @@ export async function reconcileMatrixProjectionSnapshot(params: {
 
 /**
  * Read-only dry run for `matrix.sessionProjection.plan`: what a reconcile
- * pass would write, invariant verdicts and the current source mapping. With
- * no `sourceSnapshot` the plan is structural (see `planProjectionReconcile`).
+ * pass would write, invariant verdicts and the current source mapping, plus
+ * the source-registry view of that mapping. With no `sourceSnapshot` the plan
+ * is structural (see `planProjectionReconcile`). `syncRegistry` (the periodic
+ * repair lane only) also PUTs the mapping when it changed or the room is dirty;
+ * the plan RPC never writes.
  */
 export async function planMatrixProjectionRoom(params: {
   cfg: CoreConfig;
   roomId?: unknown;
   accountId?: unknown;
   sourceSnapshot?: unknown;
+  syncRegistry?: boolean;
 }) {
   const roomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
   if (!roomId.startsWith("!") || roomId.length > 255) {
@@ -436,14 +631,19 @@ export async function planMatrixProjectionRoom(params: {
   if (params.accountId !== undefined && typeof params.accountId !== "string") {
     throw new ProjectionError("invalid_request", "accountId must be a string");
   }
-  let snapshot: SourceProjectionSnapshot | undefined;
   let status: ReturnType<typeof getMatrixProjectionStatus>;
+  let snapshot: SourceProjectionSnapshot | undefined;
   try {
+    status = getMatrixProjectionStatus(roomId, params.accountId?.trim() || undefined);
     snapshot =
       params.sourceSnapshot === undefined
         ? undefined
-        : parseSourceProjectionSnapshot(params.sourceSnapshot);
-    status = getMatrixProjectionStatus(roomId, params.accountId?.trim() || undefined);
+        : parseSourceProjectionSnapshot(
+            params.sourceSnapshot,
+            status.status === "existing"
+              ? parseProjectionExternalSource(status.externalSource)?.provider
+              : undefined,
+          );
   } catch (error) {
     throw new ProjectionError("invalid_request", formatErrorMessage(error));
   }
@@ -451,6 +651,8 @@ export async function planMatrixProjectionRoom(params: {
     throw new ProjectionError("session_missing", "No session projection is bound to this room");
   }
   const { accountId, threadRootEventId } = status;
+  const provider =
+    parseProjectionExternalSource(status.externalSource)?.provider ?? DEFAULT_SOURCE_PROVIDER;
   const checkDeadline = reconcileDeadline();
   return withResolvedMatrixSendClient(
     { cfg: params.cfg, accountId, timeoutMs: 10_000 },
@@ -460,12 +662,24 @@ export async function planMatrixProjectionRoom(params: {
         roomId,
         threadRootEventId,
         checkDeadline,
+        provider,
       );
+      const binding = resolveProjectionBinding(accountId, roomId, threadRootEventId);
       const actions = planProjectionReconcile(history, snapshot, {
-        publishable: bindingPublishes(
-          resolveProjectionBinding(accountId, roomId, threadRootEventId),
-        ),
+        publishable: bindingPublishes(binding),
       });
+      const mapping = projectionMapping(history);
+      const identity =
+        binding &&
+        registryRoomIdentity(binding.metadata, accountId, threadRootEventId, history.self);
+      if (params.syncRegistry) {
+        await recordRoomInRegistry({
+          accountId,
+          roomId,
+          threadId: threadRootEventId,
+          history,
+        });
+      }
       return {
         roomId,
         accountId,
@@ -474,7 +688,77 @@ export async function planMatrixProjectionRoom(params: {
         converged: actions.every((action) => action.kind === "unchanged"),
         actions,
         invariants: checkProjectionInvariants(history),
-        mapping: projectionMapping(history),
+        mapping,
+        registry: identity ? { ...identity, messages: registryMessages(mapping) } : null,
+      };
+    },
+  );
+}
+
+/**
+ * `matrix.sessionProjection.registryBackfill`: PUTs the room's current mapping
+ * with actor `backfill` and one `backfill` row per retained part. Writes only
+ * to the source registry, never to Matrix. Requires MATRIX_SOURCE_REGISTRY=write.
+ */
+export async function backfillMatrixProjectionRegistry(params: {
+  cfg: CoreConfig;
+  roomId?: unknown;
+  accountId?: unknown;
+  archived?: unknown;
+}) {
+  const roomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+  if (!roomId.startsWith("!") || roomId.length > 255) {
+    throw new ProjectionError("invalid_request", "A Matrix room id is required");
+  }
+  if (params.accountId !== undefined && typeof params.accountId !== "string") {
+    throw new ProjectionError("invalid_request", "accountId must be a string");
+  }
+  if (params.archived !== undefined && typeof params.archived !== "boolean") {
+    throw new ProjectionError("invalid_request", "archived must be a boolean");
+  }
+  if (!sourceRegistryConfig()) {
+    throw new ProjectionError("registry_unavailable", "The source registry writer is not enabled");
+  }
+  let status: ReturnType<typeof getMatrixProjectionStatus>;
+  try {
+    status = getMatrixProjectionStatus(roomId, params.accountId?.trim() || undefined);
+  } catch (error) {
+    throw new ProjectionError("invalid_request", formatErrorMessage(error));
+  }
+  if (status.status === "missing") {
+    throw new ProjectionError("session_missing", "No session projection is bound to this room");
+  }
+  const { accountId, threadRootEventId } = status;
+  const provider =
+    parseProjectionExternalSource(status.externalSource)?.provider ?? DEFAULT_SOURCE_PROVIDER;
+  const checkDeadline = reconcileDeadline();
+  return withResolvedMatrixSendClient(
+    { cfg: params.cfg, accountId, timeoutMs: 10_000 },
+    async (client) => {
+      const history = await recordProjectionHistory(
+        client,
+        roomId,
+        threadRootEventId,
+        checkDeadline,
+        provider,
+      );
+      const mapping = projectionMapping(history);
+      const messages = registryMessages(mapping);
+      const result = await recordRoomInRegistry({
+        accountId,
+        roomId,
+        threadId: threadRootEventId,
+        history,
+        actor: "backfill",
+        archived: params.archived === true,
+      });
+      return {
+        roomId,
+        accountId,
+        threadRootEventId,
+        messages: messages.length,
+        parts: registryBackfillActions(mapping, messages).length,
+        result,
       };
     },
   );

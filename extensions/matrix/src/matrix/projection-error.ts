@@ -16,6 +16,7 @@ export type ProjectionFailureReason =
   | "source_changed"
   | "session_missing"
   | "account_unavailable"
+  | "registry_unavailable"
   | "internal";
 
 export class ProjectionError extends Error {

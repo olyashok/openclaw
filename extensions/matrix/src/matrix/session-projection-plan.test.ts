@@ -337,19 +337,47 @@ describe("projectionMapping", () => {
         partCount: 2,
         complete: true,
         parts: [
-          { partIndex: 0, eventId: "$p0" },
-          { partIndex: 1, eventId: "$p1" },
+          { partIndex: 0, eventId: "$p0", originServerTs: 0 },
+          { partIndex: 1, eventId: "$p1", originServerTs: 0 },
         ],
         liveEventIds: ["$p0", "$p1", "$p0dup"],
+        contentHash: sourceMessageContentHash(before),
       },
       {
         messageId: second.messageId,
         revision: 1,
         partCount: 1,
         complete: true,
-        parts: [{ partIndex: 0, eventId: "$b" }],
+        parts: [{ partIndex: 0, eventId: "$b", originServerTs: 0 }],
         liveEventIds: ["$b"],
+        contentHash: sourceMessageContentHash(second),
       },
     ]);
+  });
+
+  it("reports a part's newest own edit and the edited content's hash", () => {
+    const recorded = history(
+      [own("$a", marker(before))],
+      [
+        edit("$e2", "$a", marker(after, { revision: 2 })),
+        edit("$e1", "$a", marker(before, { revision: 1 })),
+      ],
+    );
+    expect(projectionMapping(recorded)).toMatchObject([
+      {
+        messageId: before.messageId,
+        revision: 2,
+        parts: [{ partIndex: 0, eventId: "$a", editEventId: "$e2" }],
+        contentHash: sourceMessageContentHash(after),
+      },
+    ]);
+  });
+
+  it("reads only copies of the history's own provider", () => {
+    const foreign = marker(before);
+    (foreign[key] as { origin: { provider: string } }).origin.provider = "email";
+    const recorded = { ...history([own("$a", foreign)]), provider: "email" };
+    expect(projectionMapping(recorded).map((entry) => entry.messageId)).toEqual([before.messageId]);
+    expect(projectionMapping(history([own("$a", foreign)]))).toEqual([]);
   });
 });

@@ -24,6 +24,8 @@ export type MatrixThreadBindingRecord = {
   projectedConversationId?: string;
   sourceSnapshotDigest?: string;
   sourceSnapshotReconciledAtMs?: number;
+  /** Last source-registry writer generation issued for this room. */
+  registryGeneration?: number;
   boundAt: number;
   lastActivityAt: number;
   idleTimeoutMs?: number;
@@ -138,6 +140,7 @@ export function toSessionBindingRecord(
       projectedConversationId: record.projectedConversationId,
       sourceSnapshotDigest: record.sourceSnapshotDigest,
       sourceSnapshotReconciledAtMs: record.sourceSnapshotReconciledAtMs,
+      registryGeneration: record.registryGeneration,
       lastActivityAt: record.lastActivityAt,
       idleTimeoutMs,
       maxAgeMs,
@@ -147,6 +150,23 @@ export function toSessionBindingRecord(
 
 export function setBindingRecord(record: MatrixThreadBindingRecord): void {
   BINDINGS_BY_ACCOUNT_CONVERSATION.set(resolveBindingKey(record), record);
+}
+
+/**
+ * Records the room's last source-registry writer generation on its binding.
+ * Persisted batched with activity touches, leaving activity unchanged; the
+ * generation is a hybrid clock, so a write lost to a crash is never reissued lower.
+ */
+export function setMatrixBindingRegistryGeneration(bindingId: string, generation: number): void {
+  const record = BINDINGS_BY_ACCOUNT_CONVERSATION.get(bindingId);
+  if (!record || !Number.isSafeInteger(generation) || generation <= 0) {
+    return;
+  }
+  setBindingRecord({
+    ...record,
+    registryGeneration: Math.max(record.registryGeneration ?? 0, generation),
+  });
+  getMatrixThreadBindingManager(record.accountId)?.touchBinding(bindingId, record.lastActivityAt);
 }
 
 export function removeBindingRecord(
