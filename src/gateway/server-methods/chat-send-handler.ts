@@ -315,6 +315,11 @@ async function handleChatSendWithOptions(
     if (options?.inboundEventKind) {
       preparedUserTurn.ctx.InboundEventKind = options.inboundEventKind;
     }
+    // A bound Talk consult speaks for the person the app server attested for
+    // that Matrix conversation, not for the browser client that relays audio.
+    if (options?.talkRelayAdmission?.speakerMxid) {
+      preparedUserTurn.ctx.SenderId = options.talkRelayAdmission.speakerMxid;
+    }
     const { ctx, isInternalTextSlashCommandTurn } = preparedUserTurn;
     admitted.value.setPendingInputCleanup(() => {
       try {
