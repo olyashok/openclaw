@@ -11,6 +11,9 @@ export const SOURCE_CONTENT_REVISION_KEY = "com.openclaw.source_revision";
 // First-generation projections carried only this marker. They are the same
 // source message as any later v2 publication and must converge with it.
 const LEGACY_SESSION_PROJECTION_KEY = "com.openclaw.session_projection";
+// v1 split a long source message into several events sent back to back and
+// marked only the first; the unmarked rest followed within this window.
+const LEGACY_CHUNK_WINDOW_MS = 5_000;
 
 export type SourceProjectionMessage = {
   messageId: string;
@@ -47,6 +50,12 @@ export type ProjectionThread = {
   notices: string[];
   /** Own live events without any projection marker that are not notices. */
   unmarked: string[];
+  /**
+   * The subset of `unmarked` that are v1 continuation chunks: each directly
+   * follows a v1-marked message (or an earlier chunk of it), was sent within
+   * seconds of it, and repeats text that message's current body now holds.
+   */
+  legacyChunks: Array<{ eventId: string; messageId: string }>;
   /** Own non-redacted replacement ids per original, newest first. */
   editIds: Map<string, string[]>;
 };
@@ -103,6 +112,9 @@ function hasProjectionMarker(content: Record<string, unknown>): boolean {
   return Boolean(publicationOf(content) ?? object(content[LEGACY_SESSION_PROJECTION_KEY]));
 }
 
+const normalizedBody = (content: Record<string, unknown>) =>
+  typeof content.body === "string" ? content.body.replace(/\s+/g, " ").trim() : "";
+
 /** Own, live, thread-relating messages, oldest first. */
 export function projectionThreadOriginals(
   events: MatrixRawEvent[],
@@ -147,9 +159,14 @@ export function readProjectionThread(history: ProjectionHistory): ProjectionThre
   const messages = new Map<string, ProjectedCopy[]>();
   const notices: string[] = [];
   const unmarked: string[] = [];
+  const legacyChunks: ProjectionThread["legacyChunks"] = [];
+  // The v1-marked message the previous thread event belongs to, if any.
+  let chunkAnchor: { messageId: string; sentAt: number; body: string } | undefined;
   for (const event of originals) {
     const original = object(event.content);
     const current = latest.get(event.event_id) ?? original;
+    const anchor = chunkAnchor;
+    chunkAnchor = undefined;
     if (!current) {
       continue;
     }
@@ -161,14 +178,28 @@ export function readProjectionThread(history: ProjectionHistory): ProjectionThre
         notices.push(event.event_id);
       } else if (!hasProjectionMarker(current) && !hasProjectionMarker(original ?? {})) {
         unmarked.push(event.event_id);
+        const text = normalizedBody(current);
+        if (
+          anchor &&
+          text &&
+          event.origin_server_ts >= anchor.sentAt &&
+          event.origin_server_ts - anchor.sentAt <= LEGACY_CHUNK_WINDOW_MS &&
+          anchor.body.includes(text)
+        ) {
+          legacyChunks.push({ eventId: event.event_id, messageId: anchor.messageId });
+          chunkAnchor = anchor;
+        }
       }
       continue;
+    }
+    if (original && object(original[LEGACY_SESSION_PROJECTION_KEY])) {
+      chunkAnchor = { messageId, sentAt: event.origin_server_ts, body: normalizedBody(current) };
     }
     const group = messages.get(messageId) ?? [];
     group.push({ eventId: event.event_id, content: current });
     messages.set(messageId, group);
   }
-  return { messages, notices, unmarked, editIds };
+  return { messages, notices, unmarked, legacyChunks, editIds };
 }
 
 export function sourceMessageContentHash(message: SourceProjectionMessage): string {
@@ -303,6 +334,14 @@ export function planProjectionReconcile(
       : existing.filter((event) => event.eventId !== retainedEventId);
     for (const duplicate of obsolete) {
       redact(duplicate.eventId, "duplicate", messageId);
+    }
+    // A v1 continuation chunk repeats text the complete message now shows.
+    if (state.complete) {
+      for (const chunk of thread.legacyChunks) {
+        if (chunk.messageId === messageId) {
+          redact(chunk.eventId, "duplicate", messageId);
+        }
+      }
     }
   }
   if (snapshot) {
