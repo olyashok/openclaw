@@ -11,6 +11,7 @@ import {
   configFromRuntime,
   delegatedJson,
   exchange,
+  lookupDelegation,
   type RequesterIdentity,
   type ResolvedPluginConfig,
 } from "./fi-delegation.js";
@@ -120,6 +121,85 @@ async function load(api: OpenClawPluginApi, id: string): Promise<AdminActionReco
       ?.lookup(id)
       .catch(() => undefined))
   );
+}
+
+type DecisionClaim = { decision: "approved" | "denied"; decidedBy: string; at: number };
+type ClaimStore = {
+  registerIfAbsent(key: string, value: DecisionClaim, opts?: { ttlMs?: number }): Promise<boolean>;
+};
+let claimStore: ClaimStore | null | undefined;
+/** Requests decided in this process; checked and set with no await in between. */
+const claimed = new Set<string>();
+
+function openClaimStore(api: OpenClawPluginApi): ClaimStore | null {
+  if (claimStore !== undefined) {
+    return claimStore;
+  }
+  try {
+    claimStore = api.runtime.state.openKeyedStore<DecisionClaim>({
+      namespace: "admin-action-claims",
+      maxEntries: 1_000,
+      defaultTtlMs: RECORD_TTL_MS,
+    }) as ClaimStore;
+  } catch {
+    claimStore = null;
+  }
+  return claimStore;
+}
+
+/**
+ * Take the one decision a request gets. The in-process set is the atomic
+ * step; the durable compare-and-set carries it across restarts. A decision
+ * that cannot be recorded durably is released so the approver can retry.
+ */
+async function claimDecision(
+  api: OpenClawPluginApi,
+  record: AdminActionRecord,
+  claim: DecisionClaim,
+): Promise<"claimed" | "taken" | "unrecorded"> {
+  const current = records.get(record.id) ?? record;
+  if (current.status !== "pending" || claimed.has(record.id)) {
+    return "taken";
+  }
+  claimed.add(record.id);
+  const durable = openClaimStore(api);
+  if (!durable) {
+    return "claimed";
+  }
+  try {
+    return (await durable.registerIfAbsent(record.id, claim, { ttlMs: RECORD_TTL_MS }))
+      ? "claimed"
+      : "taken";
+  } catch {
+    claimed.delete(record.id);
+    return "unrecorded";
+  }
+}
+
+/** Whether this approver is the person who filed the request, on any channel. */
+async function isOwnRequest(
+  config: ResolvedPluginConfig,
+  record: AdminActionRecord,
+  sender: string,
+): Promise<boolean> {
+  const identity = record.requester.identity;
+  const requesterId =
+    identity.channel === "slack"
+      ? identity.requesterSenderId
+      : identity.channel === "matrix"
+        ? identity.requesterMatrixUserId
+        : undefined;
+  if (requesterId?.toLowerCase() === sender.toLowerCase()) {
+    return true;
+  }
+  // The same person may have filed on another channel: compare Fi identities.
+  const approver = await lookupDelegation(
+    config,
+    sender.startsWith("@")
+      ? { requesterMatrixUserId: sender }
+      : { requesterSenderId: sender.toUpperCase() },
+  );
+  return approver?.user.email.trim().toLowerCase() === record.requester.email.trim().toLowerCase();
 }
 
 async function pendingInSession(api: OpenClawPluginApi, sessionKey: string) {
@@ -288,8 +368,9 @@ export async function runApprovedAdminAction(api: OpenClawPluginApi, record: Adm
 }
 
 /**
- * Handle an approver's reply. Only a configured approver's own message counts;
- * the first decision wins.
+ * Handle an approver's reply. Only a configured approver's own message counts,
+ * never the requester's own approval, and each request is decided once: later
+ * or concurrent decisions are ignored with a note in the thread.
  */
 export async function handleAdminApprovalMessage(
   api: OpenClawPluginApi,
@@ -316,15 +397,49 @@ export async function handleAdminApprovalMessage(
     const pending = sessionKey ? await pendingInSession(api, sessionKey) : [];
     record = pending.length === 1 ? pending[0] : undefined;
   }
-  if (!record || record.status !== "pending" || Date.now() - record.createdAt > RECORD_TTL_MS) {
+  if (!record || Date.now() - record.createdAt > RECORD_TTL_MS) {
     return undefined;
   }
+  const found = record;
+  const note = (text: string) => post(api, found, text).catch(() => undefined);
+  const alreadyDecided = `Admin action ${found.id} was already decided; this reply was ignored.`;
+  if (found.status !== "pending" || claimed.has(found.id)) {
+    await note(alreadyDecided);
+    return undefined;
+  }
+  if (approve) {
+    let own: boolean;
+    try {
+      own = await isOwnRequest(config, found, sender);
+    } catch {
+      await note(`Admin action ${found.id}: the approver could not be verified; reply again.`);
+      return undefined;
+    }
+    if (own) {
+      await note(
+        `Admin action ${found.id} cannot be approved by the person who requested it; another administrator must approve it.`,
+      );
+      return undefined;
+    }
+  }
   const decided: AdminActionRecord = {
-    ...record,
+    ...found,
     status: approve ? "approved" : "denied",
     decidedBy: sender,
   };
-  // Claim the decision before any await that could interleave another reply.
+  const claim = await claimDecision(api, found, {
+    decision: decided.status as DecisionClaim["decision"],
+    decidedBy: sender,
+    at: Date.now(),
+  });
+  if (claim === "taken") {
+    await note(alreadyDecided);
+    return undefined;
+  }
+  if (claim === "unrecorded") {
+    await note(`Admin action ${found.id}: the decision could not be recorded; reply again.`);
+    return undefined;
+  }
   records.set(decided.id, decided);
   await save(api, decided);
   if (!approve) {

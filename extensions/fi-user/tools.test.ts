@@ -40,7 +40,7 @@ const runtimeConfig = {
           gamBinary: "/opt/gam",
           gamConfigDir: "/opt/gam-config",
           sharedInboxMailbox: "shared@example.com",
-          adminApprovers: ["UALEX00001"],
+          adminApprovers: ["UALEX00001", "ULORENZO01"],
           adminPrincipals: ["UALEX00001", "ULORENZO01"],
         },
       },
@@ -129,6 +129,13 @@ function json(body: unknown, status = 200) {
   });
 }
 
+/** Fi members behind channel identities; anyone else resolves to the default member. */
+const members: Record<string, string> = {
+  UALEX00001: "alex@example.com",
+  ULORENZO01: "lorenzo@example.com",
+  "@alex:threads.example": "alex@example.com",
+};
+
 function delegation(body?: Record<string, unknown>) {
   return json({
     user: { email: "member@example.com", orgSlug: "shape", role: "member" },
@@ -152,7 +159,16 @@ beforeEach(() => {
         url.pathname === "/fi-api/openclaw-user-delegation" ||
         url.pathname === "/api/openclaw-user-delegation"
       ) {
-        return delegation();
+        const requester = bodyJson(init) as Record<string, string> | null;
+        const email =
+          members[requester?.requesterSenderId ?? ""] ??
+          members[requester?.requesterMatrixUserId ?? ""];
+        return email
+          ? delegation({
+              user: { email, orgSlug: "shape", role: "admin" },
+              gmail: { enabled: true, mailbox: email },
+            })
+          : delegation();
       }
       for (const route of routes) {
         const response = await route(url, init);
@@ -685,14 +701,16 @@ describe("request_admin_action", () => {
       }),
     );
 
-    // A second approval does not start another run.
+    // A second approval does not start another run; it is noted in the thread.
     await received(
-      { content: `approve ${requestId}`, senderId: "UALEX00001" } as never,
+      { content: `approve ${requestId}`, senderId: "ULORENZO01" } as never,
       { channelId: "slack" } as never,
     );
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
+    await vi.waitFor(() =>
+      expect(mocks.sendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining("already decided") }),
+      ),
+    );
     expect(mocks.subagentRun).toHaveBeenCalledTimes(1);
   });
 
