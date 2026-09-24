@@ -21,7 +21,11 @@ export type ProjectionInventoryBinding = {
 type Scope = NonNullable<ChannelProjectionParams["channelScope"]> & {
   readHistoryPage: (cursor?: string) => Promise<{ roots: string[]; nextCursor?: string }>;
 };
-type Reader = { workspaceId: string; readChannel: (channelId: string) => Promise<Scope> };
+type Reader = {
+  workspaceId: string;
+  botUserId?: string;
+  readChannel: (channelId: string, clawBotUserIds?: Iterable<string>) => Promise<Scope>;
+};
 type ReconcileBudget = {
   /** Existing rooms only need their membership checked. */
   maxExistingRooms?: number;
@@ -173,6 +177,21 @@ export function createDetachedProjectionReconciler(
         scans.delete(key);
       }
     }
+    // History is read with one account per channel, but any Claw bot in the
+    // workspace makes a thread a Claw conversation.
+    const clawBots = new Map<string, Set<string>>();
+    for (const binding of configured) {
+      const identity = api.runtime.channel.runtimeContexts.get<Reader>({
+        channelId: "slack",
+        accountId: binding.match.accountId,
+        capability: "thread-read-projection",
+      });
+      if (identity?.botUserId) {
+        const bots = clawBots.get(identity.workspaceId) ?? new Set<string>();
+        bots.add(identity.botUserId);
+        clawBots.set(identity.workspaceId, bots);
+      }
+    }
     const scopes = new Map<string, { at: number; scope: Promise<Scope> }>();
     const scopeFor = (accountId: string, channelId: string) => {
       const key = `${accountId}:${channelId}`;
@@ -186,7 +205,7 @@ export function createDetachedProjectionReconciler(
         cached = {
           at: Date.now(),
           scope: reader
-            ? reader.readChannel(channelId)
+            ? reader.readChannel(channelId, clawBots.get(reader.workspaceId))
             : Promise.reject(new Error("Slack parent reader unavailable")),
         };
         scopes.set(key, cached);

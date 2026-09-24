@@ -897,8 +897,8 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
             readSlackDirectIdentity(readClient, identity.teamId, channelId, peerSenderId),
           readDirect: (channelId: string, peerSenderId: string) =>
             readSlackDirectSnapshot(readClient, identity.teamId, channelId, peerSenderId),
-          readChannel: (channelId: string) =>
-            readSlackProjectionChannel(readClient, identity.teamId, channelId),
+          readChannel: (channelId: string, clawBotUserIds?: Iterable<string>) =>
+            readSlackProjectionChannel(readClient, identity.teamId, channelId, clawBotUserIds),
           readThread: (channelId: string, rootMessageId: string) =>
             readSlackThreadSnapshot(readClient, identity.teamId, channelId, rootMessageId),
         },

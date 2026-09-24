@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
+import { ProjectionError } from "./projection-error.js";
 import type { ProjectionExternalSource } from "./projection-source.js";
 import type { MatrixClient } from "./sdk.js";
 import {
@@ -37,17 +38,20 @@ export async function resolveProjectionReplyUpgrade(params: {
     capability: "source-session-authorization",
   });
   if (!guard || guard.protocol !== params.protocol || params.readOnly) {
-    throw new Error("Requested source reply authorization is unavailable");
+    throw new ProjectionError(
+      "source_auth_unavailable",
+      "Requested source reply authorization is unavailable",
+    );
   }
   const existing = params.existing;
   if (existing && existing.targetSessionKey !== params.targetSessionKey) {
-    throw new Error("Canonical projection target cannot change");
+    throw new ProjectionError("ownership_changed", "Canonical projection target cannot change");
   }
   if (
     existing?.metadata?.externalSource &&
     JSON.stringify(existing.metadata.externalSource) !== JSON.stringify(params.externalSource)
   ) {
-    throw new Error("Projection external source cannot change");
+    throw new ProjectionError("source_changed", "Projection external source cannot change");
   }
   const source = await guard.resolveSource({
     targetSessionKey: params.targetSessionKey,

@@ -19,6 +19,8 @@ export async function readSlackProjectionChannel(
   client: WebClient,
   workspaceId: string,
   channelId: string,
+  /** Every Claw bot user in the workspace; a channel can hold several. */
+  clawBotUserIds: Iterable<string> = [],
 ) {
   const read = createProjectionDeadline();
   if (!/^T[A-Z0-9]+$/.test(workspaceId) || !/^[CG][A-Z0-9]+$/.test(channelId)) {
@@ -48,25 +50,30 @@ export async function readSlackProjectionChannel(
     }
   } while (cursor);
   const source = { workspaceId, channelId, memberSenderIds: [...new Set(memberSenderIds)] };
-  const readerUserId = identity.user_id;
+  const clawUsers = new Set([...clawBotUserIds, identity.user_id].filter(Boolean) as string[]);
   const readerBotId = identity.bot_id;
-  const involvesReader = (message: {
+  const mentionsClaw = (text: string) =>
+    [...clawUsers].some((id) => text.includes(`<@${id}>`) || text.includes(`<@${id}|`));
+  const involvesClaw = (message: {
+    ts?: string;
+    thread_ts?: string;
     user?: string;
     bot_id?: string;
     text?: string;
     reply_count?: number;
     reply_users?: string[];
   }) => {
+    // A reply broadcast to the channel is part of its thread, not a new root.
+    if (message.thread_ts && message.thread_ts !== message.ts) {
+      return false;
+    }
     const authored =
       Boolean(readerBotId && message.bot_id === readerBotId) ||
-      Boolean(readerUserId && message.user === readerUserId);
+      Boolean(message.user && clawUsers.has(message.user));
     return (
       (authored && (message.reply_count ?? 0) > 0) ||
-      Boolean(
-        readerUserId &&
-        (message.reply_users?.includes(readerUserId) ||
-          (message.text ?? "").includes(`<@${readerUserId}>`)),
-      )
+      Boolean(message.reply_users?.some((id) => clawUsers.has(id))) ||
+      mentionsClaw(message.text ?? "")
     );
   };
   return {
@@ -82,13 +89,14 @@ export async function readSlackProjectionChannel(
       if ((page.has_more && !nextCursor) || (nextCursor && nextCursor === historyCursor)) {
         throw new Error("Incomplete Slack channel history pagination");
       }
-      // Only conversations this bot is part of are projected: it was mentioned
-      // in the root, replied in the thread, or wrote a root someone answered.
+      // Only conversations a Claw bot is part of are projected: one was
+      // mentioned in the root, replied in the thread, or wrote a root someone
+      // answered.
       // A bot post nobody replied to (a notification) is not a conversation;
       // human-only threads and other apps' posts stay in Slack.
       return {
         roots: page.messages.flatMap((message) =>
-          message.ts && involvesReader(message) ? [message.ts] : [],
+          message.ts && involvesClaw(message) ? [message.ts] : [],
         ),
         nextCursor,
       };
