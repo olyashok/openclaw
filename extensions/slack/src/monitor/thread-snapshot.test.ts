@@ -60,7 +60,7 @@ describe("Slack projection source snapshot", () => {
     expect(slack.conversations.members).toHaveBeenCalledTimes(2);
     expect(slack.conversations.replies).toHaveBeenCalledTimes(2);
   });
-  it("discovers only roots this bot is part of, with paginated progress", async () => {
+  it("discovers only conversations this bot is part of, not its unanswered posts", async () => {
     const slack = client();
     slack.auth.test.mockResolvedValue({
       ok: true,
@@ -76,8 +76,16 @@ describe("Slack projection source snapshot", () => {
         { ts: "1.000003", user: "U111", text: "hi <@U222>" },
         { ts: "1.000004", user: "U111", text: "not a bot conversation" },
         { ts: "1.000005", user: "U111", text: "<@UBOT> can you check this?" },
-        { ts: "1.000006", user: "UBOT", bot_id: "BBOT", text: "Report ready" },
+        {
+          ts: "1.000006",
+          user: "UBOT",
+          bot_id: "BBOT",
+          text: "Report ready",
+          reply_count: 2,
+          reply_users: ["U111"],
+        },
         { ts: "1.000007", user: "U111", reply_count: 3, reply_users: ["U222", "UBOT"] },
+        { ts: "1.000008", user: "UBOT", bot_id: "BBOT", text: "KYC approved (notification)" },
       ],
       response_metadata: { next_cursor: "older" },
     });
