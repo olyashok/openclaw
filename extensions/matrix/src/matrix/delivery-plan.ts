@@ -7,6 +7,7 @@ import type {
 } from "openclaw/plugin-sdk/channel-outbound";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { getMatrixRuntime } from "../runtime.js";
+import { noteMatrixProjectionFinalResult } from "./projection-lifecycle.js";
 import { resolveMatrixReplyToEventId, resolveMatrixThreadRootId } from "./relations.js";
 import type { MatrixClient } from "./sdk.js";
 import type { MatrixMessageWireDispatch } from "./sdk/message-wire-dispatch.js";
@@ -470,7 +471,7 @@ export async function replayMatrixProjectionPublication(
       );
     const final = plan.events.at(-1)?.projectionFinalResult;
     if (final && accepted.at(-1))
-      (await import("./projection-lifecycle.js")).noteMatrixProjectionFinalResult({
+      noteMatrixProjectionFinalResult({
         ...final,
         resultEventId: accepted.at(-1)!,
       });
@@ -544,7 +545,7 @@ export async function reconcileMatrixUnknownSend(
         });
         const final = orderedPlans.at(-1)?.events.at(-1)?.projectionFinalResult;
         if (final && receipt.platformMessageIds.at(-1))
-          (await import("./projection-lifecycle.js")).noteMatrixProjectionFinalResult({
+          noteMatrixProjectionFinalResult({
             ...final,
             resultEventId: receipt.platformMessageIds.at(-1)!,
           });
