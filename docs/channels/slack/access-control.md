@@ -24,7 +24,7 @@ Available action groups in current Slack tooling:
 | memberInfo | enabled |
 | emojiList  | enabled |
 
-Current Slack message actions include `send`, `conversation-open`, `upload-file`, `download-file`, `read`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, `member-info`, and `emoji-list`. `download-file` accepts Slack file IDs shown in inbound file placeholders and returns image previews for images or local file metadata for other file types.
+Current Slack message actions include `send`, `thread-reply`, `conversation-open`, `upload-file`, `download-file`, `read`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, `member-info`, and `emoji-list`. `download-file` accepts Slack file IDs shown in inbound file placeholders and stages Slack's original upload; images also get an inline preview, which may be resized (pass `original: true` to skip it). `read` and `download-file` accept a pasted Slack `permalink`: a conversation outside the read policy is readable only when the requester is a member of it and the Slack app can see it. `member-info` is limited to the current requester unless the account sets `memberInfoScope: "workspace"`. `search` is not available for Slack because `search.messages` needs a user token.
 
 Interactive message actions retain their caller authority through target and permission lookups and recheck it before each Slack request. If that authority closes, remaining requests stop while an already accepted mutation keeps its result.
 

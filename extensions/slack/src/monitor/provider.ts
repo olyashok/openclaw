@@ -26,6 +26,7 @@ import {
 import { createSlackStartupAuthClient, createSlackWebClient } from "../client.js";
 import { normalizeSlackWebhookPath, registerSlackHttpHandler } from "../http/index.js";
 import { registerSlackInstallationState } from "../installation-identity-state.js";
+import { resolveSlackMediaMaxBytes } from "../limits.js";
 import { registerSlackThreadOwnerPeer } from "../sent-thread-cache.js";
 import {
   formatSlackBotTokenIdentityWarning,
@@ -299,7 +300,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
 
   const slackCfg = account.config;
   const slashCommand = resolveSlackSlashCommandConfig(opts.slashCommand ?? slackCfg.slashCommand);
-  const mediaMaxBytes = (opts.mediaMaxMb ?? slackCfg.mediaMaxMb ?? 20) * 1024 * 1024;
+  const mediaMaxBytes = resolveSlackMediaMaxBytes(opts.mediaMaxMb ?? slackCfg.mediaMaxMb);
   const slackDispatcher = resolveSlackProxyDispatcher();
   const clientOptions = resolveSlackWebClientOptions({}, slackDispatcher);
   const durableIngress = createSlackDurableIngress({

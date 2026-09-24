@@ -208,6 +208,11 @@ export type SlackAccountConfig = Omit<
     /** Poll Slack presence and wake the routed agent on away-to-active transitions. Default: off. */
     presenceEvents?: SlackPresenceEventsConfig;
     actions?: SlackActionConfig;
+    /**
+     * Who delegated member-info lookups may resolve: only the current requester
+     * ("requester", default) or any member of the account's workspace ("workspace").
+     */
+    memberInfoScope?: "requester" | "workspace";
     slashCommand?: SlackSlashCommandConfig;
     dm?: SlackDmConfig;
     channels?: Record<string, SlackChannelConfig>;
