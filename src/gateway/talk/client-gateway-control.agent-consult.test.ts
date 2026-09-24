@@ -197,9 +197,11 @@ describe("Talk client agent consult admission", () => {
       return { text: "sent" };
     });
 
-    await expect(createRunner().runPrompt({ prompt: "Repeat the same request." })).resolves.toEqual({
-      text: "sent",
-    });
+    await expect(createRunner().runPrompt({ prompt: "Repeat the same request." })).resolves.toEqual(
+      {
+        text: "sent",
+      },
+    );
   });
 
   it("passes bounded untrusted session context to the delegated agent", async () => {

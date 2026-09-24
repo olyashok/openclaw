@@ -344,7 +344,6 @@ export type CreateTalkRealtimeRelaySessionParams = {
   sessionTarget: PreparedTalkSessionTarget;
   voice?: string;
   language?: string;
-  initialItems?: Array<{ role: "user" | "assistant"; text: string }>;
   sessionCapsule?: string;
   forceAgentConsultOnFinalTranscript?: boolean;
   speakerMxid?: string;

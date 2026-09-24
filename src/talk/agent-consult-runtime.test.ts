@@ -828,7 +828,7 @@ describe("realtime voice agent consult runtime", () => {
         abortSignal: controller.signal,
         onRunStarted: () => ({ cleanup }),
       }),
-    ).rejects.toThrow("caller left voice session");
+    ).rejects.toThrow("Realtime voice agent consult cancelled");
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
