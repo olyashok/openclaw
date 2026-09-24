@@ -215,7 +215,8 @@ export function normalizeXaiRealtimeProviderConfig(
       ? resolveSecretInputString({
           value: raw.apiKey,
           path: apiKeyPath,
-          mode: "configured_unavailable",
+          // Non-strict: an inactive SecretRef reports configured_unavailable.
+          mode: "inspect",
         }).value
       : normalizeResolvedSecretInputString({ value: raw.apiKey, path: apiKeyPath });
   return {

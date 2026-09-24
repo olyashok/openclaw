@@ -280,8 +280,7 @@ export function createXaiRealtimeVoiceProviderMetadata() {
 }
 
 export function createLiteLlmRealtimeVoiceProviderMetadata() {
-  const xai = createXaiRealtimeVoiceProviderMetadata();
-  delete xai.voices;
+  const { voices: _voices, ...xai } = createXaiRealtimeVoiceProviderMetadata();
   return {
     ...xai,
     id: "litellm",
