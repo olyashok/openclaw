@@ -59,19 +59,67 @@ type SlackThreadOwnerRecord = {
 
 type SlackThreadOwnerCache = {
   owners: Map<string, SlackThreadOwnerRecord>;
+  claims: Map<string, Promise<unknown>>;
+  peers: Map<string, SlackThreadOwnerPeer>;
   store?: PluginStateKeyedStore<SlackThreadOwnerRecord>;
   disabled: boolean;
 };
 
+/**
+ * Live view of another Slack account in this gateway, so each account can
+ * decide ownership from the same facts instead of racing the other's claim.
+ */
+export type SlackThreadOwnerPeer = {
+  botUserId: () => string | undefined;
+  /** Whether the account answers an unmentioned top-level message in this channel. */
+  answersUnmentioned: (channelId: string, channelName?: string) => boolean;
+};
+
 const threadOwners = resolveGlobalSingleton<SlackThreadOwnerCache>(
   SLACK_THREAD_OWNER_KEY,
-  () => ({ owners: new Map(), disabled: false }),
+  () => ({ owners: new Map(), claims: new Map(), peers: new Map(), disabled: false }),
   (cache) => {
     cache.owners.clear();
+    cache.claims.clear();
+    cache.peers.clear();
     cache.store = undefined;
     cache.disabled = false;
   },
 );
+
+/** Registers a running Slack account as a thread-ownership peer; returns the unregister hook. */
+export function registerSlackThreadOwnerPeer(
+  accountId: string,
+  peer: SlackThreadOwnerPeer,
+): () => void {
+  threadOwners.peers.set(accountId, peer);
+  return () => {
+    if (threadOwners.peers.get(accountId) === peer) {
+      threadOwners.peers.delete(accountId);
+    }
+  };
+}
+
+export function getSlackThreadOwnerPeer(accountId: string): SlackThreadOwnerPeer | undefined {
+  return threadOwners.peers.get(accountId);
+}
+
+/** Serializes read-modify-write claims per thread so concurrent handlers see one owner. */
+function withThreadOwnerClaimLock<T>(key: string, claim: () => Promise<T>): Promise<T> {
+  const previous = threadOwners.claims.get(key) ?? Promise.resolve();
+  const result = previous.then(claim, claim);
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  threadOwners.claims.set(key, settled);
+  void settled.then(() => {
+    if (threadOwners.claims.get(key) === settled) {
+      threadOwners.claims.delete(key);
+    }
+  });
+  return result;
+}
 
 const reportThreadOwnerStateError = createPluginStateErrorReporter(
   getOptionalSlackRuntime,
@@ -156,9 +204,10 @@ async function readSlackThreadOwner(key: string): Promise<SlackThreadOwnerRecord
 }
 
 /**
- * Atomically chooses the single Slack account allowed to continue an
- * unmentioned shared thread. Explicit bot mentions intentionally replace the
- * existing owner, while implicit continuations preserve the first owner.
+ * Atomically chooses the single Slack account allowed to continue a shared
+ * thread. Explicit bot mentions intentionally replace the existing owner,
+ * while implicit continuations preserve the first owner. Claims for one
+ * thread are serialized, so an interleaved read never observes a stale owner.
  */
 export async function claimSlackThreadOwner(params: {
   channelId: string;
@@ -170,6 +219,19 @@ export async function claimSlackThreadOwner(params: {
   if (!params.channelId || !params.threadTs || params.candidateAccountIds.length === 0) {
     return undefined;
   }
+  return await withThreadOwnerClaimLock(
+    makeThreadOwnerKey(params.channelId, params.threadTs, params.teamId),
+    () => claimSlackThreadOwnerUnlocked(params),
+  );
+}
+
+async function claimSlackThreadOwnerUnlocked(params: {
+  channelId: string;
+  threadTs: string;
+  candidateAccountIds: readonly string[];
+  teamId?: string;
+  force?: boolean;
+}): Promise<string | undefined> {
   const candidateAccountId = params.candidateAccountIds.find(Boolean);
   if (!candidateAccountId) {
     return undefined;
@@ -321,6 +383,8 @@ export function clearSlackThreadParticipationCache(): void {
   threadParticipation.clearForTest();
   threadFailureNotices.clear();
   threadOwners.owners.clear();
+  threadOwners.claims.clear();
+  threadOwners.peers.clear();
   threadOwners.store = undefined;
   threadOwners.disabled = false;
 }

@@ -26,11 +26,13 @@ import {
 import { createSlackStartupAuthClient, createSlackWebClient } from "../client.js";
 import { normalizeSlackWebhookPath, registerSlackHttpHandler } from "../http/index.js";
 import { registerSlackInstallationState } from "../installation-identity-state.js";
+import { registerSlackThreadOwnerPeer } from "../sent-thread-cache.js";
 import {
   formatSlackBotTokenIdentityWarning,
   resolveSlackAppToken,
   resolveSlackBotToken,
 } from "../token.js";
+import { resolveSlackChannelConfig } from "./channel-config.js";
 import { resolveSlackSlashCommandConfig } from "./commands.js";
 import { getRuntimeConfig, resolveOpenProviderRuntimeGroupPolicy } from "./config.runtime.js";
 import { createSlackMonitorContext, type SlackMonitorContext } from "./context.js";
@@ -726,6 +728,22 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     account.accountId,
     installationIdentity.kind,
   );
+  const unregisterThreadOwnerPeer = registerSlackThreadOwnerPeer(account.accountId, {
+    botUserId: () => ctx.botUserId,
+    answersUnmentioned: (channelId, channelName) => {
+      const channelConfig = resolveSlackChannelConfig({
+        teamId: ctx.teamId,
+        allowUnscoped: ctx.installationIdentity?.kind !== "enterprise",
+        channelId,
+        channelName,
+        channels: ctx.channelsConfig,
+        channelKeys: ctx.channelsConfigKeys,
+        defaultRequireMention: ctx.defaultRequireMention,
+        allowNameMatching: ctx.allowNameMatching,
+      });
+      return Boolean(channelConfig?.allowed && !channelConfig.requireMention);
+    },
+  });
 
   try {
     await installSlackRuntimeForIdentity(installationIdentity);
@@ -862,6 +880,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
       }
     }
   } finally {
+    unregisterThreadOwnerPeer();
     installationState.release();
     runtimeStarted = false;
     presenceRequestAbort?.abort();

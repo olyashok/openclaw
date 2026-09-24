@@ -94,6 +94,72 @@ describe("slack sent-thread-cache", () => {
     expect(next).toBe("fi-user");
   });
 
+  it("serializes interleaved claims so a stale read never wins after a transfer", async () => {
+    const persistedRecords = new Map<string, { accountId: string; claimedAt: number }>();
+    let releaseLookup: (() => void) | undefined;
+    const lookupGate = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    const openKeyedStore = vi.fn(() => ({
+      register: vi.fn(async (key: string, value: { accountId: string; claimedAt: number }) => {
+        persistedRecords.set(key, value);
+      }),
+      registerIfAbsent: vi.fn(
+        async (key: string, value: { accountId: string; claimedAt: number }) => {
+          if (persistedRecords.has(key)) {
+            return false;
+          }
+          persistedRecords.set(key, value);
+          return true;
+        },
+      ),
+      update: vi.fn(async (key: string, next: (current: unknown) => unknown) => {
+        persistedRecords.set(key, next(persistedRecords.get(key)) as never);
+        return true;
+      }),
+      lookup: vi.fn(async (key: string) => {
+        await lookupGate;
+        return persistedRecords.get(key);
+      }),
+      consume: vi.fn(),
+      delete: vi.fn(),
+      entries: vi.fn(),
+      clear: vi.fn(),
+    }));
+    setSlackRuntime({
+      state: { openKeyedStore },
+      logging: { getChildLogger: () => ({ warn: vi.fn() }) },
+    } as never);
+    persistedRecords.set("C123:1700000000.000001", { accountId: "fi-admin", claimedAt: 1 });
+
+    // The implicit claim starts first and blocks in its store read; the
+    // explicit transfer must not interleave with that read-then-decide.
+    const implicit = claimSlackThreadOwner({
+      channelId: "C123",
+      threadTs: "1700000000.000001",
+      candidateAccountIds: ["fi-admin"],
+    });
+    const transfer = claimSlackThreadOwner({
+      channelId: "C123",
+      threadTs: "1700000000.000001",
+      candidateAccountIds: ["fi-user"],
+      force: true,
+    });
+    const after = claimSlackThreadOwner({
+      channelId: "C123",
+      threadTs: "1700000000.000001",
+      candidateAccountIds: ["fi-admin"],
+    });
+    releaseLookup?.();
+
+    await expect(Promise.all([implicit, transfer, after])).resolves.toEqual([
+      "fi-admin",
+      "fi-user",
+      "fi-user",
+    ]);
+    expect(persistedRecords.get("C123:1700000000.000001")?.accountId).toBe("fi-user");
+  });
+
   it("restores a shared thread owner after the in-memory cache is cleared", async () => {
     const persistedRecords = new Map<string, { accountId: string; claimedAt: number }>();
     const openKeyedStore = vi.fn(() => ({
