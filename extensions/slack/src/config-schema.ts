@@ -61,6 +61,13 @@ const SlackChannelSchema = buildGroupEntrySchema(
   { omit: ["allowFrom"] },
 );
 
+const SlackReactionTriggerSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(SLACK_PRESENCE_EVENT_PROMPT_MAX_CHARS),
+    requestUsers: z.array(z.union([z.string(), z.number()])).optional(),
+  })
+  .strict();
+
 const SlackThreadSchema = z
   .object({
     historyScope: z.enum(["thread", "channel"]).optional(),
@@ -102,6 +109,9 @@ const SlackAccountSchema = z
   .object({
     ...accountShape,
     joinIntro: z.boolean().optional(),
+    reactionTriggers: z
+      .record(z.string().regex(/^[a-z0-9_+'-]+$/u), SlackReactionTriggerSchema)
+      .optional(),
     postAs: SlackIdentitySchema.optional(),
     mode: z.enum(["socket", "http", "relay"]).optional(),
     relay: SlackRelaySchema.optional(),

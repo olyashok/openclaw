@@ -1962,7 +1962,7 @@ Same-chat `/approve` also works in Slack channels and DMs that already support c
 
 - Message edits/deletes are mapped into system events.
 - Thread broadcasts ("Also send to channel" thread replies) are processed as normal user messages.
-- Reaction add/remove events are mapped into system events.
+- Reaction add/remove events are mapped into system events (see `reactionNotifications`). Configured [reaction triggers](#reaction-triggers) start an agent turn instead.
 - Member join/leave, channel created/renamed, and pin add/remove events are mapped into system events.
 - When the bot itself joins an allowed channel, it posts one introduction grounded in the channel name, purpose or topic, and available recent messages. Introductions are enabled by default, never run in direct messages, and can be disabled with `channels.slack.joinIntro: false` or overridden per account with `channels.slack.accounts.<accountId>.joinIntro`. See [group join introductions](/channels#group-join-introductions) for the history limits, once-per-room behavior, and untrusted-content handling.
 - Optional presence polling can map an observed human participant's `away` to `active` transition into the participant's most recently active eligible Slack session. The default is off.
@@ -1978,6 +1978,32 @@ Same-chat `/approve` also works in Slack channels and DMs that already support c
   - modal `view_submission` and `view_closed` events with routed channel metadata and form inputs
 
 Define global or message shortcuts in your Slack app configuration and use any non-empty callback ID. OpenClaw acknowledges matching shortcut payloads, applies the same DM/channel sender policy as other Slack interactions, and queues the sanitized event for the routed agent session. Trigger IDs and response URLs are redacted from agent context.
+
+### Reaction triggers
+
+`channels.slack.reactionTriggers` maps an emoji name (without colons) to a trusted, operator-written prompt. When an allowed request user adds that reaction to any message in a channel the bot is in (not only the bot's own messages), OpenClaw starts one isolated agent turn in the reacted message's thread and posts the reply there. It is off by default: nothing fires until a trigger is configured.
+
+```json5
+{
+  channels: {
+    slack: {
+      reactionTriggers: {
+        inbox_tray: {
+          prompt: "File this message's attachments into the project's data room, then reply with where each file went.",
+          // Optional; defaults to the channel's requestUsers.
+          requestUsers: ["U0123456789"],
+        },
+      },
+    },
+  },
+}
+```
+
+- OpenClaw appends the message's channel, `ts`, thread `ts`, file ids and permalink to the prompt. The reacted message's text is not included; the agent reads the message and its files with its normal tools.
+- Only users listed in the trigger's `requestUsers`, or in the channel's `requestUsers`, can fire it. With neither list set, the trigger is ignored in that channel. The reactor must also pass the channel's normal sender policy (`channels.<id>.users`), and the channel must be allowed. Triggers never fire in direct messages or for the bot's own reactions.
+- Each message and emoji runs at most once per day per account while the gateway is running, so reconnect replays, skin-tone variants and a second reactor do not start another run.
+- Triggers work regardless of `reactionNotifications`; that setting only controls the passive reaction system events. The bot needs `reactions:read` and the `reaction_added` event subscription, plus `channels:history` (and `groups:history` for private channels) to read the reacted message.
+- Account entries at `channels.slack.accounts.<id>.reactionTriggers` replace the channel-wide map for that account.
 
 ### Presence events
 

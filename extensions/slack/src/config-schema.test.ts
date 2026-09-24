@@ -615,6 +615,23 @@ describe("slack config schema", () => {
     );
   });
 
+  it("accepts reaction triggers keyed by emoji name at root and account level", () => {
+    expectSlackConfigValid({
+      reactionTriggers: {
+        inbox_tray: { prompt: "File the attachments.", requestUsers: ["U123"] },
+      },
+      accounts: { "fi-admin": { reactionTriggers: { eyes: { prompt: "Review this." } } } },
+    });
+    expectSlackConfigIssue(
+      { reactionTriggers: { ":inbox_tray:": { prompt: "x" } } },
+      "reactionTriggers.:inbox_tray:",
+    );
+    expectSlackConfigIssue(
+      { reactionTriggers: { inbox_tray: { prompt: " " } } },
+      "reactionTriggers.inbox_tray.prompt",
+    );
+  });
+
   it("rejects the retired thread requireExplicitMention runtime key", () => {
     expectSlackConfigIssue({ thread: { requireExplicitMention: true } }, "thread");
   });

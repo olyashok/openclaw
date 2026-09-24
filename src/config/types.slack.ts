@@ -125,6 +125,17 @@ export type SlackThreadOwnershipConfig = {
   preferredAccounts: string[];
 };
 
+/**
+ * A trusted, operator-written prompt that an allowed user can fire by adding
+ * the configured emoji to any Slack message in a channel the bot is in.
+ */
+export type SlackReactionTriggerConfig = {
+  /** Fixed prompt; OpenClaw appends the message's channel, ts, file ids and permalink. */
+  prompt: string;
+  /** Users allowed to fire this trigger. Defaults to the channel's requestUsers. */
+  requestUsers?: Array<string | number>;
+};
+
 export type SlackRelayConfig = {
   /** Full relay websocket URL, including the route path. */
   url?: string;
@@ -147,6 +158,8 @@ export type SlackAccountConfig = Omit<
   ChannelReactionConfig<SlackReactionNotificationMode, never, string, true> & {
     /** Post a room-specific introduction when joining a group. Default: true. */
     joinIntro?: boolean;
+    /** Emoji name (without colons) -> agent turn started in the reacted message's thread. */
+    reactionTriggers?: Record<string, SlackReactionTriggerConfig>;
     /** @deprecated Doctor-only legacy input. */
     identity?: "bot" | "user";
     /** @deprecated Doctor-only legacy input. */
