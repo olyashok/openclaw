@@ -40,6 +40,7 @@ import {
   driveExportArgs,
   driveFileMetadata,
   MAX_DRIVE_FILE_BYTES,
+  messageHeaderAddresses,
   requireMailbox,
   resultLimit,
   runGam,
@@ -58,7 +59,6 @@ import { registerSourceReplyAuthorization } from "./source-reply-authorization.j
 const MAX_DRIVE_TEXT_CHARS = 200_000;
 const DIRECT_SLACK_SESSION = /^agent:cellect-fi-user:slack:direct:[^\s]{1,480}$/;
 const SLACK_USER_ID = /^U[A-Z0-9]{8,}$/i;
-const EMAIL_HEADER = /^\s*(?:from|to|cc|delivered-to|reply-to)\s*:\s*(.*)$/gim;
 
 /**
  * Mirror verified Slack DMs and explicitly mapped channel threads into the
@@ -128,7 +128,8 @@ async function projectVerifiedSlackMessage(
 /**
  * The shared tenant inbox, narrowed to the requester's own correspondence:
  * every search is ANDed with from/to/cc the requester, and a message is read
- * only when its headers name the requester.
+ * only when its own From, To, Cc or Delivered-To header names one of the
+ * requester's verified addresses exactly.
  */
 async function searchOrReadSharedInbox(
   config: ResolvedPluginConfig,
@@ -167,6 +168,25 @@ async function searchOrReadSharedInbox(
   if (!input.messageId) {
     throw new Error("messageId is required for read_shared_inbox");
   }
+  // Headers only, no body: quoted headers in forwarded mail must not count.
+  const headers = await runGam(config, shared, [
+    "show",
+    "messages",
+    "ids",
+    input.messageId,
+    "headers",
+    "from,to,cc,delivered-to",
+  ]);
+  const verified = new Set([requester]);
+  if (delegation.gmail.enabled && delegation.gmail.mailbox) {
+    verified.add(delegation.gmail.mailbox.trim().toLowerCase());
+  }
+  // Every message is delivered to the shared inbox; that address proves nothing.
+  verified.delete(shared);
+  const named = messageHeaderAddresses(headers);
+  if (![...verified].some((address) => named.has(address))) {
+    throw new Error("That shared-inbox message is not from, to, or copied to you");
+  }
   const output = await runGam(config, shared, [
     "show",
     "messages",
@@ -175,12 +195,6 @@ async function searchOrReadSharedInbox(
     "showbody",
     "showattachments",
   ]);
-  const addressed = [...output.matchAll(EMAIL_HEADER)].some((match) =>
-    (match[1] ?? "").toLowerCase().includes(requester),
-  );
-  if (!addressed) {
-    throw new Error("That shared-inbox message is not from, to, or copied to you");
-  }
   return jsonResult({ mailbox: shared, scope: `from/to/cc ${requester}`, output });
 }
 

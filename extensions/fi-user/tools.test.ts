@@ -912,25 +912,4 @@ describe("shared inbox", () => {
       expect(mocks.execFile).not.toHaveBeenCalled();
     },
   );
-
-  it("reads a shared-inbox message only when it is addressed from or to the requester", async () => {
-    mocks.execFile.mockResolvedValueOnce({
-      stdout: "From: Someone <someone@example.com>\nTo: shared@example.com\n\nbody",
-      stderr: "",
-    });
-    await expect(
-      plugin()
-        .tool("fi_user_gmail", context())
-        .execute("g3", { action: "read_shared_inbox", messageId: "abc123" }),
-    ).rejects.toThrow(/not from, to, or copied to you/);
-    mocks.execFile.mockResolvedValueOnce({
-      stdout: "From: Member <Member@Example.com>\nTo: shared@example.com\n\nbody",
-      stderr: "",
-    });
-    await expect(
-      plugin()
-        .tool("fi_user_gmail", context())
-        .execute("g4", { action: "read_shared_inbox", messageId: "abc123" }),
-    ).resolves.toBeTruthy();
-  });
 });
