@@ -79,6 +79,14 @@ function createTriggerHarness(options: TriggerCase = {}) {
   return { added, removed, history, replies, resolveSlackSystemEventRoute };
 }
 
+function requireTurn(): Record<string, any> {
+  const turn = runChannelAnnouncedAgentTurn.mock.calls[0]?.[0];
+  if (!turn) {
+    throw new Error("expected a reaction-trigger turn");
+  }
+  return turn as Record<string, any>;
+}
+
 function reactionEvent(overrides: Record<string, unknown> = {}) {
   return {
     type: "reaction_added",
@@ -106,7 +114,7 @@ describe("Slack reaction triggers", () => {
     await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
 
     expect(runChannelAnnouncedAgentTurn).toHaveBeenCalledTimes(1);
-    const [turn] = runChannelAnnouncedAgentTurn.mock.calls[0];
+    const turn = requireTurn();
     expect(turn).toMatchObject({
       channel: "slack",
       accountId: "fi-admin",
@@ -144,7 +152,7 @@ describe("Slack reaction triggers", () => {
     await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
 
     expect(replies).toHaveBeenCalledWith(expect.objectContaining({ ts: "1789000000.000100" }));
-    const [turn] = runChannelAnnouncedAgentTurn.mock.calls[0];
+    const turn = requireTurn();
     expect(turn.threadId).toBe("1788990000.000001");
     expect(turn.message).toContain("- file ids: F9");
   });
