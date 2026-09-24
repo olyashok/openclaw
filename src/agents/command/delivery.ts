@@ -20,7 +20,6 @@ import {
   hasEnabledDeliveryOperation,
   resolveMessagingToolPayloadDedupe,
 } from "../../auto-reply/reply/reply-payloads-dedupe.runtime.js";
-import { resolveResponsePrefixTemplate } from "../../auto-reply/reply/response-prefix-template.js";
 import { createChannelReplyTransform } from "../../channels/message/reply-transform.js";
 import {
   sendDurableMessageBatchCore,
@@ -392,8 +391,6 @@ async function normalizeSentMediaUrlsForDelivery(params: {
   return normalizedUrls;
 }
 
-const UNRESOLVED_RESPONSE_PREFIX_VAR_PATTERN = /\{[a-zA-Z][a-zA-Z0-9.]*\}/;
-
 async function filterAlreadyDeliveredReplyPayloads(params: {
   cfg: OpenClawConfig;
   payloads: ReplyPayload[];
@@ -528,14 +525,7 @@ function normalizeAgentCommandReplyPayloads(params: {
     });
   }
   const responsePrefixContext = replyPrefix.responsePrefixContextProvider();
-  const resolvedResponsePrefix = resolveResponsePrefixTemplate(
-    replyPrefix.responsePrefix,
-    responsePrefixContext,
-  );
-  const responsePrefix =
-    resolvedResponsePrefix && UNRESOLVED_RESPONSE_PREFIX_VAR_PATTERN.test(resolvedResponsePrefix)
-      ? undefined
-      : replyPrefix.responsePrefix;
+  const responsePrefix = replyPrefix.responsePrefix;
   const deliveryMessaging = deliveryPlugin?.messaging;
   const transformReplyPayload = createChannelReplyTransform({
     messaging: deliveryMessaging,

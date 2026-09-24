@@ -59,6 +59,7 @@ import { inspectSlackConversationRouteOwner } from "./conversation-route-owner.j
 import { assertSlackDetachedTargetAllowed } from "./detached-target-admission.js";
 import { formatSlackError } from "./errors.js";
 import { shouldSuppressLocalSlackExecApprovalPrompt } from "./exec-approvals.js";
+import { formatSlackUserMention } from "./format.js";
 import { resolveSlackGroupRequireMention, resolveSlackGroupToolPolicy } from "./group-policy.js";
 import { isSlackWorkspaceInstallation } from "./installation-identity-state.js";
 import { SLACK_TEXT_LIMIT } from "./limits.js";
@@ -584,6 +585,13 @@ export const slackPlugin: ChannelPlugin<ResolvedSlackAccount, SlackProbe> = crea
         return normalizeSlackMessagingTarget(`channel:${id}`);
       },
       inferTargetChatType: ({ to }) => resolveSlackRouteTarget(to)?.chatType,
+      // Inbound room replies mention the requester; DMs do not (see message-handler/dispatch.ts).
+      formatSenderMention: ({ senderId, to }) => {
+        const target = parseSlackTarget(to, { defaultKind: "channel" });
+        return !target || target.kind === "user" || /^D/i.test(target.id)
+          ? ""
+          : formatSlackUserMention(senderId);
+      },
       resolveOutboundSessionRoute: async (params) => await resolveSlackOutboundSessionRoute(params),
       hasStructuredReplyPayload: ({ payload }) => {
         try {

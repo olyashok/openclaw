@@ -25,6 +25,8 @@ export type ResponsePrefixContext = {
 
 // Regex pattern for template variables: {variableName} or {variable.name}
 const TEMPLATE_VAR_PATTERN = /\{([a-zA-Z][a-zA-Z0-9.]*)\}/g;
+/** Matches a template variable left in a resolved prefix; such a prefix must not be sent. */
+export const UNRESOLVED_RESPONSE_PREFIX_VAR_PATTERN = /\{[a-zA-Z][a-zA-Z0-9.]*\}/;
 
 /**
  * Interpolate template variables in a response prefix string.
