@@ -23,6 +23,8 @@ type TriggerCase = {
   requestUsers?: string[];
   channelRequestUsers?: string[];
   channelType?: "channel" | "im";
+  triggerKey?: string;
+  channelAllowed?: boolean;
   history?: Array<Record<string, unknown>>;
   replies?: Array<Record<string, unknown>>;
 };
@@ -52,7 +54,7 @@ function createTriggerHarness(options: TriggerCase = {}) {
     channels: {
       slack: {
         reactionTriggers: {
-          inbox_tray: {
+          [options.triggerKey ?? "inbox_tray"]: {
             prompt: PROMPT,
             ...(options.requestUsers ? { requestUsers: options.requestUsers } : {}),
           },
@@ -73,10 +75,17 @@ function createTriggerHarness(options: TriggerCase = {}) {
     sessionKey: "agent:fi-admin:slack:channel:c1:thread:1789000000.000100",
   }));
   ctx.resolveSlackSystemEventRoute = resolveSlackSystemEventRoute;
+  if (options.channelAllowed === false) {
+    ctx.isChannelAllowed = () => false;
+  }
+  const log = vi.fn();
+  ctx.runtime = { ...ctx.runtime, log } as SlackMonitorContext["runtime"];
   registerSlackReactionEvents({ ctx });
   const added = harness.getHandler("reaction_added") as SlackSystemEventHandler;
   const removed = harness.getHandler("reaction_removed") as SlackSystemEventHandler;
-  return { added, removed, history, replies, resolveSlackSystemEventRoute };
+  const logLines = () => log.mock.calls.map((call) => String(call[0]));
+  const decisions = () => logLines().filter((line) => line.startsWith("slack reaction trigger "));
+  return { added, removed, history, replies, resolveSlackSystemEventRoute, logLines, decisions };
 }
 
 function requireTurn(): Record<string, any> {
@@ -139,6 +148,48 @@ describe("Slack reaction triggers", () => {
     expect(enqueueRoutedSystemEvent).not.toHaveBeenCalled();
   });
 
+  it("logs the received reaction and the started decision at INFO without message text", async () => {
+    const { added, logLines, decisions } = createTriggerHarness({ requestUsers: ["U_ALEX"] });
+
+    await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
+
+    expect(logLines()).toContain(
+      "slack reaction added account=fi-admin emoji=inbox_tray channel=C1 actor=U_ALEX ts=1789000000.000100",
+    );
+    expect(decisions()).toEqual([
+      "slack reaction trigger started account=fi-admin emoji=inbox_tray channel=C1 actor=U_ALEX ts=1789000000.000100",
+    ]);
+    expect(logLines().some((line) => line.includes("invoice attached"))).toBe(false);
+  });
+
+  it("starts on a message with no attachments", async () => {
+    const { added } = createTriggerHarness({
+      requestUsers: ["U_ALEX"],
+      history: [{ ts: "1789000000.000100", user: "U_VENDOR", text: "can you look at this?" }],
+    });
+
+    await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
+
+    expect(runChannelAnnouncedAgentTurn).toHaveBeenCalledTimes(1);
+    expect(requireTurn().message).toContain("- file ids: none");
+  });
+
+  it.each([
+    { name: "colon-wrapped config key", triggerKey: ":inbox_tray:", reaction: "inbox_tray" },
+    { name: "colon-wrapped reaction", triggerKey: "inbox_tray", reaction: ":inbox_tray:" },
+    {
+      name: "upper-case skin-tone reaction",
+      triggerKey: "inbox_tray",
+      reaction: "Inbox_Tray::skin-tone-3",
+    },
+  ])("matches a $name", async ({ triggerKey, reaction }) => {
+    const { added } = createTriggerHarness({ requestUsers: ["U_ALEX"], triggerKey });
+
+    await added({ event: reactionEvent({ reaction }), body: { event_id: "Ev1" } });
+
+    expect(runChannelAnnouncedAgentTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("finds a reacted thread reply and answers in its thread", async () => {
     const { added, replies } = createTriggerHarness({
       channelRequestUsers: ["U_ALEX"],
@@ -158,18 +209,55 @@ describe("Slack reaction triggers", () => {
   });
 
   it.each([
-    { name: "a reactor outside requestUsers", options: { requestUsers: ["U_OTHER"] } },
-    { name: "no requester list at all", options: {} },
+    {
+      name: "a reactor outside requestUsers",
+      options: { requestUsers: ["U_OTHER"] },
+      reason: "reason=request-users-mismatch",
+    },
+    {
+      name: "no requester list at all",
+      options: {},
+      reason: "reason=request-users-mismatch detail=no-request-users",
+    },
     {
       name: "a direct message",
       options: { requestUsers: ["U_ALEX"], channelType: "im" as const },
+      reason: "reason=not-a-channel detail=im",
     },
-  ])("ignores $name", async ({ options }) => {
-    const { added } = createTriggerHarness(options);
+  ])("ignores $name and logs why", async ({ options, reason }) => {
+    const { added, decisions } = createTriggerHarness(options);
 
     await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
 
     expect(runChannelAnnouncedAgentTurn).not.toHaveBeenCalled();
+    expect(decisions()).toEqual([
+      `slack reaction trigger skipped account=fi-admin emoji=inbox_tray channel=C1 actor=U_ALEX ts=1789000000.000100 ${reason}`,
+    ]);
+  });
+
+  it("logs an unauthorized sender", async () => {
+    const { added, decisions } = createTriggerHarness({
+      requestUsers: ["U_ALEX"],
+      channelAllowed: false,
+    });
+
+    await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
+
+    expect(runChannelAnnouncedAgentTurn).not.toHaveBeenCalled();
+    expect(decisions()).toEqual([
+      "slack reaction trigger skipped account=fi-admin emoji=inbox_tray channel=C1 actor=U_ALEX ts=1789000000.000100 reason=unauthorized-sender detail=channel-not-allowed",
+    ]);
+  });
+
+  it("logs a failed trigger as an error decision", async () => {
+    const { added, decisions } = createTriggerHarness({ requestUsers: ["U_ALEX"] });
+    runChannelAnnouncedAgentTurn.mockRejectedValueOnce(new Error("boom"));
+
+    await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
+
+    expect(decisions().at(-1)).toBe(
+      "slack reaction trigger skipped account=fi-admin emoji=inbox_tray channel=C1 actor=U_ALEX ts=1789000000.000100 reason=error",
+    );
   });
 
   it("ignores other emojis, removals and the bot's own reactions", async () => {
@@ -185,8 +273,20 @@ describe("Slack reaction triggers", () => {
     expect(runChannelAnnouncedAgentTurn).not.toHaveBeenCalled();
   });
 
+  it("logs non-trigger emojis and the bot's own reactions as skipped", async () => {
+    const { added, decisions } = createTriggerHarness({ requestUsers: ["U_ALEX", "U_BOT"] });
+
+    await added({ event: reactionEvent({ reaction: "thumbsup" }), body: { event_id: "Ev1" } });
+    await added({ event: reactionEvent({ user: "U_BOT" }), body: { event_id: "Ev3" } });
+
+    expect(decisions()).toEqual([
+      "slack reaction trigger skipped account=fi-admin emoji=thumbsup channel=C1 actor=U_ALEX ts=1789000000.000100 reason=not-a-trigger-emoji",
+      "slack reaction trigger skipped account=fi-admin emoji=inbox_tray channel=C1 actor=U_BOT ts=1789000000.000100 reason=own-reaction",
+    ]);
+  });
+
   it("runs once per message and emoji, including skin-tone variants and replays", async () => {
-    const { added } = createTriggerHarness({ requestUsers: ["U_ALEX", "U_NICK"] });
+    const { added, decisions } = createTriggerHarness({ requestUsers: ["U_ALEX", "U_NICK"] });
 
     await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
     await added({ event: reactionEvent(), body: { event_id: "Ev1" } });
@@ -196,5 +296,6 @@ describe("Slack reaction triggers", () => {
     });
 
     expect(runChannelAnnouncedAgentTurn).toHaveBeenCalledTimes(1);
+    expect(decisions().filter((line) => line.includes("reason=dedupe"))).toHaveLength(2);
   });
 });

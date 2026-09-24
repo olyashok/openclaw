@@ -3,7 +3,6 @@ import { runChannelAnnouncedAgentTurn } from "openclaw/plugin-sdk/channel-join-i
 import type { SlackAccountConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDedupeCache } from "openclaw/plugin-sdk/dedupe-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { mergeSlackAccountConfig } from "../../accounts.js";
 import { readSlackMessages, type SlackMessageSummary } from "../../actions.js";
 import { formatSlackTarget } from "../../target-parsing.js";
@@ -20,17 +19,71 @@ const SLACK_REACTION_TRIGGER_TIMEOUT_SECONDS = 600;
 // One run per message and emoji: reconnect replays and a second reactor must not refile.
 const reactionTriggerRuns = createDedupeCache({ ttlMs: 24 * 60 * 60 * 1_000, maxSize: 2_000 });
 
+/**
+ * Canonical emoji name for matching: Slack reports skin-tone variants as
+ * "emoji::skin-tone-2", and operators may write keys as ":emoji:".
+ */
+export function normalizeSlackReactionName(reaction: string | undefined): string | undefined {
+  const emoji = reaction
+    ?.trim()
+    .replace(/^:+|:+$/g, "")
+    .split("::")[0]
+    ?.trim()
+    .toLowerCase();
+  return emoji || undefined;
+}
+
 export function resolveSlackReactionTrigger(
   ctx: Pick<SlackMonitorContext, "cfg" | "accountId">,
   reaction: string | undefined,
 ): (SlackReactionTriggerConfig & { emoji: string }) | undefined {
-  // Slack reports skin-tone variants as "emoji::skin-tone-2".
-  const emoji = reaction?.split("::")[0]?.trim().toLowerCase();
+  const emoji = normalizeSlackReactionName(reaction);
   if (!emoji || !ctx.cfg) {
     return undefined;
   }
-  const trigger = mergeSlackAccountConfig(ctx.cfg, ctx.accountId).reactionTriggers?.[emoji];
+  const triggers = mergeSlackAccountConfig(ctx.cfg, ctx.accountId).reactionTriggers ?? {};
+  const trigger =
+    triggers[emoji] ??
+    Object.entries(triggers).find(([key]) => normalizeSlackReactionName(key) === emoji)?.[1];
   return trigger ? { ...trigger, emoji } : undefined;
+}
+
+export type SlackReactionTriggerSkipReason =
+  | "not-a-trigger-emoji"
+  | "incomplete-event"
+  | "own-reaction"
+  | "unauthorized-sender"
+  | "not-a-channel"
+  | "request-users-mismatch"
+  | "dedupe"
+  | "error";
+
+/** One INFO line per trigger decision; identifiers only, never message text. */
+export function logSlackReactionTriggerDecision(params: {
+  ctx: Pick<SlackMonitorContext, "accountId" | "runtime">;
+  emoji: string | undefined;
+  channelId: string | undefined;
+  actorId: string | undefined;
+  messageTs: string | undefined;
+  decision: "started" | "skipped";
+  reason?: SlackReactionTriggerSkipReason;
+  detail?: string;
+}): void {
+  const parts = [
+    `slack reaction trigger ${params.decision}`,
+    `account=${params.ctx.accountId}`,
+    `emoji=${params.emoji ?? "-"}`,
+    `channel=${params.channelId ?? "-"}`,
+    `actor=${params.actorId ?? "-"}`,
+    `ts=${params.messageTs ?? "-"}`,
+  ];
+  if (params.reason) {
+    parts.push(`reason=${params.reason}`);
+  }
+  if (params.detail) {
+    parts.push(`detail=${params.detail}`);
+  }
+  params.ctx.runtime.log?.(parts.join(" "));
 }
 
 async function readReactedSlackMessage(params: {
@@ -110,11 +163,24 @@ export async function runSlackReactionTrigger(params: {
   const channelId = event.item?.channel;
   const messageTs = event.item?.ts;
   const actorId = event.user;
-  if (event.item?.type !== "message" || !channelId || !messageTs || !actorId) {
+  const skip = (reason: SlackReactionTriggerSkipReason, detail?: string): "skipped" => {
+    logSlackReactionTriggerDecision({
+      ctx,
+      emoji: trigger.emoji,
+      channelId,
+      actorId,
+      messageTs,
+      decision: "skipped",
+      reason,
+      detail,
+    });
     return "skipped";
+  };
+  if (event.item?.type !== "message" || !channelId || !messageTs || !actorId) {
+    return skip("incomplete-event");
   }
   if (actorId === ctx.botUserId) {
-    return "skipped";
+    return skip("own-reaction");
   }
   const auth = await authorizeSlackSystemEventSender({
     ctx,
@@ -122,11 +188,11 @@ export async function runSlackReactionTrigger(params: {
     channelId,
     eventScope,
   });
-  if (!auth.allowed || (auth.channelType !== "channel" && auth.channelType !== "group")) {
-    logVerbose(
-      `slack: ignore reaction trigger :${trigger.emoji}: from ${actorId} in ${channelId} (${auth.allowed ? "not a channel" : (auth.reason ?? "unauthorized")})`,
-    );
-    return "skipped";
+  if (!auth.allowed) {
+    return skip("unauthorized-sender", auth.reason);
+  }
+  if (auth.channelType !== "channel" && auth.channelType !== "group") {
+    return skip("not-a-channel", auth.channelType);
   }
   const teamId = eventScope?.teamId ?? ctx.teamId;
   const channelConfig = resolveSlackChannelConfig({
@@ -142,14 +208,11 @@ export async function runSlackReactionTrigger(params: {
   // Triggers act on the actor's behalf, so they need an explicit requester list.
   const requestUsers = trigger.requestUsers ?? channelConfig?.requestUsers;
   if (!requestUsers || !resolveSlackRequestUserAllowed({ requestUsers, teamId, userId: actorId })) {
-    logVerbose(
-      `slack: ignore reaction trigger :${trigger.emoji}: from ${actorId} in ${channelId} (not a request user)`,
-    );
-    return "skipped";
+    return skip("request-users-mismatch", requestUsers ? undefined : "no-request-users");
   }
   const runKey = `${ctx.accountId}:${teamId}:${channelId}:${messageTs}:${trigger.emoji}`;
   if (reactionTriggerRuns.check(runKey)) {
-    return "skipped";
+    return skip("dedupe");
   }
   try {
     const [message, permalink] = await Promise.all([
@@ -157,6 +220,14 @@ export async function runSlackReactionTrigger(params: {
       resolveSlackPermalink({ ctx, channelId, ts: messageTs, eventScope }),
     ]);
     const threadTs = message?.thread_ts ?? messageTs;
+    logSlackReactionTriggerDecision({
+      ctx,
+      emoji: trigger.emoji,
+      channelId,
+      actorId,
+      messageTs,
+      decision: "started",
+    });
     const channelLabel = resolveSlackChannelLabel({ channelId, channelName: auth.channelName });
     const result = await runChannelAnnouncedAgentTurn({
       cfg: ctx.cfg,
@@ -199,7 +270,7 @@ export async function runSlackReactionTrigger(params: {
   } catch (err) {
     reactionTriggerRuns.delete(runKey);
     ctx.runtime.error?.(`slack reaction trigger failed: ${formatErrorMessage(err)}`);
-    return "skipped";
+    return skip("error");
   }
 }
 
