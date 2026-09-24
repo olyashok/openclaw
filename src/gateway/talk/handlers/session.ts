@@ -379,9 +379,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           });
           replacement?.assertCurrent(target);
         };
-        const initialItems = replacement
-          ? await readTalkRealtimeInitialItems(target, assertEnsuredTargetCurrent)
-          : [];
+        const initialItems = await readTalkRealtimeInitialItems(target, assertEnsuredTargetCurrent);
         assertEnsuredTargetCurrent();
         const model =
           normalizeOptionalString(relayLaunch.providerConfig.model) ??
@@ -406,10 +404,9 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           initialItems,
           voiceSelectionVoices: voices,
           instructions:
-            (controlSource === "delegation"
-              ? (providerInstructions ?? "")
-              : buildRealtimeInstructions(providerInstructions, params.sessionCapsule)) +
-            buildTalkRealtimeHistoryInstructions(initialItems),
+            buildRealtimeInstructions(providerInstructions, params.sessionCapsule, {
+              providerHandlesAgentConsult: controlSource === "delegation",
+            }) + buildTalkRealtimeHistoryInstructions(initialItems),
           tools:
             controlSource === "delegation"
               ? []
@@ -418,6 +415,8 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           sessionTarget: target,
           voice: launchOptions.voice,
           language: normalizeOptionalLowercaseString(params.language),
+          initialItems,
+          sessionCapsule: params.sessionCapsule,
           forceAgentConsultOnFinalTranscript: relayLaunch.forceAgentConsultOnFinalTranscript,
           speakerMxid: bound?.speakerMxid,
           matrixRoute: bound

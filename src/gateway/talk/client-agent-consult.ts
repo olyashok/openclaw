@@ -30,11 +30,13 @@ import {
 import { parseRealtimeVoiceAgentConsultArgs } from "../../talk/agent-consult-tool.js";
 import { controlRealtimeVoiceAgentRun } from "../../talk/agent-run-control.js";
 import {
+  authorizeCurrentClientVoiceConfirmation,
   authorizeClientVoiceConfirmation,
   authorizeObservedClientVoiceConfirmation,
   bindAuthorizedClientVoiceConfirmation,
   observeClientVoiceConfirmationRun,
 } from "../../talk/client-voice-confirmation.js";
+import { buildRealtimeTalkSessionContextInstructions } from "../../talk/session-context.js";
 import {
   assertClientVoiceSessionOpen,
   registerClientVoiceConsultRun,
@@ -207,6 +209,7 @@ export function createTalkClientAgentConsultRunner(params: {
   authority?: TalkAgentConsultAuthority;
   getVoiceSessionId: () => string | undefined;
   initialItems: Array<{ role: "user" | "assistant"; text: string }>;
+  sessionCapsule?: string;
   runIdPrefix?: string;
   surface?: string;
   registerRun?: (params: { runId: string }) => void;
@@ -294,7 +297,7 @@ export function createTalkClientAgentConsultRunner(params: {
         })
       : source === "native-delegation"
         ? authorizeObservedClientVoiceConfirmation({ agentId, voiceSessionId })
-        : undefined;
+        : authorizeCurrentClientVoiceConfirmation({ agentId, voiceSessionId });
     let confirmationRetryContext: string | undefined;
     const getAdditionalSystemPrompt = () => confirmationRetryContext;
     const runtime = owner
@@ -330,6 +333,12 @@ export function createTalkClientAgentConsultRunner(params: {
           runIdPrefix: params.runIdPrefix ?? "talk-realtime-consult",
           args: parsedArgs,
           transcript: params.initialItems,
+          extraSystemPrompt: [
+            "You are the configured OpenClaw agent receiving delegated requests from a live voice bridge. Act on behalf of the user, use available tools when appropriate, and return a brief speakable result.",
+            buildRealtimeTalkSessionContextInstructions(params.sessionCapsule),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
           surface: params.surface ?? "a browser Talk session",
           userLabel: "User",
           questionSourceLabel: "user",

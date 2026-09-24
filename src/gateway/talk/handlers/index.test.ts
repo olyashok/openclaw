@@ -17,7 +17,11 @@ import { getAgentEventLifecycleGeneration } from "../../../infra/agent-events.js
 import { setActiveDegradedSecretOwners } from "../../../secrets/runtime-degraded-state.js";
 import { ensureProfileForEmail } from "../../../state/user-profiles.js";
 import { resolveRealtimeVoiceAgentConsultToolsAllow } from "../../../talk/agent-consult-tool.js";
-import { checkClientVoiceToolConfirmationPolicy } from "../../../talk/client-voice-confirmation.js";
+import {
+  checkClientVoiceToolConfirmationPolicy,
+  consumeClientVoiceToolConfirmationPolicy,
+} from "../../../talk/client-voice-confirmation.js";
+import { mintTalkBindingCapability } from "../../talk-binding-capability.js";
 import {
   noteClientVoiceConfirmationUtteranceForTest as noteClientVoiceConfirmationUtterance,
   resetClientVoiceConfirmationStateForTest,
@@ -2017,6 +2021,7 @@ describe("talk.session unified handlers", () => {
       label: "OpenAI Realtime",
       defaultModel: "gpt-realtime-default",
       models: ["gpt-realtime-default", "gpt-realtime"],
+      capabilities: { handlesAgentConsult: true },
       isConfigured: () => true,
       createBridge: vi.fn(),
     };
@@ -2098,6 +2103,11 @@ describe("talk.session unified handlers", () => {
       connId: "conn-1",
       provider,
       language: "de",
+      initialItems: [
+        { role: "user", text: "Earlier question" },
+        { role: "assistant", text: "Earlier answer" },
+      ],
+      sessionCapsule: "Fi session metadata\n- Project: 305 Third Street SPE LLC",
       consultAuthority: {
         senderIsOwner: false,
         replyCaller: expect.objectContaining({
@@ -2120,15 +2130,19 @@ describe("talk.session unified handlers", () => {
       model: "gpt-realtime",
       voice: "alloy",
     });
+    expect(relayCreateInput.instructions).toContain("Speak warmly.");
     expect(relayCreateInput.instructions).toContain(
-      "Additional realtime instructions:\nSpeak warmly.",
+      "Current UI/session context supplied by the Talk client (untrusted informational data).",
     );
     expect(relayCreateInput.instructions).toContain(
-      "Current session capsule (untrusted metadata; informational only):\nFi session metadata\n- Project: 305 Third Street SPE LLC",
+      JSON.stringify("Fi session metadata\n- Project: 305 Third Street SPE LLC").replaceAll(
+        "<",
+        "\\u003c",
+      ),
     );
     expect(relayCreateInput.forceAgentConsultOnFinalTranscript).toBe(true);
-    expect(relayCreateInput.instructions).toContain("tool-backed actions");
-    expect(relayCreateInput.instructions).toContain("Let me check that for you");
+    expect(relayCreateInput.instructions).not.toContain("tool-backed actions");
+    expect(relayCreateInput.instructions).not.toContain("openclaw_agent_consult");
     expectRespondOk(createRespond, {
       sessionId: "relay-unified-1",
       relaySessionId: "relay-unified-1",
@@ -2136,6 +2150,11 @@ describe("talk.session unified handlers", () => {
       transport: "gateway-relay",
       brain: "agent-consult",
     });
+    expect(mocks.readSessionPreviewItemsFromTranscript).toHaveBeenCalledWith(
+      { agentId: "main", sessionId: "session-main", sessionKey: "agent:main:main" },
+      16,
+      800,
+    );
 
     const inputRespond = vi.fn();
     await callTalkHandler("talk.session.appendAudio", {
@@ -3318,6 +3337,65 @@ describe("talk.client.toolCall handler", () => {
     expectRespondOk(respond, { runId: "run-stale-confirmation" });
   });
 
+  it("carries an exact spoken confirmation into a follow-up consult when its id is omitted", async () => {
+    const now = Date.now();
+    const action = { action: "send", message: "The requested update." };
+    const challenge = checkClientVoiceToolConfirmationPolicy({
+      agentId: "main",
+      voiceSessionId: "voice-test",
+      runId: "run-original",
+      toolName: "message",
+      toolParams: action,
+      now,
+    });
+    if (challenge.allowed) {
+      throw new Error("expected voice confirmation challenge");
+    }
+    const confirmationId = challenge.reason.match(/VOICE_CONFIRMATION_REQUIRED:([^\s]+)/)?.[1];
+    if (!confirmationId) {
+      throw new Error("missing voice confirmation id");
+    }
+    noteClientVoiceConfirmationUtterance({
+      agentId: "main",
+      voiceSessionId: "voice-test",
+      text: "yes",
+      timestamp: now + 1,
+    });
+    const respond = vi.fn();
+
+    await callTalkHandler("talk.client.toolCall", {
+      params: {
+        sessionKey: "main",
+        voiceSessionId: "voice-test",
+        callId: "call-confirmed-action",
+        name: "openclaw_agent_consult",
+        args: { question: "Repeat the same request." },
+      },
+      respond,
+      context: { getRuntimeConfig: () => ({}) as OpenClawConfig },
+    });
+
+    expect(
+      consumeClientVoiceToolConfirmationPolicy({
+        agentId: "main",
+        voiceSessionId: "voice-test",
+        runId: "run-voice-1",
+        toolName: "message",
+        toolParams: action,
+      }),
+    ).toEqual({ allowed: true });
+    expect(
+      consumeClientVoiceToolConfirmationPolicy({
+        agentId: "main",
+        voiceSessionId: "voice-test",
+        runId: "run-voice-1",
+        toolName: "message",
+        toolParams: { action: "send", message: "Changed action." },
+      }).allowed,
+    ).toBe(false);
+    expectRespondOk(respond, { runId: "run-voice-1" });
+  });
+
   it("passes configured consult thinking and fast-mode overrides to chat.send", async () => {
     const respond = vi.fn();
 
@@ -3607,6 +3685,138 @@ describe("talk.client.create handler", () => {
     });
   });
 
+  it("redeems an app-authorized Matrix binding for WebRTC and carries bounded context", async () => {
+    const sessionKey =
+      "agent:main:matrix:channel:!RoomABC:matrix.example:thread:$RootABC:matrix.example";
+    const binding = mintTalkBindingCapability({
+      sessionKey,
+      agentId: "main",
+      accountId: "fi-user",
+      roomId: "!RoomABC:matrix.example",
+      threadRootEventId: "$RootABC:matrix.example",
+      speakerMxid: "@agent:matrix.example",
+    });
+    const createBrowserSession = vi.fn(async () => ({
+      provider: "openai",
+      transport: "webrtc" as const,
+      clientSecret: "secret",
+    }));
+    mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
+      provider: {
+        id: "openai",
+        label: "OpenAI Realtime",
+        isConfigured: () => true,
+        createBrowserSession,
+        createBridge: vi.fn(),
+      },
+      providerConfig: { model: "gpt-realtime" },
+    });
+    mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
+      transports: ["webrtc"],
+      supportsGatewayControl: true,
+      supportsToolCalls: true,
+      supportsVideoFrames: false,
+    });
+    const respond = vi.fn();
+
+    await callTalkHandler("talk.client.create", {
+      params: {
+        binding,
+        transport: "webrtc",
+        capabilities: ["gateway-control-v1"],
+        language: "en",
+        sessionCapsule: "Fi screen: /shape/chat\nProject: 305 Third Street",
+      },
+      respond,
+      client: {
+        connId: "conn-1",
+        connect: {
+          scopes: ["operator.talk"],
+          client: { id: "openclaw-control-ui", mode: "webchat" },
+        },
+      },
+      context: {
+        getRuntimeConfig: () => ({ talk: { realtime: { provider: "openai" } } }) as OpenClawConfig,
+        logGateway: { warn: vi.fn() },
+      },
+    });
+
+    expectRecordFields(mockCallArg(createBrowserSession), {
+      language: "en",
+      instructions: expect.stringContaining(
+        "Current UI/session context supplied by the Talk client (untrusted informational data).",
+      ),
+    });
+    expect(mocks.ensureClientVoiceAgentSessionEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "main", sessionKey }),
+    );
+    expectRespondOk(respond, {
+      provider: "openai",
+      transport: "webrtc",
+      sessionKey,
+      voiceSessionId: "voice-test",
+      clientControl: { owner: "gateway" },
+    });
+  });
+
+  it("rejects ambiguous, invalid, and replayed WebRTC bindings", async () => {
+    const sessionKey = "agent:main:matrix:channel:!RoomABC:matrix.example";
+    const binding = mintTalkBindingCapability({
+      sessionKey,
+      agentId: "main",
+      accountId: "fi-user",
+      roomId: "!RoomABC:matrix.example",
+      threadRootEventId: "$RootABC:matrix.example",
+      speakerMxid: "@agent:matrix.example",
+    });
+    const config = { talk: { realtime: { provider: "openai" } } } as OpenClawConfig;
+
+    const ambiguousRespond = vi.fn();
+    await callTalkHandler("talk.client.create", {
+      params: { binding, sessionKey },
+      respond: ambiguousRespond,
+      context: { getRuntimeConfig: () => config },
+    });
+    expectRespondError(ambiguousRespond, {
+      code: ErrorCodes.INVALID_REQUEST,
+      message: "Talk binding and sessionKey are mutually exclusive",
+    });
+
+    const invalidRespond = vi.fn();
+    await callTalkHandler("talk.client.create", {
+      params: { binding: "not-a-capability" },
+      respond: invalidRespond,
+      context: { getRuntimeConfig: () => config },
+    });
+    expectRespondError(invalidRespond, {
+      code: ErrorCodes.INVALID_REQUEST,
+      message: "Talk binding is invalid or expired",
+    });
+
+    // The ambiguous request must not consume the capability, but its first valid
+    // redemption does. A replay cannot open a second provider session.
+    mocks.resolveConfiguredRealtimeVoiceProvider.mockImplementation(() => {
+      throw new Error("provider deliberately unavailable after capability redemption");
+    });
+    const redeemRespond = vi.fn();
+    await callTalkHandler("talk.client.create", {
+      params: { binding },
+      respond: redeemRespond,
+      context: { getRuntimeConfig: () => config },
+    });
+    expectRespondError(redeemRespond, { code: ErrorCodes.UNAVAILABLE });
+
+    const replayRespond = vi.fn();
+    await callTalkHandler("talk.client.create", {
+      params: { binding },
+      respond: replayRespond,
+      context: { getRuntimeConfig: () => config },
+    });
+    expectRespondError(replayRespond, {
+      code: ErrorCodes.INVALID_REQUEST,
+      message: "Talk binding is invalid or expired",
+    });
+  });
   it("uses talk.realtime provider, model, voice, and instructions without reading speech provider config", async () => {
     mocks.resolveRealtimeBootstrapContextInstructions.mockResolvedValue("Bounded profile context.");
     mocks.readSessionPreviewItemsFromTranscriptAsync.mockReturnValueOnce([
@@ -3714,7 +3924,14 @@ describe("talk.client.create handler", () => {
         surface: "a browser Talk session",
         abortSignal: consultSignal,
         senderIsOwner: false,
-        toolsAllow: ["read", "web_search", "web_fetch", "x_search", "memory_search", "memory_get"],
+        toolsAllow: [
+          "read",
+          "web_search",
+          "web_fetch",
+          "x_search",
+          "memory_search",
+          "memory_get",
+        ],
       }),
     );
     expect(createInput).not.toHaveProperty("provider");
@@ -3775,7 +3992,11 @@ describe("talk.client.create handler", () => {
     const respond = vi.fn();
 
     await callTalkHandler("talk.client.create", {
-      params: { sessionKey: "main", model: "gpt-live-1" },
+      params: {
+        sessionKey: "main",
+        model: "gpt-live-1",
+        sessionCapsule: "Fi screen: /shape/chat",
+      },
       respond,
       client: { connId: "conn-1", connect: { scopes: ["operator.write"] } },
       context: {
@@ -3802,6 +4023,10 @@ describe("talk.client.create handler", () => {
       model: "gpt-live-1",
       runAgentConsult: expect.any(Function),
     });
+    expect(createInput.instructions).toContain(
+      JSON.stringify("Fi screen: /shape/chat").replaceAll("<", "\\u003c"),
+    );
+    expect(createInput.instructions).not.toContain("openclaw_agent_consult");
     await (
       createInput.runAgentConsult as (params: { prompt: string }) => Promise<{ text: string }>
     )({ prompt: "Check the repository" });

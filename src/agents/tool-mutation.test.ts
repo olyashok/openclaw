@@ -49,9 +49,22 @@ describe("tool mutation helpers", () => {
     ).toEqual({ mutatingAction: true, replaySafe: false });
   });
 
+  it.each(["tavily_search", "tavily_extract"])(
+    "classifies %s as read-only and replay-safe",
+    (tool) => {
+      expect(isMutatingToolCall(tool, { query: "public records" })).toBe(false);
+      expect(isReplaySafeToolCall(tool, { query: "public records" })).toBe(true);
+    },
+  );
+
   it.each([
     ["exec", "sed -n '1,220p' src/agents/tool-mutation.ts"],
+    [
+      "exec",
+      "sed -n '1,120p' src/agents/tool-mutation.ts && sed -n '1,80p' src/talk/session-context.ts",
+    ],
     ["bash", "cat package.json"],
+    ["bash", "cat package.json && rg -n 'test' package.json"],
     ["exec", "rg -n tool-mutation src/agents"],
     ["exec", "gh search prs --repo openclaw/openclaw tool-mutation --json number,title,state"],
     ["bash", "gh pr view 123 --repo openclaw/openclaw --json title,state"],
@@ -61,11 +74,28 @@ describe("tool mutation helpers", () => {
   });
 
   it.each([
+    'psql -c "select 1"',
+    "psql -f /workspace/query.sql",
+    'psql -c "select pg_sleep(1)"',
+    'psql -c "select pg_catalog.pg_terminate_backend(123)"',
+    'psql -c "select id from public.projects for share"',
+    'psql -c "with removed as (delete from public.projects returning id) select 1"',
+    "psql -c \"select 1; update public.projects set name='changed'\"",
+    'psql -c "select 1" && touch /tmp/voice-confirmation',
+    "cat package.json && touch /tmp/voice-confirmation",
+  ])("keeps unclassified shell commands mutating: %s", (command) => {
+    expect(isMutatingToolCall("exec", { command })).toBe(true);
+  });
+
+  it.each([
     ["exec", "sed -i 's/a/b/' file.txt"],
     ["exec", "sed --in-place 's/a/b/' file.txt"],
     ["exec", "sed -n '1p' -i file.txt"],
     ["exec", "sed -n -e '1p' -e 'w /tmp/out' file.txt"],
     ["bash", "cat package.json > /tmp/package.json"],
+    ["bash", "cat package.json || echo fallback"],
+    ["bash", "cat package.json &"],
+    ["bash", "cat package.json &&"],
     ["bash", "rg foo src | wc -l"],
     ["bash", "rg --pre touch pattern file"],
     ["bash", "rg --pre=touch pattern file"],

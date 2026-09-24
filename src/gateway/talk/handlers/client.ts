@@ -17,6 +17,7 @@ import {
 } from "../../../talk/agent-consult-tool.js";
 import { controlRealtimeVoiceAgentRun } from "../../../talk/agent-run-control.js";
 import {
+  authorizeCurrentClientVoiceConfirmation,
   authorizeClientVoiceConfirmation,
   bindAuthorizedClientVoiceConfirmation,
   type ClientVoiceConfirmationGrant,
@@ -221,13 +222,13 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           "relay-owned voice sessions require relaySessionId and connection ownership",
         );
       }
-      if (parsedArgs.confirmationId) {
-        confirmationGrant = authorizeClientVoiceConfirmation({
-          agentId,
-          voiceSessionId,
-          confirmationId: parsedArgs.confirmationId,
-        });
-      }
+      confirmationGrant = parsedArgs.confirmationId
+        ? authorizeClientVoiceConfirmation({
+            agentId,
+            voiceSessionId,
+            confirmationId: parsedArgs.confirmationId,
+          })
+        : authorizeCurrentClientVoiceConfirmation({ agentId, voiceSessionId });
       // Only validated calls may replace the legacy client's connection binding.
       if (connId && !relaySessionId) {
         rememberLegacyVoiceBinding({ connId, sessionKey, voiceSessionId });

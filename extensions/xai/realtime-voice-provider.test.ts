@@ -965,6 +965,7 @@ describe("buildXaiRealtimeVoiceProvider", () => {
     vi.stubEnv("XAI_API_KEY", "xai-env"); // pragma: allowlist secret
     const bridge = createTestBridge({
       audioFormat: { encoding: "g711_ulaw", sampleRateHz: 8000, channels: 1 },
+      language: "en",
     });
 
     const { socket } = await startRealtimeBridge(bridge);
@@ -974,7 +975,7 @@ describe("buildXaiRealtimeVoiceProvider", () => {
     expect(session.audio).toEqual({
       input: {
         format: { type: "audio/pcmu" },
-        transcription: { model: "grok-transcribe" },
+        transcription: { model: "grok-transcribe", language_hint: "en" },
       },
       output: { format: { type: "audio/pcmu" } },
     });
