@@ -519,7 +519,11 @@ export default definePluginEntry({
   register(api) {
     const projectionConnection = () => {
       const config = configFromRuntime(api);
-      return { baseUrl: config.baseUrl, token: brokerToken(config) };
+      return {
+        baseUrl: config.baseUrl,
+        token: brokerToken(config),
+        fullRefreshesPerTick: config.projectionFullRefreshesPerTick,
+      };
     };
     registerSourceReplyAuthorization(api, projectionConnection);
     registerSlackChannelProjection(api, projectionConnection);
