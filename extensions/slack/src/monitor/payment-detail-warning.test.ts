@@ -116,7 +116,9 @@ describe("maybeWarnSlackPaymentDetails", () => {
         subtype: "file_share",
         thread_ts: "1788990000.000001",
         text: "see attached",
-        files: [{ id: "F1", title: "IBAN DE89370400440532013000" }] as SlackMessageEvent["files"],
+        files: [
+          { id: "F1", title: "IBAN DE89370400440532013000" },
+        ] as unknown as SlackMessageEvent["files"],
       }),
     });
 
