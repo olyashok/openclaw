@@ -163,7 +163,7 @@ describe("source reply authorization", () => {
     ).rejects.toThrow("not authorized");
     expect(request).toHaveBeenCalledTimes(2);
   });
-  it("preserves superadmin channel identity through Matrix continuation without allowing superadmin DMs", async () => {
+  it("preserves superadmin channel and private DM identities through Matrix continuation", async () => {
     const source = {
       provider: "slack",
       workspaceId: "T123",
@@ -175,6 +175,11 @@ describe("source reply authorization", () => {
       workspaceId: "T123",
       channelId: "C123",
       memberSenderIds: ["U123"],
+    });
+    const readDirectIdentity = vi.fn().mockResolvedValue({
+      workspaceId: "T123",
+      channelId: "D123",
+      peerSenderId: "U123",
     });
     const bindings = [
       { agentId: "cellect-main", match: { channel: "slack", accountId: "superadmin" } },
@@ -193,7 +198,7 @@ describe("source reply authorization", () => {
       runtime: {
         channel: {
           runtimeContexts: {
-            get: () => ({ workspaceId: "T123", readChannel }),
+            get: () => ({ workspaceId: "T123", readChannel, readDirectIdentity }),
             register: (params: { context: typeof guard }) => {
               guard = params.context;
             },
@@ -210,6 +215,7 @@ describe("source reply authorization", () => {
       guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
     ).resolves.toMatchObject({ sourceAccountId: "superadmin", externalSource: source });
     expect(readChannel).toHaveBeenCalledWith("C123");
+    entry.mockReturnValue({ provider: "slack", accountId: "superadmin", nativeChannelId: "D123" });
     await expect(
       guard.resolveSource({
         targetSessionKey: "agent:cellect-main:slack:direct:u123",
@@ -220,7 +226,15 @@ describe("source reply authorization", () => {
           peerSenderId: "U123",
         },
       }),
-    ).rejects.toThrow("Unsupported source session");
+    ).resolves.toMatchObject({
+      sourceAccountId: "superadmin",
+      externalSource: {
+        workspaceId: "T123",
+        channelId: "D123",
+        peerSenderId: "U123",
+      },
+    });
+    expect(readDirectIdentity).toHaveBeenCalledWith("D123", "U123");
   });
   it("authorizes a legacy channel-thread binding by the channel in its session key", async () => {
     // Conversation 05fd8c16: the binding predates sourceAccountId and the

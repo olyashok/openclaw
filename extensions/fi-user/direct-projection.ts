@@ -6,7 +6,8 @@ import {
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { RECONCILE_HISTORY_BATCH_SIZE, takeSweepBatch } from "./reconciliation-batch.js";
 
-const DIRECT_SESSION = /^agent:(cellect-fi-user|cellect-fi-admin):slack:direct:([uw][a-z0-9]+)$/i;
+const DIRECT_SESSION =
+  /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:direct:([uw][a-z0-9]+)$/i;
 type DirectReader = {
   botUserId: string;
   readDirect: (
@@ -128,7 +129,7 @@ export async function reconcileSlackDirectProjections(
   const configured = (config?.bindings ?? []).filter(
     (binding) =>
       binding.match.channel === "slack" &&
-      ["cellect-fi-user", "cellect-fi-admin"].includes(binding.agentId) &&
+      ["cellect-fi-user", "cellect-fi-admin", "cellect-main"].includes(binding.agentId) &&
       binding.match.accountId &&
       binding.match.accountId !== "*",
   );
