@@ -2136,6 +2136,9 @@ describe("talk.session unified handlers", () => {
       agentId: "research",
       sessionKey: "incident-42",
     });
+    expect(mocks.createTalkRealtimeRelaySession).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "en" }),
+    );
     expectRespondOk(respond, { relaySessionId: "relay-talk-owner" });
   });
 
