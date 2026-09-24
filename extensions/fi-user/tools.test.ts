@@ -16,7 +16,10 @@ const mocks = vi.hoisted(() => ({
   getSessionMessages: vi.fn(),
 }));
 
-vi.mock("node:util", () => ({ promisify: () => mocks.execFile }));
+vi.mock("node:util", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:util")>()),
+  promisify: () => mocks.execFile,
+}));
 vi.mock("openclaw/plugin-sdk/document-extractor", () => ({ extractDocumentContent: vi.fn() }));
 
 import { adminActionSessions } from "./admin-action.js";
