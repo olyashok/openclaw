@@ -23,6 +23,7 @@ import {
   createXaiVideoGenerationProviderMetadata,
   normalizeXaiRealtimeTranscriptionProviderConfig,
 } from "./capability-provider-metadata-factory.js";
+import { attachLiteLlmRealtimeVoiceCapabilities } from "./realtime-voice-capabilities.js";
 import {
   createLazyLiteLlmRealtimeVoiceBridge,
   createLazyXaiRealtimeVoiceBridge,
@@ -286,8 +287,8 @@ export function createLazyLiteLlmRealtimeVoiceProvider(
     "isProviderAuthProfileConfigured" | "resolveAgentDir"
   >,
 ): RealtimeVoiceProviderPlugin {
-  return {
+  return attachLiteLlmRealtimeVoiceCapabilities({
     ...createLiteLlmRealtimeVoiceProviderMetadata(context),
     createBridge: createLazyLiteLlmRealtimeVoiceBridge,
-  };
+  });
 }

@@ -42,6 +42,7 @@ type CatalogConnection = {
   client: GatewayClient | null;
   connected: boolean;
   voiceWake: boolean;
+  scope: CatalogScope | null;
 };
 
 type VoiceWakeWrite = {
@@ -54,6 +55,9 @@ type ModelDefaultResetIntent = {
   gatewayUrl: string;
   configRevision: string | null;
 };
+
+type CatalogScope = { gatewayUrl: string; connectionRevision: number };
+type ReadyTalkCatalog = Extract<TalkCatalogState, { kind: "ready" }>;
 
 type TalkPageProps = {
   configObject: Record<string, unknown>;
@@ -177,7 +181,7 @@ class VoiceWakeSettingsOwner {
       this.state.phase !== "saved"
         ? this.state
         : null;
-    const connection: CatalogConnection = { gatewayUrl, client, connected, voiceWake };
+    const connection: CatalogConnection = { gatewayUrl, client, connected, voiceWake, scope: null };
     this.connection = connection;
     this.update(
       draft
@@ -311,11 +315,13 @@ class TalkSettingsPage extends OpenClawLightDomElement {
   @property({ type: Boolean }) mutationDisabled = false;
   @property({ attribute: false }) buildEditor: TalkPageProps["buildEditor"] = () => html``;
 
-  @state() private catalog: TalkCatalogState = { kind: "unavailable" };
+  @state() private catalog: TalkCatalogState = { kind: "unavailable", reason: "disconnected" };
   @state() private modelDefaultResetIntent: ModelDefaultResetIntent | null = null;
 
   private connection: CatalogConnection | null = null;
   private catalogRequestId = 0;
+  private lastReadyCatalog: ReadyTalkCatalog | null = null;
+  private lastReadyCatalogScope: CatalogScope | null = null;
   /** `undefined` = baseline not yet observed; `null` = no public revision token. */
   private lastCatalogConfigRevision: string | null | undefined;
   private readonly subscriptions = new SubscriptionsController(this)
@@ -364,7 +370,7 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     voiceWakeOwner(this.context.gateway).flush();
     this.subscriptions.clear();
     this.connection = null;
-    this.catalog = { kind: "unavailable" };
+    this.catalog = { kind: "unavailable", reason: "disconnected" };
     super.disconnectedCallback();
   }
 
@@ -377,23 +383,26 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     if (this.modelDefaultResetIntent && this.modelDefaultResetIntent.gatewayUrl !== gatewayUrl) {
       this.modelDefaultResetIntent = null;
     }
+    const scope = this.readCatalogScope();
     // connecting -> connected keeps the same client object; keying only on the
     // client would leave a page mounted mid-handshake without a catalog.
     if (
       this.connection?.gatewayUrl === gatewayUrl &&
       this.connection.client === client &&
       this.connection.connected === connected &&
-      this.connection.voiceWake === voiceWake
+      this.connection.voiceWake === voiceWake &&
+      sameCatalogScope(this.connection.scope, scope)
     ) {
       return;
     }
-    const connection: CatalogConnection = { gatewayUrl, client, connected, voiceWake };
+    const connection: CatalogConnection = { gatewayUrl, client, connected, voiceWake, scope };
     this.connection = connection;
+    const cachedCatalog = this.cachedCatalog(scope);
     if (!client || !connected) {
-      this.catalog = { kind: "unavailable" };
+      this.catalog = cachedCatalog ?? { kind: "unavailable", reason: "disconnected" };
       return;
     }
-    this.catalog = { kind: "loading" };
+    this.catalog = cachedCatalog ?? { kind: "loading" };
     void this.loadCatalog(client, connection);
   }
 
@@ -402,6 +411,10 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     // same connection; only the newest request may write the catalog, or a
     // slow older response would overwrite a fresher one.
     const requestId = ++this.catalogRequestId;
+    const cachedCatalog = this.cachedCatalog(connection.scope);
+    if (cachedCatalog) {
+      this.catalog = cachedCatalog;
+    }
     try {
       const result = await client.request<TalkCatalogResult>("talk.catalog", {});
       const applied = this.applyCatalog(connection, requestId, {
@@ -415,8 +428,13 @@ class TalkSettingsPage extends OpenClawLightDomElement {
       }
     } catch {
       // The catalog only powers the pickers; the page still renders the raw
-      // configured values when it cannot be read.
-      this.applyCatalog(connection, requestId, { kind: "unavailable" });
+      // configured values when it cannot be read. Keep same-Gateway choices
+      // visible but read-only instead of making a transient failure erase them.
+      this.applyCatalog(
+        connection,
+        requestId,
+        this.cachedCatalog(connection.scope) ?? { kind: "unavailable", reason: "request-failed" },
+      );
     }
   }
 
@@ -428,11 +446,16 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     if (
       !this.isConnected ||
       this.connection !== connection ||
-      this.catalogRequestId !== requestId
+      this.catalogRequestId !== requestId ||
+      !sameCatalogScope(this.readCatalogScope(), connection.scope)
     ) {
       return false;
     }
     this.catalog = catalog;
+    if (catalog.kind === "ready") {
+      this.lastReadyCatalog = { ...catalog, stale: false };
+      this.lastReadyCatalogScope = connection.scope;
+    }
     return true;
   }
 
@@ -447,6 +470,21 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     if (intent?.gatewayUrl === connection.gatewayUrl && intent.configRevision !== configRevision) {
       this.modelDefaultResetIntent = null;
     }
+  }
+
+  private readCatalogScope(): CatalogScope | null {
+    const gateway = this.context?.gateway;
+    const gatewayUrl = gateway?.connection?.gatewayUrl;
+    const connectionRevision = gateway?.connectionRevision;
+    return gatewayUrl && typeof connectionRevision === "number"
+      ? { gatewayUrl, connectionRevision }
+      : null;
+  }
+
+  private cachedCatalog(scope: CatalogScope | null): ReadyTalkCatalog | null {
+    return sameCatalogGateway(this.lastReadyCatalogScope, scope) && this.lastReadyCatalog
+      ? { ...this.lastReadyCatalog, stale: true }
+      : null;
   }
 
   /**
@@ -639,6 +677,19 @@ class TalkSettingsPage extends OpenClawLightDomElement {
       editor: this.buildEditor(),
     });
   }
+}
+
+function sameCatalogScope(left: CatalogScope | null, right: CatalogScope | null): boolean {
+  return (
+    left !== null &&
+    right !== null &&
+    left.gatewayUrl === right.gatewayUrl &&
+    left.connectionRevision === right.connectionRevision
+  );
+}
+
+function sameCatalogGateway(left: CatalogScope | null, right: CatalogScope | null): boolean {
+  return left !== null && right !== null && left.gatewayUrl === right.gatewayUrl;
 }
 
 if (!customElements.get("openclaw-talk-settings")) {
