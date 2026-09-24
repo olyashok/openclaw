@@ -45,6 +45,10 @@ export const slackChannelConfigUiHints = {
     label: "Slack Channel Join Introduction",
     help: "Post one brief, room-specific introduction when the bot joins an allowed Slack channel (default: true). Account settings override the channel-wide setting.",
   },
+  paymentDetailWarning: {
+    label: "Slack Payment Detail Warning",
+    help: "When a message in an allowed channel appears to contain bank details (ABA routing number, bank account number, IBAN or SWIFT code), reply once in its thread advising against sharing payment instructions in Slack. Deterministic, never quotes the numbers. Default: false.",
+  },
   reactionTriggers: {
     label: "Slack Reaction Triggers",
     help: "Map an emoji name (without colons) to a trusted prompt. When an allowed request user adds that reaction to any message in a channel the bot is in, OpenClaw starts an agent turn in that message's thread with its channel, ts, file ids and permalink. Default: none.",

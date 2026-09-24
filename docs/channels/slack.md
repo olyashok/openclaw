@@ -2005,6 +2005,16 @@ Define global or message shortcuts in your Slack app configuration and use any n
 - Triggers work regardless of `reactionNotifications`; that setting only controls the passive reaction system events. The bot needs `reactions:read` and the `reaction_added` event subscription, plus `channels:history` (and `groups:history` for private channels) to read the reacted message.
 - Account entries at `channels.slack.accounts.<id>.reactionTriggers` replace the channel-wide map for that account.
 
+### Payment-detail warning
+
+Vendor bank and wire details pasted into a channel are a common payment-fraud vector. With `channels.slack.paymentDetailWarning: true` (default `false`), OpenClaw screens every human message in an allowed channel or private channel, whether or not it mentions the bot, and replies once in its thread asking people not to share payment instructions in Slack and to use the verified payment-instructions process instead.
+
+- Detection is deterministic; no model runs, and the warning never quotes the numbers it found.
+- It fires on any of: a 9-digit number with a valid ABA checksum near "routing", "ABA" or "RTN"; a 6 to 17 digit number near "account", "acct" or "a/c" in a message that also mentions banking (bank, wire, ACH, routing, checking, savings, beneficiary, SWIFT, IBAN); an IBAN with a valid check digit; or a SWIFT/BIC code near "SWIFT" or "BIC".
+- Message text, attachment text, and file titles and previews are screened; image contents are not.
+- Each message gets at most one warning, even when several OpenClaw Slack accounts share the channel. Direct messages, bot messages and edits are not screened.
+- Account entries at `channels.slack.accounts.<id>.paymentDetailWarning` override the channel-wide value.
+
 ### Presence events
 
 Slack does not send presence changes through the Events API or Socket Mode. OpenClaw can instead poll [`users.getPresence`](https://docs.slack.dev/reference/methods/users.getPresence/) for human participants whose messages passed normal Slack access and routing checks.

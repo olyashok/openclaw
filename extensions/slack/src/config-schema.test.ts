@@ -632,6 +632,14 @@ describe("slack config schema", () => {
     );
   });
 
+  it("accepts the opt-in payment-detail warning at root and account level", () => {
+    expectSlackConfigValid({
+      paymentDetailWarning: true,
+      accounts: { "fi-admin": { paymentDetailWarning: false } },
+    });
+    expectSlackConfigIssue({ paymentDetailWarning: "yes" }, "paymentDetailWarning");
+  });
+
   it("rejects the retired thread requireExplicitMention runtime key", () => {
     expectSlackConfigIssue({ thread: { requireExplicitMention: true } }, "thread");
   });
