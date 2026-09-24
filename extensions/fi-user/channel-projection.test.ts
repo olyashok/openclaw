@@ -371,7 +371,12 @@ describe("Fi Slack channel publisher", () => {
     expect(discovery.list).toHaveBeenCalledWith({ agentId: "cellect-fi-user" });
     expect(discovery.list).toHaveBeenCalledWith({ agentId: "cellect-main" });
   });
-  function driftFixture(budget: number | undefined, drifted: Set<string>, readFails = false) {
+  function driftFixture(
+    budget: number | undefined,
+    drifted: Set<string>,
+    readFails = false,
+    status = "existing",
+  ) {
     discovery.entry.mockReturnValue({});
     const detachedSource = {
       provider: "slack" as const,
@@ -415,9 +420,7 @@ describe("Fi Slack channel publisher", () => {
       readHistoryPage: async () => ({ roots: [] }),
     }));
     const logger = { warn: vi.fn(), info: vi.fn() };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => ({ status: "existing" }) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status }) });
     vi.stubGlobal("fetch", fetchMock);
     let service: { start: () => void; stop: () => void } | undefined;
     const api = {
@@ -493,6 +496,18 @@ describe("Fi Slack channel publisher", () => {
     expect(f.refreshLines()).toEqual([
       "fi-user: projection refresh lane=channel room=!room1 session=agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001 outcome=refreshed",
       "fi-user: projection refresh lane=detached room=!roomD session=agent:cellect-fi-admin:slack:channel:c123 outcome=refreshed",
+    ]);
+  });
+
+  it("stops refreshing a drifted room that Fi declines (a retired conversation)", async () => {
+    vi.useFakeTimers();
+    const f = driftFixture(1, new Set(["!room1"]), false, "skipped");
+    f.service.start();
+    await vi.advanceTimersByTimeAsync(5000 + 6 * 60 * 60_000);
+    f.service.stop();
+    expect(f.readThread).toHaveBeenCalledTimes(1);
+    expect(f.refreshLines()).toEqual([
+      "fi-user: projection refresh lane=channel room=!room1 session=agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001 outcome=declined",
     ]);
   });
 

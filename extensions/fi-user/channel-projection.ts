@@ -280,7 +280,7 @@ export function registerSlackProjectionReconciler(
   const directSweepSeen = new Set<string>();
   const outcomes = new Map<string, "created" | "existing" | "skipped" | "error">();
   const drift = createProjectionDriftScheduler();
-  let driftReport = { rooms: 0, planned: 0, refreshed: 0, refreshFailed: 0 };
+  let driftReport = { rooms: 0, planned: 0, refreshed: 0, refreshFailed: 0, refreshDeclined: 0 };
   let report = {
     scanned: 0,
     pending: 0,
