@@ -1028,9 +1028,6 @@ export async function prepareSlackMessage(params: {
   // because the ownership cache cannot form a stable key without one.
   const threadOwnershipChannelId = message.channel ?? "";
   const threadOwnershipThreadTs = threadTs ?? "";
-  if (!threadOwnershipChannelId || !threadOwnershipThreadTs) {
-    return null;
-  }
   const hasReplyToCurrentBot =
     implicitMentionKinds.includes("reply_to_bot") && implicitMentions.replyToBot;
   const hasCurrentThreadParticipation =
@@ -1039,6 +1036,7 @@ export async function prepareSlackMessage(params: {
     threadOwnerPreference &&
     isRoom &&
     isThreadReply &&
+    threadOwnershipChannelId &&
     threadOwnershipThreadTs &&
     (explicitlyMentioned || hasReplyToCurrentBot || hasCurrentThreadParticipation)
   ) {

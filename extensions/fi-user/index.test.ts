@@ -13,7 +13,10 @@ const mocks = vi.hoisted(() => ({
   extractDocumentContent: vi.fn(),
 }));
 
-vi.mock("node:util", () => ({ promisify: () => mocks.execFile }));
+vi.mock("node:util", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:util")>()),
+  promisify: () => mocks.execFile,
+}));
 vi.mock("openclaw/plugin-sdk/document-extractor", () => ({
   extractDocumentContent: mocks.extractDocumentContent,
 }));

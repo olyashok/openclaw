@@ -445,10 +445,16 @@ async function dispatchSlackMessageWithSetup(
             : payload;
           return transformed ? filterPassiveThreadFailure(transformed) : null;
         },
-        responsePrefixContextProvider: () => ({
-          ...responsePrefixContextProvider(),
-          senderMention,
-        }),
+        // Extend the channel pipeline's live prefix context with the requester mention.
+        // Without a channel provider, core keeps its own per-agent prefix context.
+        ...(responsePrefixContextProvider
+          ? {
+              responsePrefixContextProvider: () => ({
+                ...responsePrefixContextProvider(),
+                senderMention,
+              }),
+            }
+          : {}),
         humanDelay: resolveHumanDelayConfig(cfg, route.agentId),
       },
       delivery: {
