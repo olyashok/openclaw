@@ -43,11 +43,13 @@ describe("projection failures", () => {
       } as never,
       {} as never,
     );
-    const [ok, , error] = respond.mock.calls[0];
-    expect(ok).toBe(false);
-    expect(error).toMatchObject({
-      message: expect.any(String),
-      details: { reason: expect.any(String) },
-    });
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      expect.objectContaining({ error: expect.any(String) }),
+      expect.objectContaining({
+        message: expect.any(String),
+        details: { reason: expect.any(String) },
+      }),
+    );
   });
 });
