@@ -91,7 +91,12 @@ export function registerSourceReplyAuthorization(
       throw new Error("Source account reader is unavailable");
     }
     const source = params.externalSource;
-    const channelId = source?.channelId ?? origin?.nativeChannelId;
+    // A legacy binding predates `sourceAccountId`, so the channel it may act
+    // for is otherwise taken from the delivery origin, which later traffic can
+    // move. A channel thread session names its channel in the key itself.
+    const legacyChannelId =
+      !params.sourceAccountId && kind === "channel" && root ? nativeId : origin?.nativeChannelId;
+    const channelId = source?.channelId ?? legacyChannelId;
     if (
       !channelId ||
       (source && (source.provider !== "slack" || source.workspaceId !== reader.workspaceId))
@@ -101,7 +106,7 @@ export function registerSourceReplyAuthorization(
     if (
       !params.sourceAccountId &&
       !legacyDirect &&
-      origin?.nativeChannelId?.toUpperCase() !== channelId.toUpperCase()
+      legacyChannelId?.toUpperCase() !== channelId.toUpperCase()
     ) {
       throw new Error("Source origin mismatch");
     }

@@ -238,4 +238,82 @@ describe("source reply authorization", () => {
     });
     expect(readDirectIdentity).toHaveBeenCalledWith("D123", "U123");
   });
+  it("authorizes a legacy channel-thread binding by the channel in its session key", async () => {
+    // Conversation 05fd8c16: the binding predates sourceAccountId and the
+    // session's delivery origin has since moved off the thread's channel.
+    entry.mockReturnValue({ provider: "slack", accountId: "fi-admin", nativeChannelId: "D0MOVED" });
+    const sessionKey = "agent:cellect-fi-admin:slack:channel:c0bjlaws49h:thread:1789671390.087299";
+    const source = {
+      provider: "slack",
+      workspaceId: "T123",
+      channelId: "C0BJLAWS49H",
+      rootMessageId: "1789671390.087299",
+    };
+    const readChannel = vi.fn(async (channelId: string) => ({
+      workspaceId: "T123",
+      channelId,
+      memberSenderIds: ["U123"],
+    }));
+    let guard:
+      | {
+          resolveSource: (params: {
+            targetSessionKey: string;
+            externalSource?: typeof source;
+            sourceAccountId?: string;
+          }) => Promise<{ sourceAccountId: string }>;
+        }
+      | undefined;
+    const api = {
+      config: {
+        bindings: [
+          { agentId: "cellect-fi-admin", match: { channel: "slack", accountId: "fi-admin" } },
+        ],
+      },
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: () => ({ workspaceId: "T123", readChannel }),
+            register: (params: { context: typeof guard }) => {
+              guard = params.context;
+            },
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    registerSourceReplyAuthorization(api, () => ({
+      baseUrl: "https://fi.example.test",
+      token: "test-bridge",
+    }));
+    if (!guard) {
+      throw new Error("Expected source guard");
+    }
+    await expect(
+      guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
+    ).resolves.toMatchObject({ sourceAccountId: "fi-admin", externalSource: source });
+    expect(readChannel).toHaveBeenCalledWith("C0BJLAWS49H");
+    await expect(guard.resolveSource({ targetSessionKey: sessionKey })).resolves.toMatchObject({
+      externalSource: source,
+    });
+    // A binding naming another channel is still refused.
+    await expect(
+      guard.resolveSource({
+        targetSessionKey: sessionKey,
+        externalSource: { ...source, channelId: "C0OTHER" },
+      }),
+    ).rejects.toThrow("Source origin mismatch");
+    // Every other check still applies: an unconfigured origin account is refused.
+    entry.mockReturnValue({ provider: "slack", accountId: "fi-user", nativeChannelId: "D0MOVED" });
+    await expect(
+      guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
+    ).rejects.toThrow("Source account is not authorized for this agent");
+    // A durable binding keeps using its recorded account and source.
+    entry.mockReturnValue({ provider: "slack", accountId: "fi-admin", nativeChannelId: "D0MOVED" });
+    await expect(
+      guard.resolveSource({
+        targetSessionKey: sessionKey,
+        externalSource: { ...source, channelId: "C0OTHER" },
+        sourceAccountId: "fi-admin",
+      }),
+    ).rejects.toThrow("Source channel identity mismatch");
+  });
 });
