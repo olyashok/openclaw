@@ -1439,6 +1439,7 @@ describe("talk realtime gateway relay", () => {
     const broadcastToConnIds = vi.fn();
     const broadcast = vi.fn();
     const nodeSendToSession = vi.fn();
+    const logGateway = { warn: vi.fn() };
     const removeChatRun = vi.fn(() => ({ sessionKey: "main", clientRunId: "run-1" }));
     const chatRunState = createChatRunState();
     Object.assign(chatRunState.getOrCreate("run-1"), {
@@ -1481,6 +1482,7 @@ describe("talk realtime gateway relay", () => {
       chatRunState,
       removeChatRun,
       agentRunSeq: new Map(),
+      logGateway,
     } as never;
     const session = createTalkRealtimeRelaySession({
       context,
@@ -1515,6 +1517,7 @@ describe("talk realtime gateway relay", () => {
       removeChatRun,
       chatRunState,
       broadcastToConnIds,
+      logGateway,
       session,
     };
   }
@@ -4391,7 +4394,8 @@ describe("talk realtime gateway relay", () => {
       bridgeRequest = request;
       return makeRelayTransport({ close });
     };
-    const { broadcastToConnIds, session } = createAbortableRelayRunFixture(provider);
+    const { broadcastToConnIds, logGateway, session } = createAbortableRelayRunFixture(provider);
+    const ownerFailureLog = vi.spyOn(logGateway, "warn");
     bridgeRequest?.onEvent?.({
       direction: "server",
       type: "response.created",
@@ -4403,6 +4407,15 @@ describe("talk realtime gateway relay", () => {
       turnId: ensureActiveRelayTurnId(session.relaySessionId),
     });
 
+    bridgeRequest?.onEvent?.({
+      direction: "server",
+      type: "input_audio_buffer.speech_started",
+      itemId: "input-item-1",
+    });
+    bridgeRequest?.onEvent?.({
+      direction: "client",
+      type: "response.create",
+    });
     bridgeRequest?.onEvent?.({
       direction: "server",
       type: "response.created",
@@ -4421,6 +4434,38 @@ describe("talk realtime gateway relay", () => {
         (call) => (call[1] as { type?: string }).type === "responseStarted",
       ),
     ).toHaveLength(1);
+    expect(ownerFailureLog).toHaveBeenCalledOnce();
+    const diagnosticLog = ownerFailureLog.mock.calls[0]?.[0];
+    expect(diagnosticLog).toContain('"failureSite":"response-created"');
+    expect(diagnosticLog).toContain('"type":"input_audio_buffer.speech_started"');
+    expect(diagnosticLog).toContain('"type":"response.created"');
+    expect(diagnosticLog).not.toContain("response-1");
+    expect(diagnosticLog).not.toContain("response-2");
+    expect(diagnosticLog).not.toContain("input-item-1");
+    const diagnostics = JSON.parse(
+      diagnosticLog?.slice(diagnosticLog.indexOf(" diagnostics=") + " diagnostics=".length) ?? "{}",
+    ) as {
+      failureSite?: string;
+      lastProviderEvent?: { type?: string; ownerPhase?: string };
+      recentProviderEvents?: Array<{ type?: string; ownerPhase?: string }>;
+    };
+    expect(diagnostics.failureSite).toBe("response-created");
+    expect(diagnostics.lastProviderEvent).toMatchObject({
+      type: "response.created",
+      ownerPhase: "cancelling",
+    });
+    expect(diagnostics.recentProviderEvents?.map((event) => event.type)).toEqual([
+      "response.created",
+      "input_audio_buffer.speech_started",
+      "response.create",
+      "response.created",
+    ]);
+    expect(diagnostics.recentProviderEvents?.[2]).toMatchObject({
+      type: "response.create",
+      direction: "client",
+      ownerPhase: "cancelling",
+    });
+    expect(diagnostics.recentProviderEvents?.[3]?.ownerPhase).toBe("cancelling");
   });
 
   it("provider close owns turn-bound drain teardown and late drain cannot touch a successor", async () => {

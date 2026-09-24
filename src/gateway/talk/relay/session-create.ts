@@ -133,8 +133,20 @@ export function createTalkRealtimeRelaySession(
   const outputOwnership = new TalkRealtimeRelayOutputOwnership(
     () => harness.talk.activeTurnId,
     () => harness.ensureTurn(),
-    (message) => {
+    (message, diagnostics) => {
       const relay = getActiveRelay();
+      if (diagnostics) {
+        const providerModel =
+          typeof params.providerConfig.model === "string"
+            ? params.providerConfig.model
+            : params.model;
+        // Diagnostics must never break the failure path itself.
+        params.context.logGateway?.warn(
+          `talk relay provider event ownership failure: provider=${params.provider.id}${
+            providerModel ? ` model=${providerModel}` : ""
+          } diagnostics=${JSON.stringify(diagnostics)}`,
+        );
+      }
       relay?.failSession(message);
       if (!relay) {
         constructionTerminal.current ??= { kind: "error", error: new Error(message) };
@@ -245,7 +257,7 @@ export function createTalkRealtimeRelaySession(
         if (!getActiveRelay() || outputOwnership.suppressingOutput) {
           return;
         }
-        const outputTurnId = outputOwnership.resolve(true);
+        const outputTurnId = outputOwnership.resolve(true, "audio");
         if (!outputTurnId) {
           return;
         }
@@ -277,7 +289,7 @@ export function createTalkRealtimeRelaySession(
         if (!relay) {
           return;
         }
-        const outputTurnId = outputOwnership.resolve(false);
+        const outputTurnId = outputOwnership.resolve(false, "mark");
         if (!outputTurnId) {
           if (outputOwnership.phase !== "owned") {
             bridgeRef.current?.acknowledgeMark(markName);
@@ -333,7 +345,7 @@ export function createTalkRealtimeRelaySession(
       }
       if (event.type === "response.created") {
         // Response admission owns work status; asynchronous input transcripts do not.
-        const turnId = outputOwnership.resolve(false);
+        const turnId = outputOwnership.resolve(false, "response-created");
         if (turnId) {
           emit({ relaySessionId, type: "responseStarted", turnId });
         }
@@ -437,7 +449,8 @@ export function createTalkRealtimeRelaySession(
         emit({ relaySessionId, type: "transcript", role, text, final });
         return;
       }
-      const outputTurnId = role === "assistant" ? outputOwnership.resolve(true) : undefined;
+      const outputTurnId =
+        role === "assistant" ? outputOwnership.resolve(true, "assistant-transcript") : undefined;
       if (role === "assistant" && !outputTurnId) {
         return;
       }
