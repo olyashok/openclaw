@@ -7,6 +7,7 @@ import type { InboundEventKind } from "../channels/inbound-event/kind.js";
 import type { ConversationReadInvocationOrigin } from "../channels/plugins/conversation-read-origin.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ExecMode } from "../infra/exec-approvals.js";
+import type { MediaFact } from "../media/media-facts.js";
 import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
 import type { HookContext } from "./agent-tools.before-tool-call.js";
 import type { ConversationRecallContext } from "./conversation-recall.types.js";
@@ -53,6 +54,8 @@ export type OpenClawToolsOptions = {
   sandboxFsBridge?: SandboxFsBridge;
   /** Producer-authored bare upload handles mapped to exact sandbox paths. */
   stagedMediaPaths?: ReadonlyMap<string, string>;
+  /** Media attached to the current inbound turn (forwarded to spawned subagents). */
+  currentTurnMedia?: readonly MediaFact[];
   /** Prepared effective read authorization for exporting sandbox workspace media. */
   sandboxWorkspaceMediaReadAllowed?: boolean;
   fsPolicy?: ToolFsPolicy;

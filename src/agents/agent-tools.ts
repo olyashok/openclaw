@@ -19,6 +19,7 @@ import { resolveEventSessionRoutingPolicy } from "../infra/event-session-routing
 import { applyExecPolicyLayer } from "../infra/exec-policy.js";
 import { mergeGatewayAgentCliPath } from "../infra/openclaw-cli-shim.js";
 import { logWarn } from "../logger.js";
+import type { MediaFact } from "../media/media-facts.js";
 import type {
   PluginHookChannelContext,
   PluginHookToolRequesterContext,
@@ -202,6 +203,8 @@ type OpenClawCodingToolsOptions = {
   messageActionTurnCapability?: string;
   sandbox?: SandboxContext | null;
   stagedMediaPaths?: ReadonlyMap<string, string>;
+  /** Media attached to the current inbound turn (forwarded to spawned subagents). */
+  currentTurnMedia?: readonly MediaFact[];
   sessionKey?: string;
   /**
    * The durable store session key for the live run when it differs from the
@@ -851,6 +854,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             sandboxContainerWorkdir: sandbox?.containerWorkdir,
             sandboxFsBridge,
             stagedMediaPaths: options?.stagedMediaPaths,
+            currentTurnMedia: options?.currentTurnMedia,
             sandboxWorkspaceMediaReadAllowed,
             fsPolicy,
             workspaceDir: workspaceRoot,

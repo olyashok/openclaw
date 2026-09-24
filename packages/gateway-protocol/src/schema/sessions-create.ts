@@ -51,6 +51,13 @@ export const SessionsCreateParamsSchema = closedObject({
   task: Type.Optional(Type.String()),
   message: Type.Optional(Type.String()),
   attachments: Type.Optional(ChatAttachmentsSchema),
+  timeoutMs: Type.Optional(
+    Type.Integer({
+      minimum: 0,
+      description:
+        "Run timeout for the initial task/message turn, as chat.send timeoutMs; 0 disables it.",
+    }),
+  ),
   projectId: Type.Optional(
     Type.String({
       minLength: 1,

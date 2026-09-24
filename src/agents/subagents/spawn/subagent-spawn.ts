@@ -33,7 +33,7 @@ import {
 } from "../registry/subagent-registry.js";
 import { activateSwarmRun, removeQueuedSwarmRun } from "../swarm/swarm-scheduler.js";
 import { readParentExecutionIdentity } from "./execution-identity-spawn-context.js";
-import { materializeSubagentAttachments } from "./subagent-attachments.js";
+import { materializeSubagentSpawnAttachments } from "./subagent-parent-attachments.js";
 import { resolveSubagentSpawnAcceptedNote } from "./subagent-spawn-accepted-note.js";
 import { resolveSubagentChildPlan } from "./subagent-spawn-child-plan.js";
 import {
@@ -308,12 +308,14 @@ export async function spawnSubagentDirect(
     let attachmentAbsDir: string | undefined;
     let attachmentRootDir: string | undefined;
 
-    const materializedAttachments = await materializeSubagentAttachments({
+    const materializedAttachments = await materializeSubagentSpawnAttachments({
       config: cfg,
       targetAgentId,
       workspaceDir: spawnedCwd ?? spawnedWorkspaceDir,
       attachments: params.attachments,
       mountPathHint,
+      task,
+      parentTurnMedia: ctx.parentTurnMedia,
     });
     if (materializedAttachments && materializedAttachments.status !== "ok") {
       await cleanupCreatedSession(threadBindingReady);
@@ -337,7 +339,7 @@ export async function spawnSubagentDirect(
         childDepth,
         maxSpawnDepth,
         spawnMode,
-        task,
+        task: materializedAttachments?.status === "ok" ? materializedAttachments.childTask : task,
         spawnedByKey,
         toolSpawnMetadata,
         spawnedWorkspaceDir,

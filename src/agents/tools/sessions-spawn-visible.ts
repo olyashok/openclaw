@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { Type } from "typebox";
@@ -13,11 +14,17 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
 import { resolveWorkspacePathContainment } from "../../gateway/server-methods/workspace-path-containment.js";
 import { isPathInside } from "../../infra/path-guards.js";
+import type { MediaFact } from "../../media/media-facts.js";
 import { isValidAgentId, normalizeAgentId } from "../../routing/session-key.js";
 import { recordSessionParticipantBestEffort } from "../../sessions/session-participant-recording.js";
 import { resolveUserPath } from "../../utils.js";
 import { normalizeDeliveryContext } from "../../utils/delivery-context.shared.js";
-import { listAgentIds, resolveAgentConfig, resolveSessionAgentId } from "../agent-scope.js";
+import {
+  listAgentIds,
+  resolveAgentConfig,
+  resolveAgentWorkspaceDir,
+  resolveSessionAgentId,
+} from "../agent-scope.js";
 import { reserveChildAdmissionSlot } from "../child-admission.js";
 import { resolveAgentIdentity } from "../identity.js";
 import { resolveSubagentSpawnModelSelection } from "../model-selection.js";
@@ -28,6 +35,10 @@ import {
   registerSubagentRun,
 } from "../subagents/registry/subagent-registry.js";
 import { getSubagentDepthFromSessionStore } from "../subagents/spawn/subagent-depth.js";
+import {
+  stageParentTurnAttachments,
+  type StagedParentTurnAttachments,
+} from "../subagents/spawn/subagent-parent-attachments.js";
 import { resolveSubagentSpawnOwnership } from "../subagents/spawn/subagent-spawn-ownership.js";
 import { resolveConfiguredSubagentRunTimeoutSeconds } from "../subagents/spawn/subagent-spawn-plan.js";
 import { resolveSubagentTargetPolicy } from "../subagents/spawn/subagent-target-policy.js";
@@ -77,6 +88,8 @@ type VisibleSessionsSpawnOptions = VisibleSessionsSpawnDeps &
     sandboxed?: boolean;
     config?: OpenClawConfig;
     requesterAgentIdOverride?: string;
+    /** Media attached to the requester's current turn; forwarded into the child workspace. */
+    parentTurnMedia?: readonly MediaFact[];
   };
 
 function summarizeSessionsSpawnError(error: unknown): string {
@@ -302,6 +315,8 @@ export async function maybeSpawnVisibleSession(params: {
       error: `sessions_spawn has reached max active children for this session (${reservation.activeChildren}/${maxChildren})`,
     };
   }
+  let parentAttachments: StagedParentTurnAttachments | null = null;
+  let keepParentAttachments = false;
   try {
     const gatewayCall = params.options?.callGateway ?? callInProcessGatewayTool;
     const createGatewayCall: InProcessGatewayCaller =
@@ -324,6 +339,16 @@ export async function maybeSpawnVisibleSession(params: {
       runId?: string;
       runError?: unknown;
     };
+    // The child sees only its task; copy the requester turn's own attachments
+    // into the child workspace and list them in that task.
+    parentAttachments = await stageParentTurnAttachments({
+      media: params.options?.parentTurnMedia,
+      workspaceDir:
+        spawnedCwd ?? spawnedWorkspaceCwd ?? resolveAgentWorkspaceDir(cfg, targetAgentId),
+    });
+    const childTask = parentAttachments
+      ? `${params.task}\n\n${parentAttachments.taskSuffix}`
+      : params.task;
     try {
       response = await createGatewayCall("sessions.create", {
         agentId: targetAgentId,
@@ -331,7 +356,10 @@ export async function maybeSpawnVisibleSession(params: {
         // sessions.create persists the group under the legacy wire field `category`.
         ...(group ? { category: group } : {}),
         model: resolvedModel,
-        task: params.task,
+        task: childTask,
+        // 0 keeps the documented "no timeout" meaning; without this the initial
+        // turn silently falls back to agents.defaults.timeoutSeconds.
+        timeoutMs: runTimeoutSeconds * 1000,
         parentSessionKey: requesterKey,
         // Declared spawn lineage: without it the child persists as a depth-0 root
         // and could spawn past maxSpawnDepth.
@@ -455,6 +483,7 @@ export async function maybeSpawnVisibleSession(params: {
       sessionKey: childSessionKey,
       storePath: resolveSessionStorePathCore(cfg.session?.store, { agentId: targetAgentId }),
     });
+    keepParentAttachments = true;
     const ownerLabel = normalizeOptionalString(resolveAgentIdentity(cfg, requesterAgentId)?.name);
     const sessionUrl = resolveControlUiSessionUrl(cfg, {
       sessionKey: childSessionKey,
@@ -475,5 +504,8 @@ export async function maybeSpawnVisibleSession(params: {
     };
   } finally {
     reservation.release();
+    if (parentAttachments && !keepParentAttachments) {
+      await fs.rm(parentAttachments.absDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }

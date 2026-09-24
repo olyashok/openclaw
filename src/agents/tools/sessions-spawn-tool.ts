@@ -11,6 +11,7 @@ import {
 } from "../../channels/thread-bindings-policy.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { MediaFact } from "../../media/media-facts.js";
 import { resolveSnakeCaseParamKey } from "../../param-key.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
@@ -321,6 +322,8 @@ export function createSessionsSpawnTool(
     /** Backend-derived parent incarnation; never sourced from model arguments. */
     expectedParentSessionId?: string;
     signal?: AbortSignal;
+    /** Media attached to the requester's current turn; never sourced from model arguments. */
+    parentTurnMedia?: readonly MediaFact[];
   } & VisibleSessionsSpawnDeps &
     SpawnedToolContext,
 ): AnyAgentTool {
@@ -646,6 +649,7 @@ export function createSessionsSpawnTool(
             inheritedToolAllowlist: opts?.inheritedToolAllowlist,
             inheritedToolDenylist: opts?.inheritedToolDenylist,
             requesterRunId: opts?.requesterRunId,
+            parentTurnMedia: opts?.parentTurnMedia,
           },
           parentExecutionIdentityToken,
         ),

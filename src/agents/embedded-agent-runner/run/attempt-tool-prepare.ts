@@ -263,6 +263,7 @@ export function prepareEmbeddedAttemptToolBase(params: {
           },
           sandbox: params.sandbox,
           stagedMediaPaths: resolveStagedInputMediaPaths(attempt.media),
+          currentTurnMedia: attempt.media,
           sessionPermissionPolicy: params.sessionPermissionPolicy,
           messageProvider: resolveAttemptToolPolicyMessageProvider(attempt),
           agentAccountId: attempt.agentAccountId,

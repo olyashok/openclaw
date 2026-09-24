@@ -9430,6 +9430,7 @@ public struct SessionsCreateParams: Codable, Sendable {
     public let task: String?
     public let message: String?
     public let attachments: [[String: AnyCodable]]?
+    public let timeoutms: Int?
     public let projectid: String?
     public let projectgiturl: String?
     public let worktree: Bool?
@@ -9462,6 +9463,7 @@ public struct SessionsCreateParams: Codable, Sendable {
         task: String? = nil,
         message: String? = nil,
         attachments: [[String: AnyCodable]]? = nil,
+        timeoutms: Int? = nil,
         projectid: String? = nil,
         projectgiturl: String? = nil,
         worktree: Bool? = nil,
@@ -9493,6 +9495,7 @@ public struct SessionsCreateParams: Codable, Sendable {
         self.task = task
         self.message = message
         self.attachments = attachments
+        self.timeoutms = timeoutms
         self.projectid = projectid
         self.projectgiturl = projectgiturl
         self.worktree = worktree
@@ -9526,6 +9529,7 @@ public struct SessionsCreateParams: Codable, Sendable {
         case task
         case message
         case attachments
+        case timeoutms = "timeoutMs"
         case projectid = "projectId"
         case projectgiturl = "projectGitUrl"
         case worktree

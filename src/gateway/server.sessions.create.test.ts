@@ -1541,6 +1541,42 @@ test("sessions.create rejects draft visibility when policy disables drafts", asy
   });
 });
 
+test("sessions.create forwards the initial turn timeout to chat.send", async () => {
+  await createSessionStoreDir();
+  const { chatHandlers } = await import("./server-methods/chat.js");
+  const observed: Array<unknown> = [];
+  const chatSend = vi
+    .spyOn(chatHandlers, "chat.send")
+    .mockImplementation(async ({ params, respond }) => {
+      observed.push(params.timeoutMs);
+      respond(true, { runId: `create-timeout-run-${observed.length}`, status: "started" });
+    });
+  const client = { client: { connect: { scopes: ["operator.admin"] } } as never };
+
+  try {
+    for (const [key, timeoutMs] of [
+      ["agent:main:dashboard:create-timeout-unbounded", 0],
+      ["agent:main:dashboard:create-timeout-bounded", 120_000],
+      ["agent:main:dashboard:create-timeout-default", undefined],
+    ] as const) {
+      const created = await directSessionReq<{ runStarted?: boolean }>(
+        "sessions.create",
+        {
+          agentId: "main",
+          key,
+          task: "monitor the fix",
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        },
+        client,
+      );
+      expect(created).toMatchObject({ ok: true, payload: { runStarted: true } });
+    }
+    expect(observed).toEqual([0, 120_000, undefined]);
+  } finally {
+    chatSend.mockRestore();
+  }
+});
+
 test("sessions.create persists explicit tool overrides before the first turn", async () => {
   const { storePath } = await createSessionStoreDir();
   const parentSessionKey = "agent:main:main";

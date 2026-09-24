@@ -570,6 +570,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
               message: initialMessage ?? "",
               idempotencyKey: randomUUID(),
               ...(initialAttachments ? { attachments: initialAttachments } : {}),
+              ...(typeof p.timeoutMs === "number" ? { timeoutMs: p.timeoutMs } : {}),
             },
             respond: (ok, payload, error, meta) => {
               if (ok && payload && typeof payload === "object") {

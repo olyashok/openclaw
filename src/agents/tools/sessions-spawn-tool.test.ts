@@ -607,6 +607,7 @@ describe("sessions_spawn tool", () => {
         category: "P1 issues from beta feedback",
         model: "anthropic/claude-sonnet-4-6",
         task: "inspect issue",
+        timeoutMs: 120_000,
         parentSessionKey: "agent:main:main",
         spawnDepth: 1,
         fork: true,
