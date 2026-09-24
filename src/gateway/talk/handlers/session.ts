@@ -414,7 +414,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           model: launchOptions.model,
           sessionTarget: target,
           voice: launchOptions.voice,
-          language: normalizeOptionalLowercaseString(params.language),
+          language: normalizeOptionalLowercaseString(params.language) ?? "en",
           initialItems,
           sessionCapsule: params.sessionCapsule,
           forceAgentConsultOnFinalTranscript: relayLaunch.forceAgentConsultOnFinalTranscript,
