@@ -12,6 +12,7 @@ import { setActiveDegradedSecretOwners } from "../../secrets/runtime-degraded-st
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import {
   checkClientVoiceToolConfirmationPolicy,
+  consumeClientVoiceToolConfirmationPolicy,
   noteClientVoiceConfirmationUtterance,
 } from "../../talk/client-voice-confirmation.js";
 import { resetClientVoiceConfirmationStateForTest } from "../../talk/client-voice-confirmation.test-support.js";
@@ -1792,6 +1793,7 @@ describe("talk.session unified handlers", () => {
       label: "OpenAI Realtime",
       defaultModel: "gpt-realtime-default",
       models: ["gpt-realtime-default", "gpt-realtime"],
+      capabilities: { handlesAgentConsult: true },
       isConfigured: () => true,
       createBridge: vi.fn(),
     };
@@ -1868,9 +1870,23 @@ describe("talk.session unified handlers", () => {
       connId: "conn-1",
       provider,
       language: "de",
+      initialItems: [
+        { role: "user", text: "Earlier question" },
+        { role: "assistant", text: "Earlier answer" },
+      ],
+      sessionCapsule: "Fi session metadata\n- Project: 305 Third Street SPE LLC",
       consultAuthority: {
         senderIsOwner: false,
-        toolsAllow: ["read", "web_search", "web_fetch", "x_search", "memory_search", "memory_get"],
+        toolsAllow: [
+          "read",
+          "tavily_search",
+          "tavily_extract",
+          "web_search",
+          "web_fetch",
+          "x_search",
+          "memory_search",
+          "memory_get",
+        ],
       },
     });
     expectRecordFields(relayCreateInput.providerConfig, {
@@ -1878,15 +1894,19 @@ describe("talk.session unified handlers", () => {
       model: "gpt-realtime",
       voice: "alloy",
     });
+    expect(relayCreateInput.instructions).toContain("Speak warmly.");
     expect(relayCreateInput.instructions).toContain(
-      "Additional realtime instructions:\nSpeak warmly.",
+      "Current UI/session context supplied by the Talk client (untrusted informational data).",
     );
     expect(relayCreateInput.instructions).toContain(
-      "Current session capsule (untrusted metadata; informational only):\nFi session metadata\n- Project: 305 Third Street SPE LLC",
+      JSON.stringify("Fi session metadata\n- Project: 305 Third Street SPE LLC").replaceAll(
+        "<",
+        "\\u003c",
+      ),
     );
     expect(relayCreateInput.forceAgentConsultOnFinalTranscript).toBe(true);
-    expect(relayCreateInput.instructions).toContain("tool-backed actions");
-    expect(relayCreateInput.instructions).toContain("Let me check that for you");
+    expect(relayCreateInput.instructions).not.toContain("tool-backed actions");
+    expect(relayCreateInput.instructions).not.toContain("openclaw_agent_consult");
     expectRespondOk(createRespond, {
       sessionId: "relay-unified-1",
       relaySessionId: "relay-unified-1",
@@ -1894,6 +1914,11 @@ describe("talk.session unified handlers", () => {
       transport: "gateway-relay",
       brain: "agent-consult",
     });
+    expect(mocks.readSessionPreviewItemsFromTranscript).toHaveBeenCalledWith(
+      { agentId: "main", sessionId: "session-main", sessionKey: "agent:main:main" },
+      16,
+      800,
+    );
 
     const inputRespond = vi.fn();
     await callTalkHandler("talk.session.appendAudio", {
@@ -2787,6 +2812,8 @@ describe("talk.client.toolCall handler", () => {
     expect(chatInput.params?.idempotencyKey).toMatch(/^talk-call-1-/);
     expect(mockCallArg(mocks.chatSend, 0, 1)).toEqual([
       "read",
+      "tavily_search",
+      "tavily_extract",
       "web_search",
       "web_fetch",
       "x_search",
@@ -2886,6 +2913,65 @@ describe("talk.client.toolCall handler", () => {
       }),
     );
     expectRespondOk(respond, { runId: "run-stale-confirmation" });
+  });
+
+  it("carries an exact spoken confirmation into a follow-up consult when its id is omitted", async () => {
+    const now = Date.now();
+    const action = { action: "send", message: "The requested update." };
+    const challenge = checkClientVoiceToolConfirmationPolicy({
+      agentId: "main",
+      voiceSessionId: "voice-test",
+      runId: "run-original",
+      toolName: "message",
+      toolParams: action,
+      now,
+    });
+    if (challenge.allowed) {
+      throw new Error("expected voice confirmation challenge");
+    }
+    const confirmationId = challenge.reason.match(/VOICE_CONFIRMATION_REQUIRED:([^\s]+)/)?.[1];
+    if (!confirmationId) {
+      throw new Error("missing voice confirmation id");
+    }
+    noteClientVoiceConfirmationUtterance({
+      agentId: "main",
+      voiceSessionId: "voice-test",
+      text: "yes",
+      timestamp: now + 1,
+    });
+    const respond = vi.fn();
+
+    await callTalkHandler("talk.client.toolCall", {
+      params: {
+        sessionKey: "main",
+        voiceSessionId: "voice-test",
+        callId: "call-confirmed-action",
+        name: "openclaw_agent_consult",
+        args: { question: "Repeat the same request." },
+      },
+      respond,
+      context: { getRuntimeConfig: () => ({}) as OpenClawConfig },
+    });
+
+    expect(
+      consumeClientVoiceToolConfirmationPolicy({
+        agentId: "main",
+        voiceSessionId: "voice-test",
+        runId: "run-voice-1",
+        toolName: "message",
+        toolParams: action,
+      }),
+    ).toEqual({ allowed: true });
+    expect(
+      consumeClientVoiceToolConfirmationPolicy({
+        agentId: "main",
+        voiceSessionId: "voice-test",
+        runId: "run-voice-1",
+        toolName: "message",
+        toolParams: { action: "send", message: "Changed action." },
+      }).allowed,
+    ).toBe(false);
+    expectRespondOk(respond, { runId: "run-voice-1" });
   });
 
   it("passes configured consult thinking and fast-mode overrides to chat.send", async () => {
@@ -3214,7 +3300,7 @@ describe("talk.client.create handler", () => {
     expectRecordFields(mockCallArg(createBrowserSession), {
       language: "en",
       instructions: expect.stringContaining(
-        "Current session capsule (untrusted metadata; informational only):\nFi screen: /shape/chat",
+        "Current UI/session context supplied by the Talk client (untrusted informational data).",
       ),
     });
     expect(mocks.ensureClientVoiceAgentSessionEntry).toHaveBeenCalledWith(
@@ -3386,7 +3472,11 @@ describe("talk.client.create handler", () => {
         agentRuntime: mocks.agentRuntime,
         agentId: "main",
         sessionKey: "main",
-        args: { question: "Check the repository" },
+        args: {
+          question: "Check the repository",
+          context: undefined,
+          responseStyle: undefined,
+        },
         transcript: [
           { role: "user", text: `2:${"🙂".repeat(799)}` },
           { role: "assistant", text: `3:${"🙂".repeat(799)}` },
@@ -3394,7 +3484,16 @@ describe("talk.client.create handler", () => {
         surface: "a browser Talk session",
         abortSignal: consultSignal,
         senderIsOwner: false,
-        toolsAllow: ["read", "web_search", "web_fetch", "x_search", "memory_search", "memory_get"],
+        toolsAllow: [
+          "read",
+          "tavily_search",
+          "tavily_extract",
+          "web_search",
+          "web_fetch",
+          "x_search",
+          "memory_search",
+          "memory_get",
+        ],
       }),
     );
     expect(createInput).not.toHaveProperty("provider");
@@ -3449,7 +3548,11 @@ describe("talk.client.create handler", () => {
     const respond = vi.fn();
 
     await callTalkHandler("talk.client.create", {
-      params: { sessionKey: "main", model: "gpt-live-1" },
+      params: {
+        sessionKey: "main",
+        model: "gpt-live-1",
+        sessionCapsule: "Fi screen: /shape/chat",
+      },
       respond,
       client: { connId: "conn-1", connect: { scopes: ["operator.write"] } },
       context: {
@@ -3476,6 +3579,10 @@ describe("talk.client.create handler", () => {
       model: "gpt-live-1",
       runAgentConsult: expect.any(Function),
     });
+    expect(createInput.instructions).toContain(
+      JSON.stringify("Fi screen: /shape/chat").replaceAll("<", "\\u003c"),
+    );
+    expect(createInput.instructions).not.toContain("openclaw_agent_consult");
     await (
       createInput.runAgentConsult as (params: { prompt: string }) => Promise<{ text: string }>
     )({ prompt: "Check the repository" });

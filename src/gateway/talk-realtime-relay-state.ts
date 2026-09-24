@@ -264,6 +264,8 @@ export type CreateTalkRealtimeRelaySessionParams = {
   sessionKey?: string;
   voice?: string;
   language?: string;
+  initialItems?: Array<{ role: "user" | "assistant"; text: string }>;
+  sessionCapsule?: string;
   forceAgentConsultOnFinalTranscript?: boolean;
   speakerMxid?: string;
   matrixRoute?: { channel: "matrix"; roomId: string; threadRootEventId: string; accountId: string };

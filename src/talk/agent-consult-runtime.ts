@@ -455,7 +455,29 @@ export async function consultRealtimeVoiceAgent(params: {
         agentDir,
         abortSignal,
       });
-      const result = await runPromise.finally(() => runRegistration?.cleanup?.());
+      let result: Awaited<typeof runPromise>;
+      try {
+        result = await runPromise;
+      } catch {
+        // A user who has left the voice session must not receive delayed speech.
+        // Other terminal run failures still need an audible result; otherwise the
+        // realtime layer's earlier "checking" backchannel leaves the task hanging.
+        if (abortSignal.aborted) {
+          throw abortSignal.reason ?? new Error("Realtime voice consult cancelled.");
+        }
+        params.logger.warn("[talk] agent consult failed before producing a speakable result");
+        return {
+          text:
+            params.fallbackText ??
+            "I couldn't complete that check just now. Please ask me to try again.",
+        };
+      } finally {
+        runRegistration?.cleanup?.();
+      }
+
+      if (abortSignal.aborted) {
+        throw abortSignal.reason ?? new Error("Realtime voice consult cancelled.");
+      }
 
       const text = collectRealtimeVoiceAgentConsultVisibleText(result.payloads ?? []);
       if (!text) {
@@ -463,7 +485,11 @@ export async function consultRealtimeVoiceAgent(params: {
           ? "agent run aborted"
           : "agent returned no speakable text";
         params.logger.warn(`[talk] agent consult produced no answer: ${reason}`);
-        return { text: params.fallbackText ?? "I need a moment to verify that before answering." };
+        return {
+          text:
+            params.fallbackText ??
+            "I couldn't complete that check just now. Please ask me to try again.",
+        };
       }
       return { text };
     });

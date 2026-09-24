@@ -101,7 +101,7 @@ export type XaiRealtimeSessionUpdate = {
     audio: {
       input: {
         format: OpenAICompatibleRealtimeAudioFormat;
-        transcription: { model: string };
+        transcription: { model: string; language_hint?: string };
       };
       output: {
         format: OpenAICompatibleRealtimeAudioFormat;

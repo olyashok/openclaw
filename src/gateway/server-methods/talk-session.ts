@@ -19,8 +19,14 @@ import { REALTIME_VOICE_AGENT_CONSULT_TOOL } from "../../talk/agent-consult-tool
 import { REALTIME_VOICE_AGENT_CONTROL_TOOL } from "../../talk/agent-run-control-shared.js";
 import { controlRealtimeVoiceAgentRun } from "../../talk/agent-run-control.js";
 import { resolveTalkSessionAgentId } from "../../talk/agent-target.js";
-import { ensureClientVoiceAgentSessionEntry } from "../../talk/client-voice-session.js";
-import { resolveConfiguredRealtimeVoiceProvider } from "../../talk/provider-resolver.js";
+import {
+  ensureClientVoiceAgentSessionEntry,
+  resolveClientVoiceAgentSessionId,
+} from "../../talk/client-voice-session.js";
+import {
+  resolveConfiguredRealtimeVoiceProvider,
+  resolveRealtimeVoiceProviderCapabilities,
+} from "../../talk/provider-resolver.js";
 import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import {
   authorizeGatewaySessionCreation,
@@ -28,9 +34,13 @@ import {
 } from "../operator-role-policy.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
+import { readSessionPreviewItemsFromTranscript } from "../session-transcript-readers.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 import { consumeTalkBindingCapability } from "../talk-binding-capability.js";
-import { resolveTalkAgentConsultAuthority } from "../talk-client-gateway-control.js";
+import {
+  boundTalkClientRealtimeInitialItems,
+  resolveTalkAgentConsultAuthority,
+} from "../talk-client-gateway-control.js";
 import { createTalkHandoff, getTalkHandoff, revokeTalkHandoff } from "../talk-handoff.js";
 import {
   cancelTalkRealtimeRelayTurn,
@@ -70,6 +80,9 @@ import {
 } from "./talk-shared.js";
 import type { GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
+
+const REALTIME_VOICE_CONTEXT_MAX_ITEMS = 16;
+const REALTIME_VOICE_CONTEXT_MAX_ITEM_CHARS = 800;
 
 function isActiveManagedRoomClient(
   session: { handoffId: string },
@@ -331,6 +344,14 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           requireSessionKeyForProfile: true,
           warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
         });
+        const providerCapabilities = resolveRealtimeVoiceProviderCapabilities({
+          provider: resolution.provider,
+          providerConfig: relayLaunch.providerConfig,
+          cfg: runtimeConfig,
+          agentId: realtimeContext.agentId,
+          model: launchOptions.model,
+          surface: "gateway-relay",
+        });
         const sessionKey =
           realtimeContext.requestedSessionKey ??
           buildAgentMainSessionKey({ agentId: realtimeContext.agentId });
@@ -348,6 +369,22 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           sessionKey,
           creation: resolveSandboxedSessionCreation(client, runtimeConfig),
         });
+        const agentSessionId = resolveClientVoiceAgentSessionId({
+          agentId: realtimeContext.agentId,
+          sessionKey,
+        });
+        const initialItems = agentSessionId
+          ? boundTalkClientRealtimeInitialItems(
+              readSessionPreviewItemsFromTranscript(
+                { agentId: realtimeContext.agentId, sessionId: agentSessionId, sessionKey },
+                REALTIME_VOICE_CONTEXT_MAX_ITEMS,
+                REALTIME_VOICE_CONTEXT_MAX_ITEM_CHARS,
+              ).filter(
+                (item): item is { role: "user" | "assistant"; text: string } =>
+                  item.role === "user" || item.role === "assistant",
+              ),
+            )
+          : [];
         const session = createTalkRealtimeRelaySession({
           context,
           connId,
@@ -358,12 +395,15 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           instructions: buildRealtimeInstructions(
             realtimeContext.instructions,
             params.sessionCapsule,
+            { providerHandlesAgentConsult: providerCapabilities?.handlesAgentConsult === true },
           ),
           tools: [REALTIME_VOICE_AGENT_CONSULT_TOOL, REALTIME_VOICE_AGENT_CONTROL_TOOL],
           model: launchOptions.model,
           sessionKey,
           voice: launchOptions.voice,
           language: normalizeOptionalLowercaseString(params.language),
+          initialItems,
+          sessionCapsule: params.sessionCapsule,
           forceAgentConsultOnFinalTranscript: relayLaunch.forceAgentConsultOnFinalTranscript,
           speakerMxid: bound?.speakerMxid,
           matrixRoute: bound

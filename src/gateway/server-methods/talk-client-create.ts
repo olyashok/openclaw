@@ -259,10 +259,13 @@ export const createTalkClient: GatewayRequestHandler = async ({
       if (wantsCameraFrames && tools.length > 0) {
         tools.push(REALTIME_VOICE_DESCRIBE_VIEW_TOOL);
       }
-      const instructions =
-        providerCapabilities?.handlesAgentConsult === true
-          ? normalizeOptionalString(realtimeContext.instructions)
-          : buildRealtimeInstructions(realtimeContext.instructions, params.sessionCapsule);
+      const instructions = buildRealtimeInstructions(
+        realtimeContext.instructions,
+        params.sessionCapsule,
+        {
+          providerHandlesAgentConsult: providerCapabilities?.handlesAgentConsult === true,
+        },
+      );
       const requestedVoiceSessionId = normalizeOptionalString(params.voiceSessionId);
       const ownsProvider =
         wantsGatewayControl || providerCapabilities?.handlesAgentConsult === true;
@@ -291,6 +294,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
         authority: resolveTalkAgentConsultAuthority(client?.connect?.scopes),
         getVoiceSessionId: () => activeVoiceSessionId,
         initialItems,
+        sessionCapsule: params.sessionCapsule,
       });
       const gatewayControlOwner = ownsProvider
         ? createTalkClientGatewayControlOwner({

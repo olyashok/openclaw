@@ -132,6 +132,7 @@ type GoogleRealtimeVoiceProviderConfig = {
 type GoogleRealtimeLiveConfig = {
   apiKey: string;
   instructions?: string;
+  language?: string;
   tools?: RealtimeVoiceTool[];
   model?: string;
   voice?: string;
@@ -160,6 +161,22 @@ type GoogleLiveTranscriptAccumulator = {
 
 function trimToUndefined(value: unknown): string | undefined {
   return normalizeOptionalString(value);
+}
+
+function normalizeGoogleTranscriptionLanguage(value: unknown): string | undefined {
+  const language = normalizeOptionalString(value)?.replaceAll("_", "-");
+  if (!language) {
+    return undefined;
+  }
+  // Google Live documents language hints as BCP-47. The shared UI's English
+  // default is intentionally provider-neutral (`en`); use an explicit locale
+  // for Live's transcription configuration.
+  return language.toLowerCase() === "en" ? "en-US" : language;
+}
+
+function buildGoogleInputAudioTranscription(language?: string) {
+  const normalizedLanguage = normalizeGoogleTranscriptionLanguage(language);
+  return normalizedLanguage ? { languageCodes: [normalizedLanguage] } : {};
 }
 
 function asSensitivity(value: unknown): GoogleRealtimeSensitivity | undefined {
@@ -386,7 +403,7 @@ function buildGoogleLiveConnectConfig(
     systemInstruction: config.instructions,
     ...(functionDeclarations.length > 0 ? { tools: [{ functionDeclarations }] } : {}),
     ...(realtimeInputConfig ? { realtimeInputConfig } : {}),
-    inputAudioTranscription: {},
+    inputAudioTranscription: buildGoogleInputAudioTranscription(config.language),
     outputAudioTranscription: {},
     ...(!isGemini31LiveModel(model) && typeof config.enableAffectiveDialog === "boolean"
       ? { enableAffectiveDialog: config.enableAffectiveDialog }
@@ -399,14 +416,14 @@ function toGoogleModelResource(model: string): string {
   return model.startsWith("models/") ? model : `models/${model}`;
 }
 
-function buildBrowserInitialSetup(model: string) {
+function buildBrowserInitialSetup(model: string, language?: string) {
   return {
     setup: {
       model: toGoogleModelResource(model),
       generationConfig: {
         responseModalities: [Modality.AUDIO],
       },
-      inputAudioTranscription: {},
+      inputAudioTranscription: buildGoogleInputAudioTranscription(language),
       outputAudioTranscription: {},
     },
   };
@@ -1342,6 +1359,7 @@ async function createGoogleRealtimeBrowserSession(
             voice,
             instructions: req.instructions,
             tools: req.tools,
+            language: req.language,
           },
           model,
         ),
@@ -1365,7 +1383,7 @@ async function createGoogleRealtimeBrowserSession(
       outputEncoding: "pcm16",
       outputSampleRateHz: 24_000,
     },
-    initialMessage: buildBrowserInitialSetup(model),
+    initialMessage: buildBrowserInitialSetup(model, req.language),
     model,
     voice,
     expiresAt: newSessionExpiresAtMs,

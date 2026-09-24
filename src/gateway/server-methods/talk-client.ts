@@ -17,6 +17,7 @@ import {
 import { controlRealtimeVoiceAgentRun } from "../../talk/agent-run-control.js";
 import { resolveTalkSessionAgentId } from "../../talk/agent-target.js";
 import {
+  authorizeCurrentClientVoiceConfirmation,
   authorizeClientVoiceConfirmation,
   bindAuthorizedClientVoiceConfirmation,
   type ClientVoiceConfirmationGrant,
@@ -209,13 +210,13 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           "relay-owned voice sessions require relaySessionId and connection ownership",
         );
       }
-      if (parsedArgs.confirmationId) {
-        confirmationGrant = authorizeClientVoiceConfirmation({
-          agentId,
-          voiceSessionId,
-          confirmationId: parsedArgs.confirmationId,
-        });
-      }
+      confirmationGrant = parsedArgs.confirmationId
+        ? authorizeClientVoiceConfirmation({
+            agentId,
+            voiceSessionId,
+            confirmationId: parsedArgs.confirmationId,
+          })
+        : authorizeCurrentClientVoiceConfirmation({ agentId, voiceSessionId });
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)));
       return;

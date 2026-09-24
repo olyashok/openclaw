@@ -21,6 +21,7 @@ import {
 } from "../talk/agent-run-control.js";
 import type { RealtimeVoiceAgentControlResult } from "../talk/agent-run-control.js";
 import {
+  authorizeCurrentClientVoiceConfirmation,
   authorizeClientVoiceConfirmation,
   bindAuthorizedClientVoiceConfirmation,
 } from "../talk/client-voice-confirmation.js";
@@ -38,6 +39,7 @@ import {
   createRealtimeVoiceSessionHarness,
   handleRealtimeVoiceHarnessBridgeEvent,
 } from "../talk/realtime-session-harness.js";
+import { buildRealtimeTalkSessionContextInstructions } from "../talk/session-context.js";
 import type { TalkEvent } from "../talk/talk-events.js";
 import { registerChatAbortController } from "./chat-abort.js";
 import { ADMIN_SCOPE, WRITE_SCOPE } from "./operator-scopes.js";
@@ -247,6 +249,7 @@ export function createTalkClientAgentConsultRunner(params: {
   authority?: TalkAgentConsultAuthority;
   getVoiceSessionId: () => string | undefined;
   initialItems: Array<{ role: "user" | "assistant"; text: string }>;
+  sessionCapsule?: string;
   runIdPrefix?: string;
   surface?: string;
   registerRun?: (params: { runId: string }) => void;
@@ -274,7 +277,10 @@ export function createTalkClientAgentConsultRunner(params: {
           voiceSessionId,
           confirmationId: parsedArgs.confirmationId,
         })
-      : undefined;
+      : authorizeCurrentClientVoiceConfirmation({
+          agentId: params.agentId,
+          voiceSessionId,
+        });
     const consultAgentRuntime = (agentRuntime ??= createTalkClientAgentRuntime({
       config: params.config,
       agentId: params.agentId,
@@ -299,6 +305,12 @@ export function createTalkClientAgentConsultRunner(params: {
           runIdPrefix: params.runIdPrefix ?? "talk-realtime-consult",
           args: parsedArgs,
           transcript: params.initialItems,
+          extraSystemPrompt: [
+            "You are the configured OpenClaw agent receiving delegated requests from a live voice bridge. Act on behalf of the user, use available tools when appropriate, and return a brief speakable result.",
+            buildRealtimeTalkSessionContextInstructions(params.sessionCapsule),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
           surface: params.surface ?? "a browser Talk session",
           userLabel: "User",
           questionSourceLabel: "user",

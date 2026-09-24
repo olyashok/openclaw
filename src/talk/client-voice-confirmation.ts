@@ -147,8 +147,15 @@ function stableToolFingerprint(toolName: string, params: unknown): string {
     .digest("hex");
 }
 
-function requiresHighImpactVoiceConfirmation(toolName: string, params: unknown): boolean {
+function requiresHighImpactVoiceConfirmation(
+  toolName: string,
+  params: unknown,
+  isCurrentSourceMessageSend = false,
+): boolean {
   const normalizedTool = toolName.trim().toLowerCase();
+  if (normalizedTool === "message" && isCurrentSourceMessageSend) {
+    return false;
+  }
   if (!buildToolMutationState(normalizedTool, params).mutatingAction) {
     return false;
   }
@@ -245,6 +252,7 @@ type ClientVoiceToolConfirmationPolicyParams = {
   runId?: string;
   toolName: string;
   toolParams: unknown;
+  isCurrentSourceMessageSend?: boolean;
   isConfirmable?: () => boolean;
   now?: number;
 };
@@ -260,7 +268,13 @@ function resolveClientVoiceToolConfirmationPolicy(
   if (!params.agentId || !params.voiceSessionId) {
     return { allowed: true };
   }
-  if (!requiresHighImpactVoiceConfirmation(params.toolName, params.toolParams)) {
+  if (
+    !requiresHighImpactVoiceConfirmation(
+      params.toolName,
+      params.toolParams,
+      params.isCurrentSourceMessageSend,
+    )
+  ) {
     return { allowed: true };
   }
   // Sessions that cannot report spoken approvals (legacy clients without transcript
@@ -352,16 +366,45 @@ export function authorizeClientVoiceConfirmation(params: {
   confirmationId: string;
   now?: number;
 }): ClientVoiceConfirmationGrant {
+  const grant = resolveClientVoiceConfirmationGrant({
+    ...params,
+    requireAffirmation: true,
+  });
+  if (!grant) {
+    throw new Error("voice confirmation is missing, expired, or belongs to another action");
+  }
+  return grant;
+}
+
+/** Carry the one pending challenge into a follow-up consult after an exact spoken affirmation. */
+export function authorizeCurrentClientVoiceConfirmation(params: {
+  agentId: string;
+  voiceSessionId: string;
+  now?: number;
+}): ClientVoiceConfirmationGrant | undefined {
+  return resolveClientVoiceConfirmationGrant({ ...params, requireAffirmation: false });
+}
+
+function resolveClientVoiceConfirmationGrant(params: {
+  agentId: string;
+  voiceSessionId: string;
+  confirmationId?: string;
+  now?: number;
+  requireAffirmation: boolean;
+}): ClientVoiceConfirmationGrant | undefined {
   const now = params.now ?? Date.now();
   const scopeKey = confirmationScopeKey(params.agentId, params.voiceSessionId);
   const state = getPrunedConfirmationScope(scopeKey, now);
   const confirmation = state?.pending;
   if (!confirmation) {
+    if (!params.requireAffirmation && !params.confirmationId) {
+      return undefined;
+    }
     throw new Error("voice confirmation is missing, expired, or belongs to another action");
   }
   // A bare "yes" can only answer the question the model asked last; authorizing an
   // older challenge would let the model swap in a different pending action.
-  if (confirmation.confirmationId !== params.confirmationId) {
+  if (params.confirmationId && confirmation.confirmationId !== params.confirmationId) {
     throw new Error("a newer confirmation request supersedes this one; ask again");
   }
   const affirmation = state.recentUtterance;
@@ -370,6 +413,9 @@ export function authorizeClientVoiceConfirmation(params: {
     affirmation.timestamp <= confirmation.createdAt ||
     !isExplicitAffirmation(affirmation.text)
   ) {
+    if (!params.requireAffirmation && !params.confirmationId) {
+      return undefined;
+    }
     throw new Error("explicit spoken confirmation was not found after the action request");
   }
   // Validate only; the challenge and affirmation are consumed at bind time, once the
@@ -378,7 +424,7 @@ export function authorizeClientVoiceConfirmation(params: {
   return {
     agentId: params.agentId,
     voiceSessionId: params.voiceSessionId,
-    confirmationId: params.confirmationId,
+    confirmationId: confirmation.confirmationId,
     fingerprint: confirmation.fingerprint,
     expiresAt: confirmation.expiresAt,
   };
