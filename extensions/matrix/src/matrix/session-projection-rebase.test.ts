@@ -155,7 +155,9 @@ describe("Matrix projection history generation repair", () => {
     );
     // Direct history reconciles into the new generation; legacy reply retirement was
     // removed with durable projection receipts.
-    expect(mocks.reconcile).toHaveBeenCalledWith(expect.objectContaining({ threadId: "$new" }));
+    expect(mocks.reconcile).toHaveBeenCalledWith(
+      expect.objectContaining({ roomId: expect.any(String), threadId: "$new" }),
+    );
   });
   it("resumes the persisted new generation after replay failure without making another root", async () => {
     mocks.reconcile.mockRejectedValueOnce(new Error("replay failed"));
