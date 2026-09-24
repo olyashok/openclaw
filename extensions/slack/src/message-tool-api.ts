@@ -157,13 +157,20 @@ export function describeSlackMessageTool({
       actions: ["download-file"],
     });
   }
-  const permalinkActions = (["read", "download-file"] as const).filter((action) =>
-    actions.includes(action),
-  );
-  if (permalinkActions.length > 0) {
+  if (actions.includes("read")) {
+    // A permalink only names the conversation to read, like `target`, so it must not
+    // make read current-channel-only: cross-channel (for example scheduled) reads stay
+    // available, and Slack still gates the read on the requester's membership.
     schema.push({
       properties: createSlackPermalinkSchema(),
-      actions: [...permalinkActions],
+      actions: ["read"],
+      visibility: "all-configured",
+    });
+  }
+  if (actions.includes("download-file")) {
+    schema.push({
+      properties: createSlackPermalinkSchema(),
+      actions: ["download-file"],
     });
   }
   if (actions.includes("send")) {
