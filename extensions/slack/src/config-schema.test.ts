@@ -640,6 +640,18 @@ describe("slack config schema", () => {
     expectSlackConfigIssue({ paymentDetailWarning: "yes" }, "paymentDetailWarning");
   });
 
+  it("accepts unanswered-mention notice settings", () => {
+    expectSlackConfigValid({
+      unansweredMentions: { notice: true, contact: "Ask Alex for access.", alertAfterMinutes: 0 },
+      accounts: { "fi-user": { unansweredMentions: { notice: false } } },
+    });
+    expectSlackConfigIssue(
+      { unansweredMentions: { alertAfterMinutes: -1 } },
+      "unansweredMentions.alertAfterMinutes",
+    );
+    expectSlackConfigKeyRejected({ unansweredMentions: { text: "x" } }, "text");
+  });
+
   it("rejects the retired thread requireExplicitMention runtime key", () => {
     expectSlackConfigIssue({ thread: { requireExplicitMention: true } }, "thread");
   });

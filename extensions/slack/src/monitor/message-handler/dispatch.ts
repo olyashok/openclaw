@@ -36,6 +36,10 @@ import {
 import { countSlackTextUtf8Bytes } from "../../truncate.js";
 import { registerSlackSessionRun } from "../session-run-targets.js";
 import { scheduleSlackSessionTitleAfterMeta } from "../slack-session-title.js";
+import {
+  resolveSlackPrincipalMention,
+  trackSlackPrincipalMention,
+} from "../unanswered-mentions.js";
 import { resolveSlackBotLoopProtection } from "./dispatch-helpers.js";
 import { createSlackProgressRuntime } from "./dispatch-progress.js";
 import { createSlackDispatchSetup, type SlackDispatchSetup } from "./dispatch-setup.js";
@@ -119,6 +123,16 @@ async function dispatchSlackMessageWithSetup(
   } = setup;
   let dispatchError: unknown;
   const delivery = createSlackStreamingDeliveryRuntime(setup);
+  const principalMention =
+    prepared.isRoomish &&
+    prepared.ctxPayload.ExplicitlyMentionedBot === true &&
+    prepared.ctxPayload.InboundEventKind !== "room_event" &&
+    message.ts
+      ? { accountId: account.accountId, channelId: message.channel, messageTs: message.ts }
+      : undefined;
+  if (principalMention) {
+    trackSlackPrincipalMention({ ctx, ...principalMention, userId: message.user });
+  }
   const progress = createSlackProgressRuntime({ setup, delivery });
   const { draftStream, previewLifecycle } = progress;
   // A posted draft/progress message counts as visible output even before it is
@@ -654,6 +668,10 @@ async function dispatchSlackMessageWithSetup(
     }
   }
   await previewLifecycle.cleanup({ failed: Boolean(dispatchError || agentRunFailed) });
+
+  if (principalMention && anyReplyDelivered) {
+    resolveSlackPrincipalMention(principalMention);
+  }
 
   if (pendingFailureNotice && anyReplyDelivered) {
     recordSlackThreadFailureNotice(pendingFailureNotice);

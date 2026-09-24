@@ -158,6 +158,15 @@ export type SlackAccountConfig = Omit<
   ChannelReactionConfig<SlackReactionNotificationMode, never, string, true> & {
     /** Post a room-specific introduction when joining a group. Default: true. */
     joinIntro?: boolean;
+    /** Explicit mentions the bot will not act on (channel not allowed, sender not allowed or not a requester). */
+    unansweredMentions?: {
+      /** Send the requester one ephemeral notice per channel per hour. Default: true. */
+      notice?: boolean;
+      /** Who can help, appended to the notice (e.g. "Ask @alex for access."). */
+      contact?: string;
+      /** Log admitted explicit mentions with no reply after this many minutes; 0 disables. Default: 10. */
+      alertAfterMinutes?: number;
+    };
     /** Reply once, in thread, when a channel message appears to contain bank details. Default: false. */
     paymentDetailWarning?: boolean;
     /** Emoji name (without colons) -> agent turn started in the reacted message's thread. */
