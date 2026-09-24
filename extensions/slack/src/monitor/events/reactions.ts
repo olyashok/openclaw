@@ -6,6 +6,7 @@ import { allowListMatches, normalizeAllowListLower } from "../allow-list.js";
 import type { SlackMonitorContext } from "../context.js";
 import type { SlackEventScope } from "../event-scope.js";
 import type { SlackReactionEvent } from "../types.js";
+import { resolveSlackReactionTrigger, runSlackReactionTrigger } from "./reaction-triggers.js";
 import {
   authorizeAndResolveSlackSystemEventContext,
   resolveSlackListenerEventScope,
@@ -59,6 +60,13 @@ export function registerSlackReactionEvents(params: {
       const item = event.item;
       if (!item || item.type !== "message") {
         return;
+      }
+      // Trigger emojis fire on any message, independent of reactionNotifications.
+      const trigger =
+        action === "added" ? resolveSlackReactionTrigger(ctx, event.reaction) : undefined;
+      if (trigger) {
+        trackEvent?.();
+        await runSlackReactionTrigger({ ctx, event, trigger, eventScope });
       }
       if (runtimeContext.reactionMode === "off") {
         return;

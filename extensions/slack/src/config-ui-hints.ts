@@ -58,6 +58,10 @@ export const slackChannelConfigUiHints = {
     label: "Slack Channel Join Introduction",
     help: "Post one brief, room-specific introduction when the bot joins an allowed Slack channel (default: true). Account settings override the channel-wide setting.",
   },
+  reactionTriggers: {
+    label: "Slack Reaction Triggers",
+    help: "Map an emoji name (without colons) to a trusted prompt. When an allowed request user adds that reaction to any message in a channel the bot is in, OpenClaw starts an agent turn in that message's thread with its channel, ts, file ids and permalink. Default: none.",
+  },
   allowBots: {
     label: "Slack Allow Bot Messages",
     help: "Allow bot-authored messages to trigger Slack replies (default: false).",
