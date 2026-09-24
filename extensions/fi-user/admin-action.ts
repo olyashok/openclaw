@@ -25,6 +25,10 @@ export const ADMIN_TASKS = {
     label: "Change an e-sign recipient",
     required: ["project", "submissionId", "currentSignerEmail", "newSignerEmail"],
   },
+  esign_prepare_template: {
+    label: "Prepare an e-sign template",
+    required: ["project", "documentId", "description"],
+  },
   external_share_link: {
     label: "Share a document outside Fi",
     required: ["project", "documentId", "recipientEmail"],
@@ -337,7 +341,7 @@ const RequestSchema = Type.Object(
   {
     task: stringEnum(TASK_NAMES as unknown as readonly [AdminTask, ...AdminTask[]], {
       description:
-        "esign_change_recipient | external_share_link | document_outside_grants | restricted_filing | access_request",
+        "esign_change_recipient | esign_prepare_template | external_share_link | document_outside_grants | restricted_filing | access_request",
     }),
     project: Type.Optional(Type.String({ maxLength: 200 })),
     submissionId: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -367,7 +371,7 @@ export function createRequestAdminActionTool(
     name: "request_admin_action",
     label: "Ask an administrator",
     description:
-      "Ask Alex or Lorenzo to approve one administrator action you cannot do as the requester: esign_change_recipient, external_share_link, document_outside_grants, restricted_filing, or access_request. Posts an approval card in this conversation; after approval Cellect Fi Admin carries out only that task and reports back here. access_request files a Fi access request that an administrator approves in Fi. Never tag or message the admin agent yourself.",
+      "Ask Alex or Lorenzo to approve one administrator action you cannot do as the requester: esign_change_recipient, esign_prepare_template, external_share_link, document_outside_grants, restricted_filing, or access_request. Posts an approval card in this conversation; after approval Cellect Fi Admin carries out only that task and reports back here. access_request files a Fi access request that an administrator approves in Fi. Never tag or message the admin agent yourself.",
     parameters: RequestSchema,
     async execute(_toolCallId, raw) {
       const input = raw as AdminActionFields & { task: AdminTask };
