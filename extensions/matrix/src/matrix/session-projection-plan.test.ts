@@ -238,6 +238,89 @@ describe("planProjectionReconcile", () => {
   });
 });
 
+describe("v1 continuation chunks", () => {
+  // v1 split a long Slack message into back-to-back events and marked only
+  // the first; the reconciler later edited that first event into the complete
+  // v2 message (822c218d, e58e5130, f1ce6c6b).
+  const long: SourceProjectionMessage = {
+    ...before,
+    messageId: "1789139245.285579",
+    content: "First part of a long answer. Second part follows. Third part ends it.",
+  };
+  const sentAt = 1_789_139_246_000;
+  const at = (event: MatrixRawEvent, ts: number) => ({ ...event, origin_server_ts: ts });
+  const v1First = at(
+    own("$first", {
+      body: "**Slack · U111**\nFirst part of a long answer.",
+      "com.openclaw.session_projection": {
+        version: 1,
+        sourceChannel: "slack",
+        messageId: long.messageId,
+        senderId: "U111",
+        role: "user",
+      },
+    }),
+    sentAt,
+  );
+  const completed = [edit("$complete", "$first", marker(long))];
+  const chunk = (eventId: string, body: string, ts = sentAt) => at(own(eventId, { body }), ts);
+  const redactions = (actions: ReturnType<typeof planProjectionReconcile>) =>
+    actions.flatMap((action) =>
+      action.kind === "redact" ? [[action.eventId, action.reason, action.messageId]] : [],
+    );
+
+  it("redacts unmarked chunks that repeat the completed v1 message, after it is kept", () => {
+    const recorded = history(
+      [
+        v1First,
+        chunk("$chunk1", "Second part follows."),
+        chunk("$chunk2", "Third part\nends it.", sentAt + 1_200),
+      ],
+      completed,
+    );
+    for (const snapshot of [undefined, snapshotOf(long)]) {
+      const actions = planProjectionReconcile(recorded, snapshot, bound);
+      expect(actions[0]).toMatchObject({ kind: "unchanged", messageId: long.messageId });
+      expect(redactions(actions)).toEqual([
+        ["$chunk1", "duplicate", long.messageId],
+        ["$chunk2", "duplicate", long.messageId],
+      ]);
+    }
+  });
+
+  it("never redacts an unmarked event that fails any chunk check", () => {
+    const unrelated = history([v1First, chunk("$reply", "Here is a different answer.")], completed);
+    const late = history(
+      [v1First, chunk("$late", "Second part follows.", sentAt + 60_000)],
+      completed,
+    );
+    const early = history(
+      [v1First, chunk("$early", "Second part follows.", sentAt - 1)],
+      completed,
+    );
+    const notAdjacent = history(
+      [v1First, own("$other", marker(after)), chunk("$apart", "Second part follows.")],
+      completed,
+    );
+    const v2Only = history([
+      at(own("$v2", marker(long)), sentAt),
+      chunk("$afterV2", "Second part follows."),
+    ]);
+    const empty = history([v1First, chunk("$blank", "  ")], completed);
+    for (const recorded of [unrelated, late, early, notAdjacent, v2Only, empty]) {
+      expect(redactions(planProjectionReconcile(recorded, undefined, bound))).toEqual([]);
+    }
+  });
+
+  it("waits until the v1 message is complete before redacting a chunk", () => {
+    // Unedited, the first chunk alone does not hold the continuation's text.
+    const recorded = history([v1First, chunk("$chunk1", "Second part follows.")]);
+    const actions = planProjectionReconcile(recorded, snapshotOf(long), bound);
+    expect(actions[0]).toMatchObject({ kind: "edit", eventId: "$first" });
+    expect(redactions(actions)).toEqual([]);
+  });
+});
+
 describe("projectionMapping", () => {
   it("maps each source message to its retained copy per part", () => {
     const second: SourceProjectionMessage = { ...before, messageId: "1700000000.000002" };
