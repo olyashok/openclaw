@@ -138,14 +138,31 @@ describe("Fi user requester-bound Google Drive", () => {
     );
   });
 
-  it("registers Drive only for a verified Fi-user Slack turn", () => {
-    expect(registeredTools(slackContext()).map((tool) => tool.name)).toEqual([
+  it("registers the requester-bound tools for verified Fi-user Slack, Matrix and webchat turns", () => {
+    const names = [
+      "fi_user_api",
       "fi_user_gmail",
       "fi_user_gdrive",
       "fi_user_dataroom",
-    ]);
+      "fi_user_deliver_file",
+      "fi_user_esign",
+      "fi_user_budget_import",
+      "request_admin_action",
+    ];
+    expect(registeredTools(slackContext()).map((tool) => tool.name)).toEqual(names);
+    expect(
+      registeredTools(
+        slackContext({ messageChannel: "matrix", requesterSenderId: "@member:threads.example" }),
+      ).map((tool) => tool.name),
+    ).toEqual(names);
+    expect(
+      registeredTools(
+        slackContext({ messageChannel: "webchat", requesterSenderId: undefined }),
+      ).map((tool) => tool.name),
+    ).toEqual(names);
     expect(registeredTools(slackContext({ requesterSenderId: undefined }))).toEqual([]);
-    expect(registeredTools(slackContext({ messageChannel: "matrix" }))).toEqual([]);
+    expect(registeredTools(slackContext({ messageChannel: "telegram" }))).toEqual([]);
+    expect(registeredTools(slackContext({ agentId: "cellect-fi-admin" }))).toEqual([]);
   });
 
   it("asks Fi to create one verified private Matrix projection for a direct Slack session", async () => {
