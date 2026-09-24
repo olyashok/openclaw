@@ -210,7 +210,9 @@ describe("source reply authorization", () => {
       baseUrl: "https://fi.example.test",
       token: "test-bridge",
     }));
-    if (!guard) throw new Error("Expected source guard");
+    if (!guard) {
+      throw new Error("Expected source guard");
+    }
     await expect(
       guard.resolveSource({ targetSessionKey: sessionKey, externalSource: source }),
     ).resolves.toMatchObject({ sourceAccountId: "superadmin", externalSource: source });
