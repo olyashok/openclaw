@@ -1,7 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChannelProjectionParams } from "./channel-projection.js";
-import { createDetachedProjectionReconciler } from "./detached-projection.js";
+import { createDetachedProjectionReconciler, planProjectionRoom } from "./detached-projection.js";
 const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn() }));
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
   listSessionKeys: (...args: unknown[]) =>
@@ -167,115 +167,46 @@ describe("native parent-session Slack history discovery", () => {
     expect(latest.pending).toBe(0);
   });
   describe("drifted existing rooms", () => {
-    const bindingsFor = (sessionKey: string, count: number) =>
-      Array.from({ length: count }, (_, index) => ({
-        sessionKey,
-        roomId: `!room${index}`,
-        sourceAccountId: "cellect-fi-admin",
-        externalSource: {
-          provider: "slack" as const,
-          workspaceId: "T123",
-          channelId: "C123",
-          rootMessageId: `1700000000.00000${index}`,
-        },
-      }));
-    const withPlan = (f: ReturnType<typeof fixture>, drifted: Set<string>) => {
-      const plan = vi.fn(async (roomId: string) => ({
-        converged: !drifted.has(roomId),
-        invariantsOk: !drifted.has(roomId),
-      }));
+    it("keeps the readers-only pass and leaves planning to the drift pass", async () => {
+      const f = fixture();
+      const plan = vi.fn(async () => ({ converged: false, invariantsOk: false }));
       const readChannel = f.readChannel;
       (f.api.runtime.channel.runtimeContexts as unknown as { get: (key: unknown) => unknown }).get =
         () => ({ workspaceId: "T123", readChannel, list: async () => [], plan });
-      return plan;
-    };
-    const membership = (f: ReturnType<typeof fixture>) =>
-      f.publish.mock.calls.map(([params]) => [params.projectionRoomId, params.membershipOnly]);
-
-    it("keeps readers-only passes for converged rooms and refreshes one drifted room per budget", async () => {
-      const f = fixture();
-      const plan = withPlan(f, new Set(["!room1", "!room2"]));
       const { reconcile } = createDetachedProjectionReconciler(f.api, f.publish);
       await reconcile(
         { baseUrl: "https://fi.example", token: "test" },
-        bindingsFor(f.sessionKey, 3),
+        [0, 1].map((index) => ({
+          sessionKey: f.sessionKey,
+          roomId: `!room${index}`,
+          sourceAccountId: "cellect-fi-admin",
+          externalSource: {
+            provider: "slack" as const,
+            workspaceId: "T123",
+            channelId: "C123",
+            rootMessageId: `1700000000.00000${index}`,
+          },
+        })),
         new AbortController().signal,
         new Set(),
-        { maxExistingRooms: 3, allowDiscovery: false, maxFullRefreshes: 1 },
-      );
-      expect(membership(f)).toEqual([
-        ["!room0", true],
-        ["!room1", false],
-        ["!room2", true],
-      ]);
-      // The budget is spent, so the third room is not even planned.
-      expect(plan.mock.calls.map(([roomId]) => roomId)).toEqual(["!room0", "!room1"]);
-      expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
-        reconcile: true,
-        projectionRoomId: "!room1",
-        detachedSource: { rootMessageId: "1700000000.000001" },
-      });
-      expect(f.api.logger.info).toHaveBeenCalledTimes(1);
-      expect(f.api.logger.info).toHaveBeenCalledWith(
-        `fi-user: projection refresh lane=detached room=!room1 session=${f.sessionKey} outcome=refreshed`,
-      );
-    });
-
-    it("never plans or refreshes without a budget", async () => {
-      const f = fixture();
-      const plan = withPlan(f, new Set(["!room0"]));
-      const { reconcile } = createDetachedProjectionReconciler(f.api, f.publish);
-      await reconcile(
-        { baseUrl: "https://fi.example", token: "test" },
-        bindingsFor(f.sessionKey, 1),
-        new AbortController().signal,
-        new Set(),
-        { maxExistingRooms: 1, allowDiscovery: false },
+        { maxExistingRooms: 2, allowDiscovery: false },
       );
       expect(plan).not.toHaveBeenCalled();
-      expect(membership(f)).toEqual([["!room0", true]]);
-    });
-
-    it("falls back to the readers-only pass when a refresh fails, without revoking", async () => {
-      const f = fixture();
-      withPlan(f, new Set(["!room0"]));
-      f.publish.mockImplementationOnce(async () => {
-        throw new Error("Fi channel projection failed (502)");
-      });
-      const { reconcile } = createDetachedProjectionReconciler(f.api, f.publish);
-      const result = await reconcile(
-        { baseUrl: "https://fi.example", token: "test" },
-        bindingsFor(f.sessionKey, 1),
-        new AbortController().signal,
-        new Set(),
-        { maxExistingRooms: 1, allowDiscovery: false, maxFullRefreshes: 1 },
-      );
-      expect(membership(f)).toEqual([
-        ["!room0", false],
+      expect(
+        f.publish.mock.calls.map(([params]) => [params.projectionRoomId, params.membershipOnly]),
+      ).toEqual([
         ["!room0", true],
+        ["!room1", true],
       ]);
-      expect(f.publish.mock.calls.some(([params]) => params.unavailable)).toBe(false);
-      expect(result.error).toBe(0);
-      expect(f.api.logger.warn).toHaveBeenCalledWith(
-        `fi-user: projection refresh lane=detached room=!room0 session=${f.sessionKey} outcome=failed error=Fi channel projection failed (502)`,
-      );
-      expect(f.api.logger.info).not.toHaveBeenCalled();
     });
 
-    it("logs a failed plan and keeps the readers-only pass", async () => {
-      const f = fixture();
-      const plan = withPlan(f, new Set());
-      plan.mockRejectedValueOnce(new Error("Matrix unavailable"));
-      const { reconcile } = createDetachedProjectionReconciler(f.api, f.publish);
-      await reconcile(
-        { baseUrl: "https://fi.example", token: "test" },
-        bindingsFor(f.sessionKey, 1),
-        new AbortController().signal,
-        new Set(),
-        { maxExistingRooms: 1, allowDiscovery: false, maxFullRefreshes: 1 },
+    it("logs a failed plan and reports no verdict", async () => {
+      const logger = { warn: vi.fn() };
+      const plan = vi.fn().mockRejectedValueOnce(new Error("Matrix unavailable"));
+      expect(await planProjectionRoom({ list: async () => [], plan }, "!room0", logger)).toBe(
+        undefined,
       );
-      expect(membership(f)).toEqual([["!room0", true]]);
-      expect(f.api.logger.warn).toHaveBeenCalledWith(
+      expect(logger.warn).toHaveBeenCalledWith(
         "fi-user: projection refresh plan failed room=!room0 error=Matrix unavailable",
       );
     });

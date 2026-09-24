@@ -1,0 +1,168 @@
+import { describe, expect, it } from "vitest";
+import {
+  DRIFT_ACTIVITY_SETTLE_MS,
+  DRIFT_REFRESH_BACKOFF_MS,
+  DRIFT_SUSPECT_REPLAN_MS,
+  createProjectionDriftScheduler,
+} from "./projection-drift.js";
+
+const TICK = 60_000;
+const rooms = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    roomId: `!room${String(index).padStart(3, "0")}`,
+    sessionKey: `agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.${String(index).padStart(6, "0")}`,
+  }));
+const clean = { converged: true, invariantsOk: true };
+const drifted = { converged: false, invariantsOk: false };
+
+function clock() {
+  let at = 1_000_000_000;
+  return {
+    now: () => at,
+    advance: (ms: number) => {
+      at += ms;
+    },
+  };
+}
+
+describe("projection drift scheduler", () => {
+  it("plans every one of 300 rooms within 30 ticks", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(300);
+    const seen = new Set<string>();
+    for (let tick = 0; tick < 30; tick++) {
+      for (const roomId of drift.selectPlans(bound)) {
+        seen.add(roomId);
+        drift.recordPlan(roomId, clean);
+      }
+      time.advance(TICK);
+    }
+    expect(seen.size).toBe(300);
+  });
+
+  it("plans at least four rooms per tick for small inventories and caps priority work", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(20);
+    expect(drift.selectPlans(bound)).toHaveLength(4);
+    for (const room of bound) {
+      drift.noteActivity(room.sessionKey);
+    }
+    time.advance(DRIFT_ACTIVITY_SETTLE_MS);
+    // Four priority rooms, four rotation rooms: activity never starves the rotation.
+    const planned = drift.selectPlans(bound);
+    expect(planned).toHaveLength(8);
+  });
+
+  it("plans a room with settled Slack or Matrix activity ahead of the rotation", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(40);
+    for (const roomId of drift.selectPlans(bound)) {
+      drift.recordPlan(roomId, clean);
+    }
+    time.advance(TICK);
+    drift.noteActivity(bound[30]?.sessionKey);
+    drift.noteActivity(bound[35]?.roomId);
+    // Live delivery is still settling: not yet prioritised.
+    expect(drift.selectPlans(bound).slice(0, 2)).not.toContain(bound[35]?.roomId);
+    time.advance(DRIFT_ACTIVITY_SETTLE_MS);
+    const planned = drift.selectPlans(bound);
+    expect(planned.slice(0, 2).toSorted()).toEqual([bound[30]?.roomId, bound[35]?.roomId]);
+    for (const roomId of planned) {
+      drift.recordPlan(roomId, clean);
+    }
+    time.advance(TICK);
+    // Activity is consumed by the plan that followed it.
+    expect(drift.selectPlans(bound).slice(0, 2)).not.toContain(bound[30]?.roomId);
+  });
+
+  it("re-plans a room whose invariants or plan failed ahead of the rotation", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(200);
+    const first = drift.selectPlans(bound);
+    drift.recordPlan(first[0] ?? "", { converged: true, invariantsOk: false });
+    drift.recordPlan(first[1] ?? "", undefined);
+    for (const roomId of first.slice(2)) {
+      drift.recordPlan(roomId, clean);
+    }
+    time.advance(DRIFT_SUSPECT_REPLAN_MS - TICK);
+    expect(drift.selectPlans(bound).slice(0, 2)).not.toContain(first[0]);
+    time.advance(TICK);
+    expect(drift.selectPlans(bound).slice(0, 2)).toEqual([first[0], first[1]]);
+    expect(drift.summary()).toMatchObject({ invariant: 1, planFailed: 1, drifted: 0 });
+  });
+
+  it("refreshes drifted rooms planned this tick within the budget, active rooms first", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(4);
+    drift.noteActivity(bound[3]?.sessionKey);
+    time.advance(DRIFT_ACTIVITY_SETTLE_MS);
+    for (const roomId of drift.selectPlans(bound)) {
+      drift.recordPlan(roomId, roomId === bound[0]?.roomId ? clean : drifted);
+    }
+    expect(drift.selectRefreshes(bound, 2)).toEqual([bound[3]?.roomId, bound[1]?.roomId]);
+    expect(drift.selectRefreshes(bound, 0)).toEqual([]);
+    // Next tick: nothing was re-planned yet, so nothing is refreshed on a stale verdict.
+    time.advance(TICK);
+    drift.selectPlans([]);
+    expect(drift.selectRefreshes(bound, 3)).toEqual([]);
+  });
+
+  it("backs off a room that stays drifted after a refresh, and resets once it converges", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(1);
+    const tick = (verdict: typeof clean) => {
+      for (const planned of drift.selectPlans(bound)) {
+        drift.recordPlan(planned, verdict);
+      }
+      const refreshes = drift.selectRefreshes(bound, 1);
+      for (const refreshed of refreshes) {
+        drift.recordRefresh(refreshed);
+      }
+      time.advance(TICK);
+      return refreshes.length;
+    };
+    const refreshTimes: number[] = [];
+    // One day of ticks while the room never converges (e.g. Fi refuses it).
+    for (let minute = 0; minute < 24 * 60; minute++) {
+      if (tick(drifted)) {
+        refreshTimes.push(minute);
+      }
+    }
+    // First refresh at once, then 1 h, 3 h, 9 h apart: never once per tick.
+    expect(refreshTimes).toHaveLength(4);
+    expect(refreshTimes[1]! - refreshTimes[0]!).toBeGreaterThanOrEqual(
+      DRIFT_REFRESH_BACKOFF_MS[0] / TICK,
+    );
+    expect(refreshTimes[3]! - refreshTimes[2]!).toBeGreaterThanOrEqual(
+      DRIFT_REFRESH_BACKOFF_MS[2] / TICK,
+    );
+    // It converges; a later drift is refreshed immediately again.
+    for (let minute = 0; minute < 40; minute++) {
+      tick(clean);
+    }
+    expect(drift.summary().drifted).toBe(0);
+    let refreshedAgain = 0;
+    for (let minute = 0; minute < 40 && !refreshedAgain; minute++) {
+      refreshedAgain = tick(drifted);
+    }
+    expect(refreshedAgain).toBe(1);
+  });
+
+  it("forgets rooms that are no longer bound", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(3);
+    for (const roomId of drift.selectPlans(bound)) {
+      drift.recordPlan(roomId, drifted);
+    }
+    expect(drift.summary().tracked).toBe(3);
+    drift.selectPlans(bound.slice(0, 1));
+    expect(drift.summary()).toMatchObject({ tracked: 1, drifted: 1 });
+  });
+});

@@ -25,25 +25,21 @@ export type ProjectionInventory = {
 };
 
 /**
- * Whether a bound room needs a full-snapshot refresh instead of a readers-only
- * pass. Only a plan that would write something qualifies: an invariant that
- * fails while every action is `unchanged` (an unmarked reply the reconciler
- * never touches) cannot be repaired by a refresh. Any read failure keeps the
- * cheap membership pass.
+ * Structural, read-only plan verdict for one bound room, or undefined when the
+ * plan could not be read (logged; the room is planned again later).
  */
-export async function projectionNeedsRefresh(
+export async function planProjectionRoom(
   inventory: ProjectionInventory | undefined,
   roomId: string,
   logger?: { warn: (message: string) => void },
-): Promise<boolean> {
+): Promise<{ converged: boolean; invariantsOk: boolean } | undefined> {
   try {
-    const plan = await inventory?.plan?.(roomId);
-    return plan ? !plan.converged : false;
+    return await inventory?.plan?.(roomId);
   } catch (error) {
     logger?.warn(
       `fi-user: projection refresh plan failed room=${roomId} error=${safeError(error)}`,
     );
-    return false;
+    return undefined;
   }
 }
 
@@ -76,10 +72,12 @@ type ReconcileBudget = {
   maxExistingRooms?: number;
   /** Historical root discovery is intentionally a separate maintenance lane. */
   allowDiscovery?: boolean;
-  /** Drifted existing rooms that may receive a full-snapshot refresh this tick. */
-  maxFullRefreshes?: number;
 };
-const PARENT =
+type ConfiguredBinding = {
+  agentId: string;
+  match: { accountId?: string; peer?: { id: string } };
+};
+export const PARENT =
   /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:(?:channel|group):([cg][a-z0-9]+)$/i;
 const identity = (source: Source) =>
   `${source.workspaceId}:${source.channelId}:${source.rootMessageId}`;
@@ -124,6 +122,30 @@ export async function verifyDetachedProjectionOrigin(
   ) {
     throw new Error("Detached Slack source does not match native parent origin");
   }
+}
+
+/**
+ * The Slack account that may serve an existing detached room: its durable
+ * source account, else the parent session's delivery account, and only when a
+ * configured binding still admits it for this agent and channel.
+ */
+export function resolveDetachedRoomAccount(
+  configured: readonly ConfiguredBinding[],
+  binding: ProjectionInventoryBinding,
+): { accountId?: string; allowed: boolean } {
+  const source = binding.externalSource;
+  const agentId = PARENT.exec(binding.sessionKey)?.[1];
+  const entry = agentId
+    ? getSessionEntry({ agentId, sessionKey: binding.sessionKey, readConsistency: "latest" })
+    : undefined;
+  const accountId = binding.sourceAccountId ?? sessionDeliveryOrigin(entry)?.accountId;
+  const allowed = configured.some(
+    (candidate) =>
+      candidate.agentId === agentId &&
+      candidate.match.accountId === accountId &&
+      (!candidate.match.peer || candidate.match.peer.id.toUpperCase() === source?.channelId),
+  );
+  return { accountId, allowed: Boolean(entry && source && accountId && allowed) };
 }
 
 /** Cursor state is only a bounded scheduler; durable source/room identity makes restart replay safe. */
@@ -278,11 +300,6 @@ export function createDetachedProjectionReconciler(
     );
     const existingRooms = scheduled.batch;
     existingCursor = scheduled.cursor;
-    const inventory = api.runtime.channel.runtimeContexts.get<ProjectionInventory>({
-      channelId: "matrix",
-      capability: "session-read-projections",
-    });
-    let refreshes = budget.maxFullRefreshes ?? 0;
     for (const binding of existing) {
       const source = binding.externalSource;
       if (!source) {
@@ -293,25 +310,15 @@ export function createDetachedProjectionReconciler(
         continue;
       }
       signal.throwIfAborted();
-      const agentId = PARENT.exec(binding.sessionKey)?.[1];
-      const entry = agentId
-        ? getSessionEntry({ agentId, sessionKey: binding.sessionKey, readConsistency: "latest" })
-        : undefined;
-      const accountId = binding.sourceAccountId ?? sessionDeliveryOrigin(entry)?.accountId;
-      const allowed = configured.some(
-        (candidate) =>
-          candidate.agentId === agentId &&
-          candidate.match.accountId === accountId &&
-          (!candidate.match.peer || candidate.match.peer.id.toUpperCase() === source.channelId),
-      );
+      const { accountId, allowed } = resolveDetachedRoomAccount(configured, binding);
       try {
-        if (!entry || !accountId || !allowed) {
+        if (!allowed || !accountId) {
           throw new Error("Detached parent unavailable");
         }
         // A detached room already has its historical snapshot, so readers are
-        // reconciled without replaying it; a room whose plan would still write
-        // (duplicates, torn parts, notices) gets one full-snapshot refresh.
-        const existingRoom = {
+        // reconciled without replaying it. Drifted rooms are refreshed by the
+        // reconciler's drift pass, not here.
+        await publish({
           api,
           ...connection,
           sessionKey: binding.sessionKey,
@@ -320,36 +327,9 @@ export function createDetachedProjectionReconciler(
           reconcile: true,
           projectionRoomId: binding.roomId,
           channelScope: await scopeFor(accountId, source.channelId),
+          membershipOnly: true,
           signal,
-        };
-        const refresh =
-          refreshes > 0 && (await projectionNeedsRefresh(inventory, binding.roomId, api.logger));
-        if (refresh) {
-          refreshes--;
-        }
-        // A failed refresh must not revoke readers; the readers-only pass
-        // still runs and the room is planned again on its next turn.
-        const refreshed =
-          refresh &&
-          (await publish({ ...existingRoom, membershipOnly: false }).then(
-            () => {
-              logProjectionRefresh(api.logger, "detached", binding.roomId, binding.sessionKey);
-              return true;
-            },
-            (error: unknown) => {
-              logProjectionRefresh(
-                api.logger,
-                "detached",
-                binding.roomId,
-                binding.sessionKey,
-                error,
-              );
-              return false;
-            },
-          ));
-        if (!refreshed) {
-          await publish({ ...existingRoom, membershipOnly: true });
-        }
+        });
         existingOutcomes.set(binding.roomId, "ok");
       } catch (error) {
         const revoked = await publish({

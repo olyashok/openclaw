@@ -7,11 +7,10 @@ import {
 import {
   createDetachedProjectionReconciler,
   verifyDetachedProjectionOrigin,
-  logProjectionRefresh,
-  projectionNeedsRefresh,
   type ProjectionInventory,
 } from "./detached-projection.js";
 import { reconcileSlackDirectProjections } from "./direct-projection.js";
+import { createProjectionDriftScheduler, runProjectionDriftPass } from "./projection-drift.js";
 import {
   RECONCILE_BATCH_SIZE,
   RECONCILE_FULL_REFRESH_BUDGET,
@@ -66,6 +65,8 @@ export type ChannelProjectionParams = {
   };
   channelScope?: SlackChannelScope;
   membershipOnly?: boolean;
+  /** Periodic full refresh: a failed source read leaves readers untouched. */
+  refresh?: boolean;
   onResult?: (status: "created" | "existing" | "skipped") => void;
 };
 
@@ -156,7 +157,7 @@ async function publishSlackThreadSnapshot(
       ? await params.channelScope.readThread(rootMessageId)
       : await reader.readThread(channelId, rootMessageId);
   } catch (error) {
-    if (params.reconcile) {
+    if (params.reconcile && !params.refresh) {
       // Loss of source access removes readers, but must never be interpreted
       // as an empty message snapshot or delete mirrored history.
       await post({
@@ -278,6 +279,8 @@ export function registerSlackProjectionReconciler(
   const bindingSweepSeen = new Set<string>();
   const directSweepSeen = new Set<string>();
   const outcomes = new Map<string, "created" | "existing" | "skipped" | "error">();
+  const drift = createProjectionDriftScheduler();
+  let driftReport = { rooms: 0, planned: 0, refreshed: 0, refreshFailed: 0 };
   let report = {
     scanned: 0,
     pending: 0,
@@ -303,7 +306,12 @@ export function registerSlackProjectionReconciler(
   api.registerGatewayMethod(
     "fi.slackProjection.status",
     async ({ respond }) => {
-      respond(true, { ...report, direct: directReport, detached: detachedReport });
+      respond(true, {
+        ...report,
+        direct: directReport,
+        detached: detachedReport,
+        drift: { ...driftReport, ...drift.summary() },
+      });
     },
     { scope: "operator.admin" },
   );
@@ -319,10 +327,6 @@ export function registerSlackProjectionReconciler(
       if (!config.token) {
         return;
       }
-      // Bound rooms normally get a readers-only pass. One whose structural plan
-      // would still write is refreshed from a full Slack snapshot, as a live
-      // bot reply does, at most this many times per tick.
-      let refreshes = fullRefreshesPerTick ?? RECONCILE_FULL_REFRESH_BUDGET;
       const inventory = api.runtime.channel.runtimeContexts.get<ProjectionInventory>({
         channelId: "matrix",
         capability: "session-read-projections",
@@ -517,57 +521,30 @@ export function registerSlackProjectionReconciler(
               channelScope = await cached.scope;
             }
           }
-          const refresh =
-            roomId && entry && accountId && refreshes > 0
-              ? await projectionNeedsRefresh(inventory, roomId, api.logger)
-              : false;
-          if (refresh) {
-            refreshes--;
-          }
           enteredPublisher = true;
-          const token = config.token;
-          const project = (membershipOnly: boolean) =>
-            projectSlackChannelThread({
-              api,
-              ...config,
-              token,
-              sessionKey,
-              accountId: accountId ?? "unavailable",
-              unavailable: !entry || !accountId,
-              reconcile: Boolean(roomId),
-              discover: !roomId,
-              projectionRoomId: roomId,
-              channelScope,
-              // Existing projections receive source content on live delivery.
-              // The periodic repair path only needs to reconcile current
-              // readers, so it must not re-read and re-upload an entire Slack
-              // thread for every bound room; only a drifted room is refreshed.
-              membershipOnly,
-              onResult: (status) => {
-                if (identity) {
-                  outcomes.set(identity, status);
-                }
-              },
-              signal: AbortSignal.any([generation.signal, AbortSignal.timeout(90_000)]),
-            });
-          // A failed refresh falls back to the readers-only pass; the room is
-          // planned again on its next turn.
-          const refreshed =
-            refresh &&
-            roomId &&
-            (await project(false).then(
-              () => {
-                logProjectionRefresh(api.logger, "channel", roomId, sessionKey);
-                return true;
-              },
-              (error: unknown) => {
-                logProjectionRefresh(api.logger, "channel", roomId, sessionKey, error);
-                return false;
-              },
-            ));
-          if (!refreshed) {
-            await project(Boolean(roomId));
-          }
+          await projectSlackChannelThread({
+            api,
+            ...config,
+            token: config.token,
+            sessionKey,
+            accountId: accountId ?? "unavailable",
+            unavailable: !entry || !accountId,
+            reconcile: Boolean(roomId),
+            discover: !roomId,
+            projectionRoomId: roomId,
+            channelScope,
+            // Existing projections receive source content on live delivery.
+            // The periodic repair path only needs to reconcile current
+            // readers, so it must not re-read and re-upload an entire Slack
+            // thread for every bound room (the drift pass refreshes drift).
+            membershipOnly: Boolean(roomId),
+            onResult: (status) => {
+              if (identity) {
+                outcomes.set(identity, status);
+              }
+            },
+            signal: AbortSignal.any([generation.signal, AbortSignal.timeout(90_000)]),
+          });
         } catch (error) {
           if (identity) {
             outcomes.set(identity, "error");
@@ -624,11 +601,7 @@ export function registerSlackProjectionReconciler(
           generation.signal,
           knownRoots,
           detachedWorkKind === "acl"
-            ? {
-                maxExistingRooms: RECONCILE_BATCH_SIZE,
-                allowDiscovery: false,
-                maxFullRefreshes: refreshes,
-              }
+            ? { maxExistingRooms: RECONCILE_BATCH_SIZE, allowDiscovery: false }
             : { maxExistingRooms: 0, allowDiscovery: true },
         );
         detachedWorkKind = detachedWorkKind === "acl" ? "history" : "acl";
@@ -642,6 +615,29 @@ export function registerSlackProjectionReconciler(
           RECONCILE_HISTORY_BATCH_SIZE,
         );
       }
+      // Drift pass, every tick and independent of the lane rotation.
+      driftReport =
+        (await runProjectionDriftPass({
+          api,
+          drift,
+          inventory,
+          bindings,
+          budget: fullRefreshesPerTick ?? RECONCILE_FULL_REFRESH_BUDGET,
+          configured: configuredBindings,
+          active: () => !stopped && controller === generation,
+          channelAccount: (agentId, channelId, sessionKey) => {
+            const entry = getSessionEntry({ agentId, sessionKey, readConsistency: "latest" });
+            const stored = sessionDeliveryOrigin(entry)?.accountId;
+            return entry && resolveAccount(agentId, channelId, sessionKey, stored);
+          },
+          publish: (params) =>
+            projectSlackChannelThread({
+              ...params,
+              ...config,
+              token: config.token ?? "",
+              signal: AbortSignal.any([generation.signal, AbortSignal.timeout(90_000)]),
+            }),
+        })) ?? driftReport;
       maintenanceLane =
         maintenanceLane === "channel"
           ? "detached"
@@ -663,7 +659,9 @@ export function registerSlackProjectionReconciler(
           detachedReport.error === 0 &&
           detachedReport.unavailable === 0,
       };
-      api.logger.info(`fi-user: Slack discovery ${JSON.stringify(report)}`);
+      api.logger.info(
+        `fi-user: Slack discovery ${JSON.stringify({ ...report, drift: { ...driftReport, ...drift.summary() } })}`,
+      );
     } catch {
       report = { ...report, complete: false, error: report.error + 1 };
       api.logger.warn("fi-user: Slack projection reconciliation scan failed");
@@ -706,6 +704,8 @@ export function registerSlackProjectionReconciler(
     },
   });
   return {
+    /** Slack or Matrix activity: plan the matching rooms ahead of the rotation. */
+    noteActivity: (key: string | undefined) => drift.noteActivity(key),
     wake: (sessionKey: string) => {
       reconcileDetached.invalidate(sessionKey);
       prioritySessionKey = sessionKey;
