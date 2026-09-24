@@ -1416,6 +1416,22 @@ Use an entry's `identifier` directly as the `react` emoji; surrounding colons ar
 
     There is one thread-scoped delegation exception: after a listed `requestUsers` member starts or participates in a thread, an admitted context-only participant's later reply is dispatched with a strict continuation-only policy. The agent may act only when the reply continues, clarifies, or corrects the established thread scope. An expanded or unclear action must receive a visible refusal explaining that a listed requester must approve it. This never grants slash-command, reset, abort, authorization-change, or general channel request authority. OpenClaw verifies the earlier authorized participant from Slack's thread authorship metadata and fails closed when it cannot read that metadata. An empty list makes every admitted user context-only because no thread can acquire an authority anchor. This setting remains restrictive: it never admits a sender excluded by `users` or the surrounding channel policy.
 
+    When someone explicitly mentions the bot where it will not act, OpenClaw tells them once, with a Slack ephemeral message only they can see: when the channel is not in the channel allowlist (with `groupPolicy: "allowlist"`), when the sender is not in the channel's `users`, and when a context-only sender outside `requestUsers` mentions it outside a delegated thread. Each account sends at most one notice per user and channel per hour, and sends nothing if Slack rejects the ephemeral message. Every such mention is also logged as `Unanswered mention ... reason=<channel-not-allowed|sender-not-allowed|not-a-request-user>` for alerting. Admitted explicit mentions that still have no delivered reply after `alertAfterMinutes` are logged the same way with `reason=no-reply-after-<N>m`.
+
+    ```json5
+    {
+      channels: {
+        slack: {
+          unansweredMentions: {
+            notice: true, // default
+            contact: "Ask Alex (@alex) for access.", // replaces the generic "Ask the OpenClaw owner" line
+            alertAfterMinutes: 10, // default; 0 disables the no-reply log
+          },
+        },
+      },
+    }
+    ```
+
     `allowBots` is conservative for channels and private channels: bot-authored room messages are accepted only when the sending bot is explicitly listed in that room's `users` allowlist, or when at least one explicit Slack owner ID from `channels.slack.allowFrom` is currently a room member. Wildcards and display-name owner entries do not satisfy owner presence. Owner presence uses Slack `conversations.members`; make sure the app has the matching read scope for the room type (`channels:read` for public channels, `groups:read` for private channels). If the member lookup fails, OpenClaw drops the bot-authored room message.
 
     Accepted bot-authored Slack messages use shared [bot loop protection](/channels/bot-loop-protection). Configure `channels.defaults.botLoopProtection` for the default budget, then override with `channels.slack.botLoopProtection` or `channels.slack.channels.<id>.botLoopProtection` when a workspace or channel needs a different limit.

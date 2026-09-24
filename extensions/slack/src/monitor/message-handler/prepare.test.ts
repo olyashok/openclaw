@@ -302,6 +302,107 @@ describe("slack prepareSlackMessage inbound contract", () => {
     );
   });
 
+  function createRestrictedRoomCtx(params: {
+    postEphemeral: ReturnType<typeof vi.fn>;
+    channel: { users?: string[]; requestUsers?: string[] };
+    contact?: string;
+  }): SlackMonitorContext {
+    const channelsConfig = { C_ROOM: { enabled: true, ...params.channel } };
+    const ctx = createInboundSlackCtx({
+      cfg: {
+        channels: {
+          slack: {
+            enabled: true,
+            channels: channelsConfig,
+            ...(params.contact ? { unansweredMentions: { contact: params.contact } } : {}),
+          },
+        },
+      } as OpenClawConfig,
+      appClient: {
+        chat: { postEphemeral: params.postEphemeral },
+      } as unknown as App["client"],
+      channelsConfig,
+    });
+    ctx.resolveChannelName = async () => ({ name: "project-room", type: "channel" });
+    ctx.resolveUserName = async (userId) => ({
+      name: userId === ctx.botUserId ? "Personal Claw" : "Alice",
+    });
+    return ctx;
+  }
+
+  it("tells a sender outside the channel's users why a mention is not answered, once", async () => {
+    const postEphemeral = vi.fn().mockResolvedValue({ ok: true });
+    const ctx = createRestrictedRoomCtx({
+      postEphemeral,
+      channel: { users: ["U_OWNER"] },
+      contact: "Ask Alex (@alex) for access.",
+    });
+    const mention = (ts: string) =>
+      prepareSlackMessage({
+        ctx,
+        account: defaultAccount,
+        message: createSlackMessage({
+          channel: "C_ROOM",
+          channel_type: "channel",
+          user: "U1",
+          text: "<@B1> find the EIN",
+          ts,
+        }),
+        opts: { source: "message" },
+      });
+
+    await expect(mention("1.000")).resolves.toBeNull();
+    await expect(mention("2.000")).resolves.toBeNull();
+
+    expect(postEphemeral).toHaveBeenCalledExactlyOnceWith({
+      token: "token",
+      channel: "C_ROOM",
+      user: "U1",
+      text: "Personal Claw can’t act on your request here because you aren’t on its list of allowed users for this channel. Ask Alex (@alex) for access.",
+    });
+  });
+
+  it("does not notify an unmentioned message from a sender outside the channel's users", async () => {
+    const postEphemeral = vi.fn().mockResolvedValue({ ok: true });
+    const ctx = createRestrictedRoomCtx({ postEphemeral, channel: { users: ["U_OWNER"] } });
+
+    await prepareSlackMessage({
+      ctx,
+      account: defaultAccount,
+      message: createSlackMessage({ channel: "C_ROOM", channel_type: "channel", user: "U1" }),
+      opts: { source: "message" },
+    });
+
+    expect(postEphemeral).not.toHaveBeenCalled();
+  });
+
+  it("tells a context-only collaborator who mentions the bot that it takes requests from requesters", async () => {
+    const postEphemeral = vi.fn().mockResolvedValue({ ok: true });
+    const ctx = createRestrictedRoomCtx({
+      postEphemeral,
+      channel: { requestUsers: ["U_OWNER"] },
+    });
+
+    await prepareSlackMessage({
+      ctx,
+      account: defaultAccount,
+      message: createSlackMessage({
+        channel: "C_ROOM",
+        channel_type: "channel",
+        user: "U1",
+        text: "<@B1> please adjust the budget",
+      }),
+      opts: { source: "message" },
+    });
+    await vi.waitFor(() => expect(postEphemeral).toHaveBeenCalledTimes(1));
+
+    expect(postEphemeral.mock.calls[0]?.[0]).toMatchObject({
+      channel: "C_ROOM",
+      user: "U1",
+      text: expect.stringContaining("only takes requests in this channel from approved requesters"),
+    });
+  });
+
   it("keeps the original deny behavior when the ephemeral notice fails", async () => {
     const postEphemeral = vi.fn().mockRejectedValue(new Error("invalid_auth xoxb-secret-value"));
     const ctx = createAllowlistDeniedRoomCtx({ postEphemeral });

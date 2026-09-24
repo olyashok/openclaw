@@ -41,6 +41,10 @@ import {
 } from "../../streaming.js";
 import { countSlackTextUtf8Bytes } from "../../truncate.js";
 import { scheduleSlackSessionTitleAfterMeta } from "../slack-session-title.js";
+import {
+  resolveSlackPrincipalMention,
+  trackSlackPrincipalMention,
+} from "../unanswered-mentions.js";
 import { resolveSlackBotLoopProtection } from "./dispatch-helpers.js";
 import { createSlackProgressRuntime } from "./dispatch-progress.js";
 import { createSlackDispatchSetup } from "./dispatch-setup.js";
@@ -78,6 +82,16 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
     useStreaming,
   } = setup;
   const delivery = createSlackStreamingDeliveryRuntime(setup);
+  const principalMention =
+    prepared.isRoomish &&
+    prepared.ctxPayload.ExplicitlyMentionedBot === true &&
+    prepared.ctxPayload.InboundEventKind !== "room_event" &&
+    message.ts
+      ? { accountId: account.accountId, channelId: message.channel, messageTs: message.ts }
+      : undefined;
+  if (principalMention) {
+    trackSlackPrincipalMention({ ctx, ...principalMention, userId: message.user });
+  }
   const draftPreviewCommitted = { value: false };
   const progress = createSlackProgressRuntime({
     setup,
@@ -655,6 +669,10 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
     observedReplyDelivery: delivery.observedReplyDelivery,
     fallbackDelivered: streamFallbackDelivered,
   });
+
+  if (principalMention && anyReplyDelivered) {
+    resolveSlackPrincipalMention(principalMention);
+  }
 
   if (pendingFailureNotice && anyReplyDelivered) {
     recordSlackThreadFailureNotice(pendingFailureNotice);

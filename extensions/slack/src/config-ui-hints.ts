@@ -45,6 +45,22 @@ export const slackChannelConfigUiHints = {
     label: "Slack Channel Join Introduction",
     help: "Post one brief, room-specific introduction when the bot joins an allowed Slack channel (default: true). Account settings override the channel-wide setting.",
   },
+  unansweredMentions: {
+    label: "Slack Unanswered Mentions",
+    help: "When someone explicitly mentions the bot where it will not act (channel not allowed, sender not allowed, or not a requester), send them one ephemeral notice per channel per hour and log the mention.",
+  },
+  "unansweredMentions.notice": {
+    label: "Slack Unanswered Mention Notice",
+    help: "Send the requester an ephemeral notice explaining why the bot will not act (default: true).",
+  },
+  "unansweredMentions.contact": {
+    label: "Slack Unanswered Mention Contact",
+    help: 'Who can help, appended to the notice in place of the generic "Ask the OpenClaw owner" line.',
+  },
+  "unansweredMentions.alertAfterMinutes": {
+    label: "Slack Unanswered Mention Alert Minutes",
+    help: "Log an admitted explicit mention that has no delivered reply after this many minutes (default: 10; 0 disables).",
+  },
   paymentDetailWarning: {
     label: "Slack Payment Detail Warning",
     help: "When a message in an allowed channel appears to contain bank details (ABA routing number, bank account number, IBAN or SWIFT code), reply once in its thread advising against sharing payment instructions in Slack. Deterministic, never quotes the numbers. Default: false.",

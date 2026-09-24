@@ -109,6 +109,14 @@ const SlackAccountSchema = z
   .object({
     ...accountShape,
     joinIntro: z.boolean().optional(),
+    unansweredMentions: z
+      .object({
+        notice: z.boolean().optional(),
+        contact: z.string().trim().max(500).optional(),
+        alertAfterMinutes: z.number().int().min(0).optional(),
+      })
+      .strict()
+      .optional(),
     paymentDetailWarning: z.boolean().optional(),
     reactionTriggers: z
       .record(z.string().regex(/^[a-z0-9_+'-]+$/u), SlackReactionTriggerSchema)
