@@ -41,6 +41,14 @@ function sandboxReadMounts(
   return mounts.length > 0 ? mounts : undefined;
 }
 
+function sandboxWorkdirBindMounts(
+  sandbox: SandboxContext,
+): Array<{ containerPath: string; hostPath: string }> {
+  return buildSandboxFsMounts(sandbox)
+    .filter((mount) => mount.source === "bind" || mount.source === "agent")
+    .map((mount) => ({ containerPath: mount.containerRoot, hostPath: mount.hostRoot }));
+}
+
 function resolveSkillReadRoots(skillsSnapshot?: SkillSnapshot): string[] | undefined {
   const roots = new Set<string>();
   for (const skill of skillsSnapshot?.resolvedSkills ?? []) {
@@ -260,6 +268,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
               ),
               workdirRoots: sandbox.backend?.workdirRoots,
               readOnlyWorkspaceSkillMounts,
+              bindMounts: sandboxWorkdirBindMounts(sandbox),
               env: sandbox.backend?.env ?? sandbox.docker.env,
               buildExecSpec: sandbox.backend?.buildExecSpec.bind(sandbox.backend),
               finalizeExec: sandbox.backend?.finalizeExec?.bind(sandbox.backend),
