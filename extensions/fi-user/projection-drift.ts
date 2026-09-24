@@ -45,12 +45,17 @@ export const DRIFT_REFRESH_BACKOFF_MS = [
 export const DRIFT_DECLINED_BACKOFF_MS = 7 * 24 * 60 * 60_000;
 const ACTIVITY_RETENTION_MS = 24 * 60 * 60_000;
 
-export type DriftPlanVerdict = { converged: boolean; invariantsOk: boolean };
+export type DriftPlanVerdict = {
+  converged: boolean;
+  invariantsOk: boolean;
+  /** False when no human can read the room; a refresh then matters to nobody. */
+  hasHumanMember?: boolean;
+};
 type RoomState = {
   plannedAt: number;
   /** When a room that is not clean is planned again ahead of the rotation. */
   replanAt: number;
-  verdict: "converged" | "drifted" | "invariant" | "failed";
+  verdict: "converged" | "drifted" | "unread" | "invariant" | "failed";
   driftSince?: number;
   refreshAttempts: number;
   refreshAfter: number;
@@ -95,7 +100,12 @@ export function createProjectionDriftScheduler(now: () => number = Date.now) {
         if (active > plannedAt && at - active >= DRIFT_ACTIVITY_SETTLE_MS) {
           // Most recent activity first, ahead of every earlier failure.
           priority.push({ roomId: room.roomId, tier: 0, rank: -active });
-        } else if (state && state.verdict !== "converged" && at >= state.replanAt) {
+        } else if (
+          state &&
+          state.verdict !== "converged" &&
+          state.verdict !== "unread" &&
+          at >= state.replanAt
+        ) {
           priority.push({ roomId: room.roomId, tier: 1, rank: state.replanAt });
         } else {
           rotation.push({ roomId: room.roomId, plannedAt });
@@ -126,6 +136,19 @@ export function createProjectionDriftScheduler(now: () => number = Date.now) {
           plannedAt: at,
           replanAt: Number.POSITIVE_INFINITY,
           verdict: "converged",
+          refreshAttempts: 0,
+          refreshAfter: 0,
+        });
+        return;
+      }
+      // A drifted room nobody can read (retired, hidden bot-only) is left to
+      // the rotation and never refreshed; it becomes refreshable as soon as a
+      // plan finds a reader in it.
+      if (verdict && !verdict.converged && verdict.hasHumanMember === false) {
+        rooms.set(roomId, {
+          plannedAt: at,
+          replanAt: Number.POSITIVE_INFINITY,
+          verdict: "unread",
           refreshAttempts: 0,
           refreshAfter: 0,
         });
@@ -202,6 +225,7 @@ export function createProjectionDriftScheduler(now: () => number = Date.now) {
         declined: states.filter((state) => state.declinedAt !== undefined).length,
         tracked: states.length,
         drifted: states.filter((state) => state.verdict === "drifted").length,
+        unread: states.filter((state) => state.verdict === "unread").length,
         invariant: states.filter((state) => state.verdict === "invariant").length,
         planFailed: states.filter((state) => state.verdict === "failed").length,
       };

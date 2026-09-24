@@ -156,6 +156,7 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
         return {
           converged: result.converged,
           invariantsOk: result.invariants.every((verdict) => verdict.ok),
+          ...(result.hasHumanMember === undefined ? {} : { hasHumanMember: result.hasHumanMember }),
         };
       },
     },

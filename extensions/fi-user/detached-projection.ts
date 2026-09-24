@@ -21,7 +21,9 @@ export type ProjectionInventoryBinding = {
 export type ProjectionInventory = {
   list: () => Promise<ProjectionInventoryBinding[]>;
   /** Structural, read-only dry run of one bound room's reconcile pass. */
-  plan?: (roomId: string) => Promise<{ converged: boolean; invariantsOk: boolean }>;
+  plan?: (
+    roomId: string,
+  ) => Promise<{ converged: boolean; invariantsOk: boolean; hasHumanMember?: boolean }>;
 };
 
 /**
@@ -32,7 +34,7 @@ export async function planProjectionRoom(
   inventory: ProjectionInventory | undefined,
   roomId: string,
   logger?: { warn: (message: string) => void },
-): Promise<{ converged: boolean; invariantsOk: boolean } | undefined> {
+): Promise<{ converged: boolean; invariantsOk: boolean; hasHumanMember?: boolean } | undefined> {
   try {
     return await inventory?.plan?.(roomId);
   } catch (error) {
