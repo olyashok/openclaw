@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { stringEnum } from "openclaw/plugin-sdk/channel-actions";
 import type {
   AnyAgentTool,
@@ -14,83 +12,53 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { jsonResult, type AgentToolResult } from "openclaw/plugin-sdk/tool-results";
 import { Type } from "typebox";
 import {
+  adminActionSessions,
+  adminHandoffBlock,
+  createRequestAdminActionTool,
+  handleAdminApprovalMessage,
+} from "./admin-action.js";
+import {
   projectSlackChannelThread,
   registerSlackChannelProjection,
   type SlackProjectionMessage,
   type SlackProjectionContext,
 } from "./channel-projection-registration.js";
+import { createDataRoomTool } from "./dataroom-tool.js";
+import { createFiUserApiTool } from "./fi-api-tool.js";
+import {
+  brokerToken,
+  configFromRuntime,
+  exchange,
+  FI_USER_AGENT_ID,
+  isFiUserTurn,
+  rememberWebchatContext,
+  type Delegation,
+  type ResolvedPluginConfig,
+} from "./fi-delegation.js";
+import {
+  downloadedFiles,
+  driveExportArgs,
+  driveFileMetadata,
+  MAX_DRIVE_FILE_BYTES,
+  requireMailbox,
+  resultLimit,
+  runGam,
+  type DriveFileMetadata,
+} from "./gam.js";
+import { createBudgetImportTool, createDeliverFileTool, createEsignTool } from "./member-tools.js";
+import {
+  ON_BEHALF_OF_AGENTS,
+  ON_BEHALF_OF_TOOLS,
+  onBehalfOfRequester,
+  signOnBehalfOf,
+  withOnBehalfOfEnv,
+} from "./on-behalf-of.js";
 import { registerSourceReplyAuthorization } from "./source-reply-authorization.js";
 
-const execFileAsync = promisify(execFile);
-const MAX_OUTPUT_BYTES = 512 * 1024;
-const COMMAND_TIMEOUT_MS = 60_000;
-const MAX_DRIVE_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_DRIVE_TEXT_CHARS = 200_000;
-const MAX_RESULTS = 50;
-// GAM exits 60 when a list matches nothing; that is an empty result.
-const GAM_NO_ENTITIES_EXIT = 60;
-
-type PluginConfig = {
-  baseUrl?: string;
-  brokerTokenEnv?: string;
-  gamBinary?: string;
-  gamConfigDir?: string;
-};
-
-type Delegation = {
-  user: { email: string; orgSlug: string; role: string };
-  gmail: { enabled: boolean; mailbox: string | null };
-  fi: { token: string; expiresAt: number };
-};
-
-const FI_USER_AGENT_ID = "cellect-fi-user";
 const DIRECT_SLACK_SESSION = /^agent:cellect-fi-user:slack:direct:[^\s]{1,480}$/;
 const SLACK_USER_ID = /^U[A-Z0-9]{8,}$/i;
-const ENVIRONMENT_VARIABLE_NAME = /^[A-Z_][A-Z0-9_]*$/;
-
-function configFromRuntime(api: OpenClawPluginApi): Required<PluginConfig> {
-  const cfg = api.runtime.config?.current?.() ?? api.config;
-  const raw = cfg.plugins?.entries?.["fi-user"]?.config as PluginConfig | undefined;
-  return {
-    baseUrl: raw?.baseUrl?.replace(/\/+$/, "") || "https://app.cellect.ai/fi",
-    brokerTokenEnv: raw?.brokerTokenEnv || "OPENCLAW_FI_USER_BROKER_TOKEN",
-    gamBinary: raw?.gamBinary || "/home/node/.openclaw/bin/gam7/gam",
-    gamConfigDir: raw?.gamConfigDir || "/home/claude/GAMConfig",
-  };
-}
-
-function pluginConfig(
-  api: OpenClawPluginApi,
-  context: OpenClawPluginToolContext,
-): Required<PluginConfig> {
-  const cfg = context.getRuntimeConfig?.() ?? context.runtimeConfig ?? context.config;
-  if (!cfg) {
-    return configFromRuntime(api);
-  }
-  const raw = cfg.plugins?.entries?.["fi-user"]?.config as PluginConfig | undefined;
-  return {
-    baseUrl: raw?.baseUrl?.replace(/\/+$/, "") || "https://app.cellect.ai/fi",
-    brokerTokenEnv: raw?.brokerTokenEnv || "OPENCLAW_FI_USER_BROKER_TOKEN",
-    gamBinary: raw?.gamBinary || "/home/node/.openclaw/bin/gam7/gam",
-    gamConfigDir: raw?.gamConfigDir || "/home/claude/GAMConfig",
-  };
-}
-
-/**
- * OpenClaw resolves ${...} configuration references before plugins run, then
- * clears the source environment value. Keep the old environment-name form for
- * existing deployments, while accepting that already-resolved private value.
- */
-function brokerToken(config: Required<PluginConfig>): string | undefined {
-  const configured = config.brokerTokenEnv.trim();
-  if (!configured) {
-    return undefined;
-  }
-  return (
-    process.env[configured]?.trim() ||
-    (ENVIRONMENT_VARIABLE_NAME.test(configured) ? undefined : configured)
-  );
-}
+const EMAIL_HEADER = /^\s*(?:from|to|cc|delivered-to|reply-to)\s*:\s*(.*)$/gim;
 
 /**
  * Mirror verified Slack DMs and explicitly mapped channel threads into the
@@ -157,77 +125,63 @@ async function projectVerifiedSlackMessage(
   }
 }
 
-async function exchange(
-  api: OpenClawPluginApi,
-  context: OpenClawPluginToolContext,
-): Promise<{ delegation: Delegation; config: Required<PluginConfig> }> {
-  const config = pluginConfig(api, context);
-  const requesterSenderId = context.requesterSenderId?.trim();
-  if (
-    context.agentId !== "cellect-fi-user" ||
-    context.messageChannel !== "slack" ||
-    !requesterSenderId
-  ) {
-    throw new Error("This operation requires a verified Slack requester on Cellect Fi");
+/**
+ * The shared tenant inbox, narrowed to the requester's own correspondence:
+ * every search is ANDed with from/to/cc the requester, and a message is read
+ * only when its headers name the requester.
+ */
+async function searchOrReadSharedInbox(
+  config: ResolvedPluginConfig,
+  delegation: Delegation,
+  input: { action: string; query?: string; maxResults?: number; messageId?: string },
+) {
+  const shared = config.sharedInboxMailbox;
+  if (!shared) {
+    throw new Error("The shared inbox is not available to Cellect Fi");
   }
-  const token = brokerToken(config);
-  if (!token) {
-    throw new Error("Fi user delegation broker is not configured");
+  const requester = delegation.user.email.trim().toLowerCase();
+  if (!/^[^\s@"()]+@[^\s@"()]+$/.test(requester)) {
+    throw new Error("The requester has no usable email address");
   }
-
-  const response = await fetch(`${config.baseUrl}/api/openclaw-user-delegation`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ requesterSenderId, agentId: context.agentId }),
-  });
-  if (!response.ok) {
-    throw new Error(
-      response.status === 404
-        ? "The current Slack requester is not linked to an active Fi member"
-        : `Fi user delegation failed (${response.status})`,
-    );
-  }
-  return { delegation: (await response.json()) as Delegation, config };
-}
-
-async function runGam(
-  config: Required<PluginConfig>,
-  mailbox: string,
-  args: string[],
-): Promise<string> {
-  try {
-    const { stdout, stderr } = await execFileAsync(config.gamBinary, ["user", mailbox, ...args], {
-      env: { ...process.env, GAMCFGDIR: config.gamConfigDir },
-      timeout: COMMAND_TIMEOUT_MS,
-      maxBuffer: MAX_OUTPUT_BYTES,
-    });
-    return [stdout, stderr].filter(Boolean).join("\n").trim();
-  } catch (error) {
-    const failed = error as { code?: unknown; stdout?: unknown; stderr?: unknown };
-    const output = [failed.stdout, failed.stderr]
-      .filter((part): part is string => typeof part === "string" && part.length > 0)
-      .join("\n")
-      .trim();
-    if (failed.code === GAM_NO_ENTITIES_EXIT && /\bGot 0 /.test(output)) {
-      return output;
+  if (input.action === "search_shared_inbox") {
+    const query = input.query?.trim();
+    if (!query) {
+      throw new Error("query is required for search_shared_inbox");
     }
-    throw error;
+    // Grouping or OR could escape the requester clause; keep terms plain.
+    if (/[(){}|]/.test(query) || /\bOR\b/.test(query)) {
+      throw new Error(
+        "search_shared_inbox takes plain search terms without OR, braces or parentheses",
+      );
+    }
+    const output = await runGam(config, shared, [
+      "print",
+      "messages",
+      "query",
+      `{from:${requester} to:${requester} cc:${requester}} (${query})`,
+      "max_to_print",
+      resultLimit(input.maxResults),
+    ]);
+    return jsonResult({ mailbox: shared, scope: `from/to/cc ${requester}`, output });
   }
-}
-
-/** Accept any positive request and reduce it to GAM's 50-result page. */
-function resultLimit(value: number | undefined): string {
-  return String(Math.min(Math.max(Math.trunc(value ?? 10), 1), MAX_RESULTS));
-}
-
-function requireMailbox(delegation: Delegation, service = "Gmail"): string {
-  if (!delegation.gmail.enabled || !delegation.gmail.mailbox) {
-    throw new Error(`${service} is not available for ${delegation.user.email}`);
+  if (!input.messageId) {
+    throw new Error("messageId is required for read_shared_inbox");
   }
-  return delegation.gmail.mailbox;
+  const output = await runGam(config, shared, [
+    "show",
+    "messages",
+    "ids",
+    input.messageId,
+    "showbody",
+    "showattachments",
+  ]);
+  const addressed = [...output.matchAll(EMAIL_HEADER)].some((match) =>
+    (match[1] ?? "").toLowerCase().includes(requester),
+  );
+  if (!addressed) {
+    throw new Error("That shared-inbox message is not from, to, or copied to you");
+  }
+  return jsonResult({ mailbox: shared, scope: `from/to/cc ${requester}`, output });
 }
 
 function mailArgs(input: {
@@ -249,7 +203,14 @@ function mailArgs(input: {
 
 const GmailSchema = Type.Object(
   {
-    action: stringEnum(["search", "read", "draft", "send"] as const),
+    action: stringEnum([
+      "search",
+      "read",
+      "draft",
+      "send",
+      "search_shared_inbox",
+      "read_shared_inbox",
+    ] as const),
     query: Type.Optional(Type.String({ maxLength: 1_000 })),
     maxResults: Type.Optional(
       Type.Integer({ minimum: 1, description: "Values above 50 are reduced to 50." }),
@@ -270,11 +231,11 @@ function createGmailTool(api: OpenClawPluginApi, context: OpenClawPluginToolCont
     name: "fi_user_gmail",
     label: "My Gmail",
     description:
-      "Search, read, draft, or send Gmail only as the current verified Cellect Fi requester. The mailbox is fixed by Fi membership and cannot be selected by the model.",
+      "Search, read, draft, or send Gmail only as the current verified Cellect Fi requester. The mailbox is fixed by Fi membership and cannot be selected by the model. search_shared_inbox and read_shared_inbox reach the shared tenant inbox, limited to messages from, to or copied to the requester.",
     parameters: GmailSchema,
     async execute(_toolCallId, raw) {
       const input = raw as {
-        action: "search" | "read" | "draft" | "send";
+        action: "search" | "read" | "draft" | "send" | "search_shared_inbox" | "read_shared_inbox";
         query?: string;
         maxResults?: number;
         messageId?: string;
@@ -286,6 +247,9 @@ function createGmailTool(api: OpenClawPluginApi, context: OpenClawPluginToolCont
         confirmSend?: boolean;
       };
       const { delegation, config } = await exchange(api, context);
+      if (input.action === "search_shared_inbox" || input.action === "read_shared_inbox") {
+        return searchOrReadSharedInbox(config, delegation, input);
+      }
       const mailbox = requireMailbox(delegation);
 
       if (input.action === "search") {
@@ -363,23 +327,6 @@ const GDriveSchema = Type.Object(
   { additionalProperties: false },
 );
 
-type DriveFileMetadata = {
-  id: string;
-  name: string;
-  mimeType: string;
-  size?: string;
-};
-
-function driveExportArgs(mimeType: string): string[] {
-  if (mimeType === "application/vnd.google-apps.document") {
-    return ["format", "txt"];
-  }
-  if (mimeType === "application/vnd.google-apps.presentation") {
-    return ["format", "pdf"];
-  }
-  return [];
-}
-
 function isTextFile(metadata: DriveFileMetadata, filePath: string): boolean {
   return (
     metadata.mimeType.startsWith("text/") ||
@@ -387,35 +334,8 @@ function isTextFile(metadata: DriveFileMetadata, filePath: string): boolean {
   );
 }
 
-async function driveFileMetadata(
-  config: Required<PluginConfig>,
-  mailbox: string,
-  fileId: string,
-): Promise<DriveFileMetadata> {
-  const output = await runGam(config, mailbox, [
-    "info",
-    "drivefile",
-    `id:${fileId}`,
-    "fields",
-    "id,name,mimetype,size",
-    "formatjson",
-  ]);
-  const line = output
-    .split("\n")
-    .map((entry) => entry.trim())
-    .find((entry) => entry.startsWith("{"));
-  if (!line) {
-    throw new Error("Google Drive returned invalid file metadata");
-  }
-  const metadata = JSON.parse(line) as Partial<DriveFileMetadata>;
-  if (!metadata.id || !metadata.name || !metadata.mimeType) {
-    throw new Error("Google Drive returned incomplete file metadata");
-  }
-  return metadata as DriveFileMetadata;
-}
-
 async function readDriveFile(params: {
-  config: Required<PluginConfig>;
+  config: ResolvedPluginConfig;
   mailbox: string;
   fileId: string;
   startPage: number;
@@ -578,170 +498,10 @@ function createGDriveTool(
   };
 }
 
-const DataRoomSchema = Type.Object(
-  {
-    action: stringEnum(["request", "upload_gmail_attachment"] as const),
-    method: Type.Optional(stringEnum(["GET", "POST", "PATCH", "DELETE"] as const)),
-    path: Type.Optional(Type.String({ maxLength: 2_000 })),
-    jsonBody: Type.Optional(Type.Unknown()),
-    roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-    messageId: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9_-]+$" })),
-    attachmentName: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
-    displayName: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
-    acknowledgeRestricted: Type.Optional(Type.Boolean()),
-  },
-  { additionalProperties: false },
-);
-
-function safeDataRoomPath(orgSlug: string, requested: string | undefined): string {
-  const suffix = (requested ?? "").trim();
-  if (!suffix || /(?:\.\.|%2e)/i.test(suffix) || !suffix.startsWith("/")) {
-    throw new Error("path must be a data-room path beginning with /");
-  }
-  const prefix = `/api/${orgSlug}/datarooms`;
-  const full = suffix.startsWith(prefix) ? suffix : `${prefix}${suffix}`;
-  if (full !== prefix && !full.startsWith(`${prefix}/`) && !full.startsWith(`${prefix}?`)) {
-    throw new Error("Only Fi data-room APIs are available");
-  }
-  return full;
-}
-
-async function delegatedFetch(
-  config: Required<PluginConfig>,
-  delegation: Delegation,
-  pathname: string,
-  init: RequestInit = {},
-) {
-  const headers = new Headers(init.headers);
-  headers.set("authorization", `Bearer ${delegation.fi.token}`);
-  return fetch(`${config.baseUrl}${pathname}`, {
-    ...init,
-    headers,
-  });
-}
-
-async function downloadedFiles(root: string): Promise<string[]> {
-  const entries = await fs.readdir(root, { recursive: true, withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => path.join(entry.parentPath, entry.name));
-}
-
-function createDataRoomTool(
-  api: OpenClawPluginApi,
-  context: OpenClawPluginToolContext,
-): AnyAgentTool {
-  return {
-    name: "fi_user_dataroom",
-    label: "My Fi Data Rooms",
-    description:
-      "Operate only Fi data rooms the current verified requester may access. Existing Fi app and room grants authorize every request. Can upload an attachment directly from the requester's own Gmail without exposing another mailbox.",
-    parameters: DataRoomSchema,
-    async execute(_toolCallId, raw) {
-      const input = raw as {
-        action: "request" | "upload_gmail_attachment";
-        method?: "GET" | "POST" | "PATCH" | "DELETE";
-        path?: string;
-        jsonBody?: unknown;
-        roomId?: string;
-        messageId?: string;
-        attachmentName?: string;
-        displayName?: string;
-        acknowledgeRestricted?: boolean;
-      };
-      const { delegation, config } = await exchange(api, context);
-
-      if (input.action === "request") {
-        const method = input.method ?? "GET";
-        const pathname = safeDataRoomPath(delegation.user.orgSlug, input.path);
-        const response = await delegatedFetch(config, delegation, pathname, {
-          method,
-          ...(input.jsonBody === undefined
-            ? {}
-            : {
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(input.jsonBody),
-              }),
-        });
-        const contentType = response.headers.get("content-type") ?? "";
-        const result = contentType.includes("application/json")
-          ? await response.json()
-          : await response.text();
-        if (!response.ok) {
-          throw new Error(`Fi data-room request failed (${response.status}): ${String(result)}`);
-        }
-        return jsonResult({ status: response.status, result });
-      }
-
-      if (!input.roomId || !input.messageId) {
-        throw new Error("roomId and messageId are required for attachment upload");
-      }
-      const mailbox = requireMailbox(delegation);
-      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-fi-user-mail-"));
-      try {
-        await runGam(config, mailbox, [
-          "show",
-          "messages",
-          "ids",
-          input.messageId,
-          "saveattachments",
-          "targetfolder",
-          tempDir,
-        ]);
-        const files = await downloadedFiles(tempDir);
-        const selected = input.attachmentName
-          ? files.find(
-              (file) => path.basename(file).toLowerCase() === input.attachmentName?.toLowerCase(),
-            )
-          : files.length === 1
-            ? files[0]
-            : undefined;
-        if (!selected) {
-          throw new Error(
-            input.attachmentName
-              ? `Attachment not found: ${input.attachmentName}`
-              : `Expected one attachment but found ${files.length}; provide attachmentName`,
-          );
-        }
-        const bytes = await fs.readFile(selected);
-        const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        const form = new FormData();
-        form.set("file", new Blob([body]), path.basename(selected));
-        if (input.displayName) {
-          form.set("displayName", input.displayName);
-        }
-        if (input.acknowledgeRestricted) {
-          form.set("acknowledgeRestricted", "true");
-        }
-        const pathname = `/api/${delegation.user.orgSlug}/datarooms/${encodeURIComponent(input.roomId)}/documents/upload`;
-        const response = await delegatedFetch(config, delegation, pathname, {
-          method: "POST",
-          body: form,
-        });
-        const responseText = await response.text();
-        let result: unknown;
-        try {
-          result = JSON.parse(responseText);
-        } catch {
-          result = { error: responseText };
-        }
-        if (!response.ok) {
-          throw new Error(
-            `Fi data-room upload failed (${response.status}): ${JSON.stringify(result)}`,
-          );
-        }
-        return jsonResult({ mailbox, attachment: path.basename(selected), result });
-      } finally {
-        await fs.rm(tempDir, { recursive: true, force: true });
-      }
-    },
-  };
-}
-
 export default definePluginEntry({
   id: "fi-user",
   name: "Fi User Delegation",
-  description: "Requester-bound Gmail, Google Drive, and Fi data-room operations",
+  description: "Requester-bound Gmail, Google Drive, and Fi operations",
   register(api) {
     const projectionConnection = () => {
       const config = configFromRuntime(api);
@@ -750,22 +510,50 @@ export default definePluginEntry({
     registerSourceReplyAuthorization(api, projectionConnection);
     registerSlackChannelProjection(api, projectionConnection);
     api.on("message_received", async (event, context) => {
+      if (context.channelId === "webchat") {
+        rememberWebchatContext(event.sessionKey ?? context.sessionKey, event.content);
+      }
+      void handleAdminApprovalMessage(api, event, context).catch(() => {
+        api.logger.warn("fi-user: admin approval handling failed");
+      });
       // Keep source-channel delivery independent of Fi/Matrix latency.
       void projectVerifiedSlackMessage(api, event, context);
     });
+    api.on("before_tool_call", (event, ctx) => {
+      const config = configFromRuntime(api);
+      const blocked = adminHandoffBlock(config, event, ctx);
+      if (blocked) {
+        return blocked;
+      }
+      if (!ON_BEHALF_OF_AGENTS.has(ctx.agentId ?? "") || !ON_BEHALF_OF_TOOLS.has(event.toolName)) {
+        return undefined;
+      }
+      const secret = brokerToken(config);
+      const requester = onBehalfOfRequester(
+        ctx.requester,
+        ctx.sessionKey ? adminActionSessions.get(ctx.sessionKey) : undefined,
+      );
+      const assertion =
+        secret && requester && ctx.agentId
+          ? signOnBehalfOf({ secret, agentId: ctx.agentId, requester })
+          : undefined;
+      return { params: withOnBehalfOfEnv(event.params, assertion) };
+    });
     api.registerTool((context: OpenClawPluginToolContext) => {
-      if (
-        context.agentId !== FI_USER_AGENT_ID ||
-        context.messageChannel !== "slack" ||
-        !context.requesterSenderId?.trim()
-      ) {
+      if (!isFiUserTurn(context)) {
         return null;
       }
-      return [
+      const tools = [
+        createFiUserApiTool(api, context),
         createGmailTool(api, context),
         createGDriveTool(api, context),
         createDataRoomTool(api, context),
+        createDeliverFileTool(api, context),
+        createEsignTool(api, context),
+        createBudgetImportTool(api, context),
+        createRequestAdminActionTool(api, context),
       ];
+      return tools;
     });
   },
 });
