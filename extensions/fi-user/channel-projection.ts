@@ -7,8 +7,8 @@ import {
 import {
   createDetachedProjectionReconciler,
   verifyDetachedProjectionOrigin,
+  logProjectionRefresh,
   projectionNeedsRefresh,
-  safeError,
   type ProjectionInventory,
 } from "./detached-projection.js";
 import { reconcileSlackDirectProjections } from "./direct-projection.js";
@@ -519,7 +519,7 @@ export function registerSlackProjectionReconciler(
           }
           const refresh =
             roomId && entry && accountId && refreshes > 0
-              ? await projectionNeedsRefresh(inventory, roomId)
+              ? await projectionNeedsRefresh(inventory, roomId, api.logger)
               : false;
           if (refresh) {
             refreshes--;
@@ -554,12 +554,14 @@ export function registerSlackProjectionReconciler(
           // planned again on its next turn.
           const refreshed =
             refresh &&
+            roomId &&
             (await project(false).then(
-              () => true,
+              () => {
+                logProjectionRefresh(api.logger, "channel", roomId, sessionKey);
+                return true;
+              },
               (error: unknown) => {
-                api.logger.warn(
-                  `fi-user: Slack projection refresh failed session=${sessionKey}: ${safeError(error)}`,
-                );
+                logProjectionRefresh(api.logger, "channel", roomId, sessionKey, error);
                 return false;
               },
             ));

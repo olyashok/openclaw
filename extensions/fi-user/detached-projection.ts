@@ -34,12 +34,32 @@ export type ProjectionInventory = {
 export async function projectionNeedsRefresh(
   inventory: ProjectionInventory | undefined,
   roomId: string,
+  logger?: { warn: (message: string) => void },
 ): Promise<boolean> {
   try {
     const plan = await inventory?.plan?.(roomId);
     return plan ? !plan.converged : false;
-  } catch {
+  } catch (error) {
+    logger?.warn(
+      `fi-user: projection refresh plan failed room=${roomId} error=${safeError(error)}`,
+    );
     return false;
+  }
+}
+
+/** One line per periodic full refresh, so the self-healing pass is observable. */
+export function logProjectionRefresh(
+  logger: { info: (message: string) => void; warn: (message: string) => void },
+  lane: "channel" | "detached",
+  roomId: string,
+  sessionKey: string,
+  error?: unknown,
+): void {
+  const line = `fi-user: projection refresh lane=${lane} room=${roomId} session=${sessionKey}`;
+  if (error === undefined) {
+    logger.info(`${line} outcome=refreshed`);
+  } else {
+    logger.warn(`${line} outcome=failed error=${safeError(error)}`);
   }
 }
 
@@ -302,7 +322,8 @@ export function createDetachedProjectionReconciler(
           channelScope: await scopeFor(accountId, source.channelId),
           signal,
         };
-        const refresh = refreshes > 0 && (await projectionNeedsRefresh(inventory, binding.roomId));
+        const refresh =
+          refreshes > 0 && (await projectionNeedsRefresh(inventory, binding.roomId, api.logger));
         if (refresh) {
           refreshes--;
         }
@@ -311,10 +332,17 @@ export function createDetachedProjectionReconciler(
         const refreshed =
           refresh &&
           (await publish({ ...existingRoom, membershipOnly: false }).then(
-            () => true,
+            () => {
+              logProjectionRefresh(api.logger, "detached", binding.roomId, binding.sessionKey);
+              return true;
+            },
             (error: unknown) => {
-              api.logger.warn(
-                `fi-user: detached projection refresh failed room=${binding.roomId} error=${safeError(error)}`,
+              logProjectionRefresh(
+                api.logger,
+                "detached",
+                binding.roomId,
+                binding.sessionKey,
+                error,
               );
               return false;
             },
