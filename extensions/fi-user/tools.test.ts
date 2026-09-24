@@ -298,6 +298,7 @@ describe("fi_user_dataroom", () => {
       "upload_gmail_attachment",
       "upload_slack_file",
       "upload_drive_file",
+      "upload_to_project_library",
     ]);
     expect(JSON.stringify(schema)).not.toMatch(/"method"|"path"|jsonBody/);
   });
@@ -439,6 +440,88 @@ describe("fi_user_dataroom", () => {
         slackFileId: "F0FILE0001",
       }),
     ).rejects.toThrow(/not posted by you/);
+  });
+
+  it("files a Slack file the requester posted into a project's document library, with provenance", async () => {
+    routes.push((url, init) => {
+      if (url.hostname === "slack.com" && url.pathname === "/api/files.info") {
+        return json(
+          slackFile("U12345678", {
+            C0CHANNEL1: [{ ts: "1710000000.000200", thread_ts: "1710000000.000100" }],
+          }),
+        );
+      }
+      if (url.hostname === "files.slack.com") {
+        return new Response("%PDF-1.4", { headers: { "content-type": "application/pdf" } });
+      }
+      if (url.pathname === "/api/shape/24-bright/docs/upload" && init.method === "POST") {
+        return json({
+          ok: true,
+          duplicate: false,
+          projectSlug: "24-bright",
+          document: { documentId: "doc-lib", state: "restricted_unclassified" },
+        });
+      }
+      return undefined;
+    });
+    const result = await plugin().tool("fi_user_dataroom", context()).execute("d7", {
+      action: "upload_to_project_library",
+      project: "24-bright",
+      category: "construction",
+      section: "Permits",
+      slackFileId: "F0FILE0001",
+    });
+    const upload = calls.find((entry) => entry.url.endsWith("/docs/upload"));
+    expect(upload!.url).toBe("https://fi.example.test/api/shape/24-bright/docs/upload");
+    expect(authorization(upload!.init)).toBe("Bearer delegated-token");
+    const form = upload!.init.body as FormData;
+    expect(form.get("category")).toBe("construction");
+    expect(form.get("section")).toBe("Permits");
+    expect(form.get("provenanceSource")).toBe("slack");
+    expect(form.get("provenanceFileId")).toBe("F0FILE0001");
+    expect(form.get("provenanceMessageId")).toBe("1710000000.000100");
+    expect(form.get("provenanceUrl")).toBe("https://example.slack.com/files/U12345678/F0FILE0001");
+    expect((form.get("file") as File).name).toBe("Encotech contract.pdf");
+    // No data room is touched.
+    expect(calls.some((entry) => entry.url.includes("/datarooms"))).toBe(false);
+    expect(result.details).toMatchObject({
+      project: "24-bright",
+      duplicate: false,
+      document: { documentId: "doc-lib" },
+    });
+  });
+
+  it("refuses a library upload of a Slack file posted by someone else, before any Fi write", async () => {
+    routes.push((url) =>
+      url.pathname === "/api/files.info"
+        ? json(
+            slackFile("UOTHER0001", { C0CHANNEL1: [{ ts: "1", thread_ts: "1710000000.000100" }] }),
+          )
+        : undefined,
+    );
+    await expect(
+      plugin().tool("fi_user_dataroom", context()).execute("d8", {
+        action: "upload_to_project_library",
+        project: "24-bright",
+        slackFileId: "F0FILE0001",
+      }),
+    ).rejects.toThrow(/not posted by you/);
+    expect(calls.some((entry) => entry.url.endsWith("/docs/upload"))).toBe(false);
+  });
+
+  it("requires a single project slug for a library upload", async () => {
+    for (const project of [undefined, "24-bright/../other", "a/b"]) {
+      await expect(
+        plugin()
+          .tool("fi_user_dataroom", context())
+          .execute("d9", {
+            action: "upload_to_project_library",
+            ...(project ? { project } : {}),
+            slackFileId: "F0FILE0001",
+          }),
+      ).rejects.toThrow(/project must be a single identifier/);
+    }
+    expect(calls.some((entry) => entry.url.includes("slack.com"))).toBe(false);
   });
 
   it("refuses a Slack file from another conversation", async () => {

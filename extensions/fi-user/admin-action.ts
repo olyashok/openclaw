@@ -40,7 +40,9 @@ export const ADMIN_TASKS = {
   },
   restricted_filing: {
     label: "File a restricted document",
-    required: ["project", "roomId", "description"],
+    // Destination: a data room (roomId) or, without one, the project's
+    // document library (optional category/section). See filingDestination.
+    required: ["project", "description"],
   },
   access_request: {
     label: "Access request",
@@ -58,11 +60,35 @@ export type AdminActionFields = {
   documentId?: string;
   recipientEmail?: string;
   roomId?: string;
+  destination?: FilingDestination;
+  category?: string;
+  section?: string;
+  slackFileId?: string;
   description?: string;
   targetType?: "org" | "project" | "company";
   targetId?: string;
   reason?: string;
 };
+
+export type FilingDestination = "data_room" | "project_library";
+
+/**
+ * Where a restricted filing goes: a data room needs its roomId; with no room
+ * it goes to the project's document library. An explicit destination that
+ * contradicts the fields is refused rather than guessed.
+ */
+export function filingDestination(fields: AdminActionFields): FilingDestination {
+  const destination = fields.destination ?? (fields.roomId ? "data_room" : "project_library");
+  if (destination === "data_room" && !fields.roomId) {
+    throw new Error("restricted_filing to a data room requires: roomId");
+  }
+  if (destination === "project_library" && fields.roomId) {
+    throw new Error(
+      "restricted_filing to the project library takes no roomId; omit roomId or set destination data_room",
+    );
+  }
+  return destination;
+}
 
 export type AdminActionRecord = {
   id: string;
@@ -239,6 +265,10 @@ function describe(record: AdminActionRecord): string {
     f.documentId ? `Document: ${f.documentId}` : undefined,
     f.recipientEmail ? `Share with: ${f.recipientEmail}` : undefined,
     f.roomId ? `Data room: ${f.roomId}` : undefined,
+    record.task === "restricted_filing" && f.destination === "project_library"
+      ? `Destination: the project's document library (not a data room)${f.category ? `, category ${f.category}` : ""}${f.section ? `, section ${f.section}` : ""}`
+      : undefined,
+    f.slackFileId ? `Slack file: ${f.slackFileId}` : undefined,
     f.targetType ? `Access to: ${f.targetType}${f.targetId ? ` ${f.targetId}` : ""}` : undefined,
     f.description ? `What: ${f.description}` : undefined,
     f.reason ? `Why: ${f.reason}` : undefined,
@@ -270,6 +300,13 @@ export function adminActionBrief(record: AdminActionRecord): string {
     `Approved admin action ${record.id}: ${ADMIN_TASKS[record.task].label}.`,
     `Requested by ${record.requester.email}; approved by ${record.decidedBy ?? "an administrator"}.`,
     describe(record),
+    ...(record.task === "restricted_filing"
+      ? [
+          record.fields.destination === "project_library"
+            ? "File it into that project's document library as a restricted document, under the category/section given (if any); do not add it to any data room."
+            : "File it into the data room named above as a restricted document.",
+        ]
+      : []),
     "",
     "Carry out ONLY this task, as specified above, attributed to the requester. Do not widen it, do not start other work, and do not hand it or any part of it to another agent or session. If it cannot be done exactly as specified, stop and say why.",
     "Finish with one short message stating what you did and the result the requester should see (links or ids), or why you stopped.",
@@ -464,7 +501,31 @@ const RequestSchema = Type.Object(
     newSignerEmail: Type.Optional(Type.String({ format: "email" })),
     documentId: Type.Optional(Type.String({ maxLength: 200 })),
     recipientEmail: Type.Optional(Type.String({ format: "email" })),
-    roomId: Type.Optional(Type.String({ maxLength: 200 })),
+    roomId: Type.Optional(
+      Type.String({
+        maxLength: 200,
+        description: "restricted_filing into a data room. Omit to file into the project library.",
+      }),
+    ),
+    destination: Type.Optional(
+      stringEnum(["data_room", "project_library"] as const, {
+        description:
+          "restricted_filing: data_room (needs roomId) or project_library. Default: data_room when roomId is given, else project_library.",
+      }),
+    ),
+    category: Type.Optional(
+      Type.String({
+        maxLength: 50,
+        description: "restricted_filing to a project library: category.",
+      }),
+    ),
+    section: Type.Optional(
+      Type.String({
+        maxLength: 200,
+        description: "restricted_filing to a project library: section.",
+      }),
+    ),
+    slackFileId: Type.Optional(Type.String({ pattern: "^F[A-Za-z0-9]{6,}$" })),
     description: Type.Optional(Type.String({ maxLength: 1_000 })),
     targetType: Type.Optional(stringEnum(["org", "project", "company"] as const)),
     targetId: Type.Optional(Type.String({ maxLength: 200 })),
@@ -486,7 +547,7 @@ export function createRequestAdminActionTool(
     name: "request_admin_action",
     label: "Ask an administrator",
     description:
-      "Ask Alex or Lorenzo to approve one administrator action you cannot do as the requester: esign_change_recipient, esign_prepare_template, external_share_link, document_outside_grants, restricted_filing, or access_request. Posts an approval card in this conversation; after approval Cellect Fi Admin carries out only that task and reports back here. access_request files a Fi access request that an administrator approves in Fi. Never tag or message the admin agent yourself.",
+      "Ask Alex or Lorenzo to approve one administrator action you cannot do as the requester: esign_change_recipient, esign_prepare_template, external_share_link, document_outside_grants, restricted_filing (into a data room with roomId, or into a project's document library with no roomId and optional category/section), or access_request. Posts an approval card in this conversation; after approval Cellect Fi Admin carries out only that task and reports back here. access_request files a Fi access request that an administrator approves in Fi. Never tag or message the admin agent yourself.",
     parameters: RequestSchema,
     async execute(_toolCallId, raw) {
       const input = raw as AdminActionFields & { task: AdminTask };
@@ -501,8 +562,11 @@ export function createRequestAdminActionTool(
       if (missing.length > 0) {
         throw new Error(`${input.task} requires: ${missing.join(", ")}`);
       }
-      const { delegation, config, identity } = await exchange(api, context);
       const { task: _task, ...fields } = input;
+      if (input.task === "restricted_filing") {
+        fields.destination = filingDestination(fields);
+      }
+      const { delegation, config, identity } = await exchange(api, context);
 
       if (input.task === "access_request") {
         const created = (await delegatedJson(

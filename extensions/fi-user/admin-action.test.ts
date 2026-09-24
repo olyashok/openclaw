@@ -191,3 +191,94 @@ describe("admin action approval", () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe("restricted filing destination", () => {
+  async function requestTool(send = vi.fn()) {
+    vi.resetModules();
+    const actions = await import("./admin-action.js");
+    const api = {
+      config: runtimeConfig,
+      logger: { warn: vi.fn() },
+      runtime: {
+        config: { current: () => runtimeConfig },
+        state: {
+          openKeyedStore: () => {
+            throw new Error("no store in tests");
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    const context = {
+      agentId: "cellect-fi-user",
+      messageChannel: "slack",
+      requesterSenderId: "ULORENZO01",
+      sessionKey: "agent:cellect-fi-user:slack:channel:C0CHANNEL1:thread:1710000000.000100",
+      getRuntimeConfig: () => runtimeConfig,
+      delivery: { send },
+    } as never;
+    return { actions, tool: actions.createRequestAdminActionTool(api, context), send };
+  }
+
+  it("files into the project library when no room is given, and briefs fi-admin for the library", async () => {
+    const { actions, tool, send } = await requestTool();
+    const result = await tool.execute("r1", {
+      task: "restricted_filing",
+      project: "24-bright",
+      category: "construction",
+      section: "Permits",
+      slackFileId: "F0FILE0001",
+      description: "24 Bright St_MEP Permit Set_04.14.26.pdf into construction documents",
+    });
+    expect(result.details).toMatchObject({ status: "pending_approval", cardPosted: true });
+    const card = String(send.mock.calls[0]![0].text);
+    expect(card).toContain("Destination: the project's document library (not a data room)");
+    expect(card).toContain("category construction, section Permits");
+    expect(card).toContain("Slack file: F0FILE0001");
+    expect(card).not.toContain("Data room:");
+
+    const brief = actions.adminActionBrief({
+      id: "ABC234",
+      task: "restricted_filing",
+      fields: { project: "24-bright", destination: "project_library", description: "MEP set" },
+      requester: { email: "member@example.com", identity: { channel: "unknown" } },
+      createdAt: Date.now(),
+      status: "approved",
+    });
+    expect(brief).toContain("project's document library as a restricted document");
+    expect(brief).toContain("do not add it to any data room");
+  });
+
+  it("keeps data-room filings and refuses a destination that contradicts its fields", async () => {
+    const { actions, tool } = await requestTool();
+    expect(actions.filingDestination({ roomId: "room-1" })).toBe("data_room");
+    expect(actions.filingDestination({})).toBe("project_library");
+    await expect(
+      tool.execute("r2", {
+        task: "restricted_filing",
+        project: "305-third",
+        roomId: "room-1",
+        description: "Draw 2 waiver",
+      }),
+    ).resolves.toMatchObject({ details: { status: "pending_approval" } });
+    await expect(
+      tool.execute("r3", {
+        task: "restricted_filing",
+        project: "305-third",
+        destination: "data_room",
+        description: "Draw 2 waiver",
+      }),
+    ).rejects.toThrow(/data room requires: roomId/);
+    await expect(
+      tool.execute("r4", {
+        task: "restricted_filing",
+        project: "305-third",
+        destination: "project_library",
+        roomId: "room-1",
+        description: "Draw 2 waiver",
+      }),
+    ).rejects.toThrow(/takes no roomId/);
+    await expect(
+      tool.execute("r5", { task: "restricted_filing", project: "305-third" }),
+    ).rejects.toThrow(/restricted_filing requires: description/);
+  });
+});
