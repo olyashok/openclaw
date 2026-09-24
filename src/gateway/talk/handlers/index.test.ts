@@ -2402,6 +2402,9 @@ describe("talk.session unified handlers", () => {
         assertCommitAllowed: expect.any(Function),
       }),
     );
+    expect(mocks.createTalkRealtimeRelaySession).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "en" }),
+    );
     const response = expectRespondOk(respond, { relaySessionId: "relay-talk-owner" });
     expect(JSON.stringify(response)).not.toContain(model);
   });
