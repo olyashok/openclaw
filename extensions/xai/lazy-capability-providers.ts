@@ -530,17 +530,17 @@ function createLazyRealtimeVoiceBridge(
         type: "greeting",
       });
     },
-    handleBargeIn: (options) => {
+    handleBargeIn: (bargeIn) => {
       if (acceptsCurrentInput()) {
-        bridge?.handleBargeIn?.(options);
+        bridge?.handleBargeIn?.(bargeIn);
       }
     },
-    submitToolResult: (callId, result, options) => {
-      if (!acceptsCurrentInput() || options?.willContinue === true) {
+    submitToolResult: (callId, result, toolResultOptions) => {
+      if (!acceptsCurrentInput() || toolResultOptions?.willContinue === true) {
         return;
       }
       if (acceptsInput && bridge) {
-        return bridge.submitToolResult(callId, result, options);
+        return bridge.submitToolResult(callId, result, toolResultOptions);
       }
       let serialized: string;
       try {
@@ -552,7 +552,7 @@ function createLazyRealtimeVoiceBridge(
       const pending = {
         callId,
         result: JSON.parse(serialized) as unknown,
-        ...(options ? { options } : {}),
+        ...(toolResultOptions ? { options: toolResultOptions } : {}),
       };
       const resultBytes = Buffer.byteLength(JSON.stringify(pending), "utf8");
       if (
