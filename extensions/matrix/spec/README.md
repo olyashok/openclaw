@@ -7,13 +7,18 @@ pagination, Tuwunel's missing edit bundling, concurrent Slack edits and network
 failure, so it checks the algorithm, not the TypeScript. Re-run TLC whenever
 `planProjectionReconcile` or `applyProjectionPlan` changes.
 
+The source registry (`src/matrix/source-registry.ts`) is outside the model on
+purpose: it is never a planning input, `applyProjectionPlan` only reports the
+writes it made to it, and a registry failure cannot change a pass's writes.
+If the registry ever becomes a convergence input, the model must gain it first.
+
 ## Symbol map
 
 | TLA+                                          | TypeScript                                                                                                                   |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `copies[m]`                                   | `readProjectionThread(history).messages.get(messageId)`                                                                      |
-| `effectiveMarker(e)`, `hasMarker(e)`          | `projectedSlackMessageId(current) ?? projectedSlackMessageId(original)` in `readProjectionThread`                            |
-| `FIX_MARKER_FALLBACK`                         | the `?? projectedSlackMessageId(original)` fallback                                                                          |
+| `effectiveMarker(e)`, `hasMarker(e)`          | `projectedSourceMessageId(current) ?? projectedSourceMessageId(original)` in `readProjectionThread`                          |
+| `FIX_MARKER_FALLBACK`                         | the `?? projectedSourceMessageId(original)` fallback                                                                         |
 | `currentPartsOf`, `completeAt`, `unchangedAt` | `analyzeProjectedMessage` (`currentParts`, `complete`, `unchanged`)                                                          |
 | `Reconcile(m)`                                | one message of `planProjectionReconcile` (`edit` / `send` + `redact` reason `duplicate`), performed by `applyProjectionPlan` |
 | `bindingResolves`                             | `options.publishable` (`bindingPublishes` in the snapshot module)                                                            |
@@ -29,7 +34,7 @@ failure, so it checks the algorithm, not the TypeScript. Re-run TLC whenever
 | `NoDuplicateSlot`               | `oneLiveCopyPerPart`, which is stricter: it keys by part only, not (revision, part), because a recorded history between passes must not hold two copies of one part in any revision |
 | `NoStaleDuplicateWhenConverged` | `noStaleDuplicateWhenConverged`                                                                                                                                                     |
 | `NoOrphanedUnmarkedCopy`        | `noOrphanedUnmarkedOwnEvent`                                                                                                                                                        |
-| `MarkedNeverRedactedAsNotice`   | no runtime check; `readProjectionThread` only classifies events without a Slack message id as notices                                                                               |
+| `MarkedNeverRedactedAsNotice`   | no runtime check; `readProjectionThread` only classifies events without a source message id as notices                                                                              |
 | —                               | `noticeRetiredWhenHistoryPresent` (TypeScript only; the model has `RetireNotice` as an action, not a state property)                                                                |
 
 `session-projection-plan.test.ts` replays the fixed bugs against `plan()`

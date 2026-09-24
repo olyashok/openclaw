@@ -4,6 +4,7 @@ import { listAllBindings, resolveBindingKey } from "./thread-bindings-shared.js"
 export function parseProjectionBindingMetadata(value: Record<string, unknown> | undefined) {
   const sourceSnapshotDigest = normalizeOptionalString(value?.sourceSnapshotDigest);
   const sourceSnapshotReconciledAtMs = value?.sourceSnapshotReconciledAtMs;
+  const registryGeneration = value?.registryGeneration;
   return {
     externalSource: parseProjectionExternalSource(value?.externalSource),
     sourceReplyAuthorization: normalizeOptionalString(value?.sourceReplyAuthorization) || undefined,
@@ -19,6 +20,10 @@ export function parseProjectionBindingMetadata(value: Record<string, unknown> | 
       Number.isFinite(sourceSnapshotReconciledAtMs) &&
       sourceSnapshotReconciledAtMs >= 0
         ? Math.floor(sourceSnapshotReconciledAtMs)
+        : undefined,
+    registryGeneration:
+      Number.isSafeInteger(registryGeneration) && Number(registryGeneration) > 0
+        ? Number(registryGeneration)
         : undefined,
   };
 }

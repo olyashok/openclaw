@@ -24,7 +24,10 @@ const mocks = vi.hoisted(() => ({
   binding: vi.fn(),
   status: vi.fn(),
 }));
-vi.mock("./projection-source.js", () => ({ getMatrixProjectionStatus: mocks.status }));
+vi.mock("./projection-source.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./projection-source.js")>()),
+  getMatrixProjectionStatus: mocks.status,
+}));
 vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", () => ({
   getSessionBindingService: () => ({ resolveByConversation: mocks.binding }),
 }));
@@ -101,7 +104,10 @@ describe("v2 source reconciliation", () => {
       async (
         _to: string,
         body: string,
-        opts: { publication: MatrixPublication; extraContent: Record<string, unknown> },
+        opts: {
+          publication: MatrixPublication;
+          extraContent: Record<string, unknown>;
+        },
       ) => ({ messageId: insert(body, opts.publication, opts.extraContent) }),
     );
     mocks.edit.mockImplementation(
@@ -109,7 +115,10 @@ describe("v2 source reconciliation", () => {
         _roomId: string,
         eventId: string,
         body: string,
-        opts: { extraContent: Record<string, unknown>; publication?: MatrixPublication },
+        opts: {
+          extraContent: Record<string, unknown>;
+          publication?: MatrixPublication;
+        },
       ) => {
         // Mirror send.ts: caller-supplied projection metadata is a forgery and
         // is stripped; only the trusted publication capability is applied.

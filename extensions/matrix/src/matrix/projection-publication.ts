@@ -103,6 +103,19 @@ export function resolveMatrixReplyPublication(
     finalResult: host.kind === "final" && finalProviderPart,
   });
 }
+/**
+ * `origin.accountId` of a room's source publications: the binding's source
+ * account, else its external source workspace, else the Matrix account.
+ */
+export function sourcePublicationAccountId(
+  metadata: Record<string, unknown> | undefined,
+  fallback: string,
+): string {
+  const account = metadata?.sourceAccountId;
+  const workspace = (metadata?.externalSource as { workspaceId?: unknown } | undefined)
+    ?.workspaceId;
+  return text(account) ? account : text(workspace) ? workspace : fallback;
+}
 /** Authorized source replay caller supplies persisted binding and immutable source facts. */
 export function createMatrixSourcePublication(params: {
   bindingId: string;
@@ -130,12 +143,7 @@ export function createMatrixSourcePublication(params: {
     !text(binding.metadata?.projectedConversationId)
   )
     return undefined;
-  const source = binding.metadata.externalSource as { workspaceId?: unknown } | undefined;
-  const providerAccount = text(binding.metadata.sourceAccountId)
-    ? binding.metadata.sourceAccountId
-    : text(source?.workspaceId)
-      ? source.workspaceId
-      : params.accountId;
+  const providerAccount = sourcePublicationAccountId(binding.metadata, params.accountId);
   return sealPublication({
     version: 2,
     environment: binding.metadata.environment,

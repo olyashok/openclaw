@@ -22,13 +22,20 @@ export type SourceProjectionMessage = {
   role: "user" | "assistant";
   agentId?: string;
   displayName?: string;
+  /** Source timestamp, epoch ms, for providers whose message ids carry none. */
+  sourceTs?: number;
 };
-export type SourceProjectionSnapshot = { complete: true; messages: SourceProjectionMessage[] };
+export type SourceProjectionSnapshot = {
+  complete: true;
+  messages: SourceProjectionMessage[];
+};
 
 /** Everything one reconcile pass reads for a projection thread, nothing it writes. */
 export type ProjectionHistory = {
   /** The transport's own Matrix user id. */
   self: string;
+  /** Source provider of the room's projection (origin.provider); default "slack". */
+  provider?: string;
   /** Projection thread root event id. */
   threadId: string;
   /** m.thread relations of the root, newest first, as read. */
@@ -41,6 +48,8 @@ export type ProjectedCopy = {
   eventId: string;
   /** Latest same-author replacement content, else the original content. */
   content: Record<string, unknown>;
+  /** The original event's homeserver timestamp. */
+  originServerTs?: number;
 };
 
 export type ProjectionThread = {
@@ -94,16 +103,28 @@ function publicationOf(content: Record<string, unknown>) {
   return object(content[MATRIX_PROJECTION_CONTENT_KEY]);
 }
 
-/** Slack message id for current (v2) or first-generation (v1) projections. */
-function projectedSlackMessageId(content: Record<string, unknown>): string | undefined {
+export const DEFAULT_SOURCE_PROVIDER = "slack";
+
+export function historyProvider(history: Pick<ProjectionHistory, "provider">): string {
+  return history.provider ?? DEFAULT_SOURCE_PROVIDER;
+}
+
+/**
+ * Source message id of a current (v2) or first-generation (v1) projection of
+ * `provider`. Copies of any other provider are not this room's source.
+ */
+export function projectedSourceMessageId(
+  content: Record<string, unknown>,
+  provider: string,
+): string | undefined {
   const origin = object(publicationOf(content)?.origin);
   if (origin) {
-    return origin.provider === "slack" && typeof origin.messageId === "string"
+    return origin.provider === provider && typeof origin.messageId === "string"
       ? origin.messageId
       : undefined;
   }
   const legacy = object(content[LEGACY_SESSION_PROJECTION_KEY]);
-  return legacy?.sourceChannel === "slack" && typeof legacy.messageId === "string"
+  return legacy?.sourceChannel === provider && typeof legacy.messageId === "string"
     ? legacy.messageId
     : undefined;
 }
@@ -136,6 +157,7 @@ export function projectionThreadOriginals(
 
 /** Groups own thread events by source message, using each one's latest own edit. */
 export function readProjectionThread(history: ProjectionHistory): ProjectionThread {
+  const provider = historyProvider(history);
   const originals = projectionThreadOriginals(history.events, history.self, history.threadId);
   const originalIds = new Set(originals.map((event) => event.event_id));
   const latest = new Map<string, Record<string, unknown>>();
@@ -172,7 +194,9 @@ export function readProjectionThread(history: ProjectionHistory): ProjectionThre
     }
     // Earlier in-place edits could drop the projection marker; the original
     // event still identifies the source message, and the next edit restores it.
-    const messageId = projectedSlackMessageId(current) ?? projectedSlackMessageId(original ?? {});
+    const messageId =
+      projectedSourceMessageId(current, provider) ??
+      projectedSourceMessageId(original ?? {}, provider);
     if (!messageId) {
       if (isMatrixBindingNoticeText(current.body)) {
         notices.push(event.event_id);
@@ -196,7 +220,11 @@ export function readProjectionThread(history: ProjectionHistory): ProjectionThre
       chunkAnchor = { messageId, sentAt: event.origin_server_ts, body: normalizedBody(current) };
     }
     const group = messages.get(messageId) ?? [];
-    group.push({ eventId: event.event_id, content: current });
+    group.push({
+      eventId: event.event_id,
+      content: current,
+      originServerTs: event.origin_server_ts,
+    });
     messages.set(messageId, group);
   }
   return { messages, notices, unmarked, legacyChunks, editIds };
@@ -374,7 +402,8 @@ export function planProjectionReconcile(
       const oldSource =
         relation?.rel_type === "m.thread" &&
         relation.event_id === retireThreadId &&
-        object(object(content?.[MATRIX_PROJECTION_CONTENT_KEY])?.origin)?.provider === "slack";
+        object(object(content?.[MATRIX_PROJECTION_CONTENT_KEY])?.origin)?.provider ===
+          historyProvider(history);
       if (oldSource || event.event_id === retireThreadId) {
         redact(event.event_id, "rebased_history");
       }
@@ -383,28 +412,85 @@ export function planProjectionReconcile(
   return actions;
 }
 
+export type ProjectionMappingPart = ProjectionPart & {
+  /** The newest own replacement of this part's event, when it was edited in place. */
+  editEventId?: string;
+  /** The retained copy's homeserver timestamp. */
+  originServerTs?: number;
+};
+
 export type ProjectionMappingEntry = {
   messageId: string;
   revision: number;
   partCount: number | null;
   complete: boolean;
   /** The copy the reconciler retains for each current wire part. */
-  parts: ProjectionPart[];
+  parts: ProjectionMappingPart[];
   /** Every own live copy of this source message, oldest first. */
   liveEventIds: string[];
+  /** Source content hash recorded on the retained copy (hex), when present. */
+  contentHash?: string;
+  /** origin.publishedAtMs of the retained copy, when present. */
+  sourceTs?: number;
 };
 
-/** Source message id → retained event per part, in thread order. */
+/** Source content hash recorded on a copy, when it is well formed. */
+export function copyContentHash(content: Record<string, unknown>): string | undefined {
+  const hash = object(content[SOURCE_CONTENT_REVISION_KEY])?.contentHash;
+  return typeof hash === "string" && /^[0-9a-f]{16,128}$/.test(hash) ? hash : undefined;
+}
+
+/** publicationRevision and partIndex a copy's current content declares. */
+export function copyPublicationSlot(content: Record<string, unknown>) {
+  const publication = publicationOf(content);
+  const revision = publication?.publicationRevision;
+  const partIndex = publication?.partIndex;
+  return {
+    revision:
+      Number.isSafeInteger(revision) && Number(revision) >= 0 ? Number(revision) : undefined,
+    partIndex:
+      Number.isSafeInteger(partIndex) && Number(partIndex) >= 0 && Number(partIndex) <= 255
+        ? Number(partIndex)
+        : undefined,
+  };
+}
+
+/**
+ * Source message id → retained event per part, in thread order. This is the
+ * one mapping derivation: the plan RPC reports it and the source registry
+ * stores it.
+ */
 export function projectionMapping(history: ProjectionHistory): ProjectionMappingEntry[] {
-  return Array.from(readProjectionThread(history).messages, ([messageId, copies]) => {
+  const thread = readProjectionThread(history);
+  return Array.from(thread.messages, ([messageId, copies]) => {
     const state = analyzeProjectedMessage(copies);
+    const byId = new Map(copies.map((copy) => [copy.eventId, copy]));
+    const parts = keptParts(state.kept).map(({ partIndex, eventId }) => {
+      const part: ProjectionMappingPart = { partIndex, eventId };
+      const editEventId = thread.editIds.get(eventId)?.[0];
+      const originServerTs = byId.get(eventId)?.originServerTs;
+      if (editEventId) {
+        part.editEventId = editEventId;
+      }
+      if (Number.isSafeInteger(originServerTs)) {
+        part.originServerTs = originServerTs;
+      }
+      return part;
+    });
+    const retained = byId.get(parts[0]?.eventId ?? "")?.content;
+    const contentHash = retained ? copyContentHash(retained) : undefined;
+    const sourceTs = object(publicationOf(retained ?? {})?.origin)?.publishedAtMs;
     return {
       messageId,
       revision: state.revision,
       partCount: Number.isSafeInteger(state.expectedParts) ? state.expectedParts : null,
       complete: state.complete,
-      parts: keptParts(state.kept),
+      parts,
       liveEventIds: copies.map((copy) => copy.eventId),
+      ...(contentHash ? { contentHash } : {}),
+      ...(Number.isSafeInteger(sourceTs) && Number(sourceTs) >= 0
+        ? { sourceTs: Number(sourceTs) }
+        : {}),
     };
   });
 }
