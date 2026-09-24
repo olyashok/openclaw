@@ -395,6 +395,18 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
     sessionKey: eventSessionKey,
     contextKey: `exec:${session.id}`,
     deliveryContext: session.notifyDeliveryContext,
+    ...(session.originRunId
+      ? {
+          origin: {
+            runId: session.originRunId,
+            sessionKey,
+            outcome:
+              status === "completed" && session.exitCode === 0
+                ? ("success" as const)
+                : ("failure" as const),
+          },
+        }
+      : {}),
   };
   const remove = enqueueSystemEventWithReceipt(
     eventText,
@@ -691,6 +703,8 @@ export async function runExecProcess({
   /** Start-time routing policy for detached exec system events. */
   eventRouting?: EventSessionRoutingPolicy;
   notifyDeliveryContext?: DeliveryContext;
+  /** Agent run that started this command; binds its completion to that run. */
+  originRunId?: string;
   timeoutSec: number | null;
   /** Whether exec may return a supervised session for later continuation. */
   processContinuationAvailable?: boolean;
@@ -722,6 +736,7 @@ export async function runExecProcess({
     sessionScope: opts.sessionScope,
     eventRouting: opts.eventRouting,
     notifyDeliveryContext: normalizeDeliveryContext(opts.notifyDeliveryContext),
+    originRunId: opts.originRunId,
     notifyOnExit: opts.notifyOnExit,
     notifyOnExitEmptySuccess: opts.notifyOnExitEmptySuccess === true,
     exitNotified: false,
@@ -881,6 +896,7 @@ export async function runExecProcess({
         delete session.sessionScope;
         delete session.eventRouting;
         delete session.notifyDeliveryContext;
+        delete session.originRunId;
         delete session.notifyOnExit;
         delete session.notifyOnExitEmptySuccess;
       }

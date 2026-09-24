@@ -625,6 +625,7 @@ export function createDispatchReplyOperationCoordinator(params: {
     dispatchReplyOperation?.abortSignal ?? params.replyOptions?.abortSignal;
   let observedReplyDelivery = false;
   let agentRunTerminalOutcome: "completed" | "failed" | undefined;
+  let agentRunId: string | undefined;
   const markObservedReplyDelivery = async () => {
     if (observedReplyDelivery) {
       return;
@@ -638,6 +639,7 @@ export function createDispatchReplyOperationCoordinator(params: {
       NonNullable<DispatchFromConfigParams["replyOptions"]>["onAgentRunStart"]
     > = (...args) => {
       agentRunTerminalOutcome = "completed";
+      agentRunId = normalizeOptionalString(args[0]) ?? agentRunId;
       params.messageAuditTerminal?.observeRunId(args[0]);
       return params.replyOptions?.onAgentRunStart?.(...args);
     };
@@ -718,6 +720,7 @@ export function createDispatchReplyOperationCoordinator(params: {
     ensureDispatchReplyOperation,
     failDispatchReplyOperation,
     getAgentRunTerminalOutcome: () => agentRunTerminalOutcome,
+    getAgentRunId: () => agentRunId,
     getDispatchAbortOperation: () => dispatchAbortOperation,
     getDispatchAbortSignal,
     getDispatchReplyOperation: () => dispatchReplyOperation,

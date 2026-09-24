@@ -33,6 +33,14 @@ export type SystemEvent = {
   ts: number;
   contextKey?: string | null;
   deliveryContext?: DeliveryContext;
+  /** Agent run that started the async work this event completes. */
+  origin?: SystemEventOrigin;
+};
+
+export type SystemEventOrigin = {
+  runId: string;
+  sessionKey: string;
+  outcome: "success" | "failure";
 };
 
 const MAX_EVENTS = 20;
@@ -50,6 +58,7 @@ type SystemEventOptions = {
   sessionKey: string;
   contextKey?: string | null;
   deliveryContext?: DeliveryContext;
+  origin?: SystemEventOrigin;
   /** Replace the pending event for this context and delivery route. Requires contextKey. */
   replace?: boolean;
 };
@@ -90,6 +99,7 @@ function cloneSystemEvent(event: SystemEvent): SystemEvent {
   const clone = {
     ...event,
     ...(event.deliveryContext ? { deliveryContext: { ...event.deliveryContext } } : {}),
+    ...(event.origin ? { origin: { ...event.origin } } : {}),
   };
   cloneSystemEventOwner(event, clone);
   return clone;
@@ -164,6 +174,7 @@ function enqueueOwnedSystemEventEntry(
     ts: Date.now(),
     contextKey: normalizedContextKey,
     deliveryContext: normalizedDeliveryContext,
+    ...(options.origin ? { origin: { ...options.origin } } : {}),
   };
   recordSystemEventOwner(event, normalizedOwnerAgentId);
   entry.queue.push(event);

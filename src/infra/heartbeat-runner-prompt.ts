@@ -35,8 +35,10 @@ import {
   type HeartbeatScheduledTask,
   type HeartbeatWakeSource,
 } from "./heartbeat-wake.js";
+import { classifyAsyncCompletion } from "./run-final-deliveries.js";
 import { selectAgentSystemEvents } from "./system-event-ownership.js";
 import {
+  consumeSelectedSystemEventEntries,
   peekSystemEventEntries,
   resolveSystemEventDeliveryContext,
   type SystemEvent,
@@ -79,6 +81,16 @@ export function shouldPreflightExecEventWake(
   );
 }
 
+function isStaleAsyncCompletion(event: SystemEvent): boolean {
+  if (!event.origin || !isExecCompletionEvent(event.text)) {
+    return false;
+  }
+  const freshness = classifyAsyncCompletion(event.origin);
+  return (
+    freshness === "superseded" || (freshness === "answered" && event.origin.outcome === "success")
+  );
+}
+
 export async function resolveHeartbeatPreflight(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -99,10 +111,23 @@ export async function resolveHeartbeatPreflight(params: {
     params.heartbeat,
     params.sessionKey,
   );
-  const pendingEventEntries = selectAgentSystemEvents(
+  const queuedEventEntries = selectAgentSystemEvents(
     peekSystemEventEntries(session.sessionKey),
     params.agentId,
   ).filter((event) => !isHeartbeatDeliveryAwarenessEvent(event));
+  // Retire completions the user no longer needs before they can pick a
+  // delivery target or reach the model: a later turn already answered, or the
+  // originating run answered and the command simply succeeded.
+  const staleCompletions = queuedEventEntries.filter(isStaleAsyncCompletion);
+  if (staleCompletions.length > 0) {
+    consumeSelectedSystemEventEntries(session.sessionKey, staleCompletions);
+    log.info(
+      `heartbeat: dropped ${staleCompletions.length} async completion(s) after a delivered final reply`,
+    );
+  }
+  const pendingEventEntries = queuedEventEntries.filter(
+    (event) => !staleCompletions.includes(event),
+  );
   const turnSourceDeliveryContext = resolveSystemEventDeliveryContext(pendingEventEntries);
   const hasTaggedCronEvents = pendingEventEntries.some((event) =>
     event.contextKey?.startsWith("cron:"),
@@ -280,6 +305,9 @@ ${completionInstruction}`;
     ? buildExecEventPrompt(execEvents, {
         deliverToUser: params.canRelayToUser,
         useHeartbeatResponseTool: baseUsesHeartbeatResponseTool,
+        followsDeliveredFinal: pendingEventEntries
+          .filter((event) => isExecCompletionEvent(event.text))
+          .every((event) => event.origin && classifyAsyncCompletion(event.origin) !== "fresh"),
       })
     : hasCronEvents
       ? buildCronEventPrompt(cronEvents, {
