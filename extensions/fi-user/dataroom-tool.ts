@@ -15,6 +15,7 @@ import {
   exchange,
   pathSegment,
   type Delegation,
+  type RequesterIdentity,
   type ResolvedPluginConfig,
 } from "./fi-delegation.js";
 import {
@@ -48,8 +49,24 @@ export const DATAROOM_ACTIONS = [
   "upload_gmail_attachment",
   "upload_slack_file",
   "upload_drive_file",
+  "upload_to_project_library",
 ] as const;
 type DataRoomAction = (typeof DATAROOM_ACTIONS)[number];
+
+/** Project-library categories Fi accepts as a placement hint (mirrors Fi's
+ * `[projectSlug]/docs/upload`). The document still lands unclassified. */
+export const PROJECT_LIBRARY_CATEGORIES = [
+  "construction",
+  "financing",
+  "acquisition",
+  "tax",
+  "commercial",
+  "governance",
+  "hr",
+  "insurance",
+  "formation",
+  "banking",
+] as const;
 
 const DataRoomSchema = Type.Object(
   {
@@ -65,7 +82,24 @@ const DataRoomSchema = Type.Object(
     scopeId: Type.Optional(Type.String({ maxLength: 200 })),
     displayName: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
     section: Type.Optional(
-      Type.String({ maxLength: 200, description: "Room section (room category)." }),
+      Type.String({
+        maxLength: 200,
+        description:
+          "Room section (room category); for upload_to_project_library, the folder within the library category (e.g. permits).",
+      }),
+    ),
+    project: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: 200,
+        description: "Project slug whose document library receives upload_to_project_library.",
+      }),
+    ),
+    category: Type.Optional(
+      stringEnum(PROJECT_LIBRARY_CATEGORIES, {
+        description:
+          "Project-library category for upload_to_project_library. Default construction.",
+      }),
     ),
     orderKey: Type.Optional(Type.String({ maxLength: 100 })),
     visibility: Type.Optional(stringEnum(["shared", "internal"] as const)),
@@ -91,6 +125,8 @@ type DataRoomInput = {
   scopeId?: string;
   displayName?: string;
   section?: string;
+  project?: string;
+  category?: (typeof PROJECT_LIBRARY_CATEGORIES)[number];
   orderKey?: string;
   visibility?: "shared" | "internal";
   highlighted?: boolean;
@@ -265,6 +301,89 @@ async function uploadBytes(
   };
 }
 
+/** A Slack file the verified requester posted in this conversation, with its
+ * Slack provenance. Anything else is refused before any bytes are read. */
+async function requesterSlackUpload(
+  context: OpenClawPluginToolContext,
+  identity: RequesterIdentity,
+  input: DataRoomInput,
+) {
+  if (identity.channel !== "slack") {
+    throw new Error(`${input.action} is available in Slack conversations only`);
+  }
+  const conversation = slackConversation(context);
+  const token = slackBotToken(context);
+  if (!conversation || !token) {
+    throw new Error("This Slack conversation cannot be verified for file access");
+  }
+  const file = await resolveRequesterSlackFile({
+    token,
+    conversation,
+    requesterSenderId: identity.requesterSenderId,
+    fileId: input.slackFileId,
+    fileName: input.slackFileName,
+  });
+  const bytes = await downloadSlackFile(token, file);
+  return {
+    file: { bytes, name: file.name ?? file.id },
+    provenance: {
+      fileId: file.id,
+      ...(file.permalink ? { url: file.permalink } : {}),
+      ...(conversation.threadTs ? { messageId: conversation.threadTs } : {}),
+    },
+  };
+}
+
+/**
+ * File a Slack file into a project's document library (not a data room) under
+ * the requester's own project grant. Fi lands it restricted and unclassified
+ * with the Slack provenance and audits it to the requester.
+ */
+async function uploadToProjectLibrary(
+  ctx: Ctx,
+  input: DataRoomInput,
+  upload: Awaited<ReturnType<typeof requesterSlackUpload>>,
+) {
+  const project = pathSegment(input.project, "project");
+  const form = new FormData();
+  const body = upload.file.bytes.buffer.slice(
+    upload.file.bytes.byteOffset,
+    upload.file.bytes.byteOffset + upload.file.bytes.byteLength,
+  ) as ArrayBuffer;
+  form.set("file", new Blob([body]), upload.file.name);
+  if (input.category) {
+    form.set("category", input.category);
+  }
+  if (input.section) {
+    form.set("section", input.section);
+  }
+  form.set("provenanceSource", "slack");
+  form.set("provenanceFileId", upload.provenance.fileId);
+  if (upload.provenance.messageId) {
+    form.set("provenanceMessageId", upload.provenance.messageId);
+  }
+  if (upload.provenance.url) {
+    form.set("provenanceUrl", upload.provenance.url);
+  }
+  form.set("provenanceOriginalFilename", upload.file.name);
+  const result = (await delegatedJson(
+    ctx.config,
+    ctx.delegation,
+    `/api/${encodeURIComponent(ctx.delegation.user.orgSlug)}/${project}/docs/upload`,
+    { method: "POST", body: form },
+    "Fi project library upload",
+  )) as { duplicate?: boolean; projectSlug?: string; document?: Record<string, unknown> };
+  return {
+    uploaded: upload.file.name,
+    project: result.projectSlug ?? decodeURIComponent(project),
+    duplicate: result.duplicate === true,
+    document: result.document ?? null,
+    note: result.duplicate
+      ? "These exact bytes were already in the project's library; no second copy was filed."
+      : "Filed restricted and unclassified; Fi classifies it after text extraction. Only people with the project's documents grant see it until then.",
+  };
+}
+
 export function createDataRoomTool(
   api: OpenClawPluginApi,
   context: OpenClawPluginToolContext,
@@ -273,7 +392,7 @@ export function createDataRoomTool(
     name: "fi_user_dataroom",
     label: "My Fi Data Rooms",
     description:
-      "Work in Fi data rooms as the current verified requester, under their own room grants: list rooms, read a room and its checklist, add an existing Fi document, set a document's section/order/visibility within the room, link a document to a checklist task or complete a task, and upload a file from the requester's own Gmail, from a Slack file they posted in this conversation, or from their own Google Drive. Every write is read back from Fi. Members, recipients, public links and room settings are administrator actions and are not available here.",
+      "Work in Fi data rooms as the current verified requester, under their own room grants: list rooms, read a room and its checklist, add an existing Fi document, set a document's section/order/visibility within the room, link a document to a checklist task or complete a task, and upload a file from the requester's own Gmail, from a Slack file they posted in this conversation, or from their own Google Drive. upload_to_project_library files a Slack file the requester posted in this conversation into a PROJECT's document library (project slug, optional category and section) under their own project grant — it lands restricted and unclassified, not in any room. Every write is read back from Fi. Members, recipients, public links and room settings are administrator actions and are not available here.",
     parameters: DataRoomSchema,
     async execute(_toolCallId, raw) {
       const input = raw as DataRoomInput;
@@ -323,6 +442,17 @@ export function createDataRoomTool(
             `${ctx.root}/available-docs${search ? `?${search}` : ""}`,
             {},
             "Fi available documents",
+          ),
+        );
+      }
+
+      if (input.action === "upload_to_project_library") {
+        pathSegment(input.project, "project");
+        return jsonResult(
+          await uploadToProjectLibrary(
+            ctx,
+            input,
+            await requesterSlackUpload(context, identity, input),
           ),
         );
       }
@@ -403,35 +533,8 @@ export function createDataRoomTool(
       }
 
       if (input.action === "upload_slack_file") {
-        if (identity.channel !== "slack") {
-          throw new Error("upload_slack_file is available in Slack conversations only");
-        }
-        const conversation = slackConversation(context);
-        const token = slackBotToken(context);
-        if (!conversation || !token) {
-          throw new Error("This Slack conversation cannot be verified for file access");
-        }
-        const file = await resolveRequesterSlackFile({
-          token,
-          conversation,
-          requesterSenderId: identity.requesterSenderId,
-          fileId: input.slackFileId,
-          fileName: input.slackFileName,
-        });
-        const bytes = await downloadSlackFile(token, file);
-        return jsonResult(
-          await uploadBytes(
-            ctx,
-            roomId,
-            input,
-            { bytes, name: file.name ?? file.id },
-            {
-              fileId: file.id,
-              ...(file.permalink ? { url: file.permalink } : {}),
-              ...(conversation.threadTs ? { messageId: conversation.threadTs } : {}),
-            },
-          ),
-        );
+        const upload = await requesterSlackUpload(context, identity, input);
+        return jsonResult(await uploadBytes(ctx, roomId, input, upload.file, upload.provenance));
       }
 
       const mailbox = requireMailbox(
