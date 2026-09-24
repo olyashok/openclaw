@@ -16,8 +16,6 @@ export type ProjectionFailureReason =
   | "source_changed"
   | "internal";
 
-const INVALID_INPUT = new Set<ProjectionFailureReason>(["invalid_request"]);
-
 export class ProjectionError extends Error {
   constructor(
     readonly reason: ProjectionFailureReason,
@@ -35,7 +33,7 @@ export function projectionFailure(error: unknown) {
   return {
     payload: { error: message },
     error: errorShape(
-      INVALID_INPUT.has(reason) ? ErrorCodes.INVALID_REQUEST : ErrorCodes.UNAVAILABLE,
+      reason === "invalid_request" ? ErrorCodes.INVALID_REQUEST : ErrorCodes.UNAVAILABLE,
       message,
       { details: { reason } },
     ),
