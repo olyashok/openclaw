@@ -2,6 +2,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-entry-contract";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+import { projectionFailure } from "./src/matrix/projection-error.js";
 import type { CoreConfig } from "./src/types.js";
 
 const loadSessionProjectionModule = createLazyRuntimeModule(
@@ -22,7 +23,8 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
           ),
         );
       } catch (error) {
-        respond(false, { error: formatErrorMessage(error) });
+        const failure = projectionFailure(error);
+        respond(false, failure.payload, failure.error);
       }
     },
     { scope: "operator.admin" },
@@ -41,7 +43,8 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
           ),
         );
       } catch (error) {
-        respond(false, { error: formatErrorMessage(error) });
+        const failure = projectionFailure(error);
+        respond(false, failure.payload, failure.error);
       }
     },
     { scope: "operator.admin" },
@@ -77,7 +80,8 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
           typeof params?.accountId === "string" ? params.accountId.trim() : undefined;
         respond(true, getMatrixProjectionStatus(roomId, accountId));
       } catch (error) {
-        respond(false, { error: formatErrorMessage(error) });
+        const failure = projectionFailure(error);
+        respond(false, failure.payload, failure.error);
       }
     },
     { scope: "operator.admin" },
