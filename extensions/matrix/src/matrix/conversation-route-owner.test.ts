@@ -20,8 +20,8 @@ import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { matrixPlugin } from "../channel.js";
 import { installMatrixTestRuntime } from "../test-runtime.js";
-import { loadMatrixCredentials, saveMatrixCredentials } from "./credentials.js";
 import { resolveMatrixConversationRouteOwner } from "./conversation-route-owner.js";
+import { loadMatrixCredentials, saveMatrixCredentials } from "./credentials.js";
 import { removeBindingRecord, setBindingRecord } from "./thread-bindings-shared.js";
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
@@ -394,14 +394,20 @@ describe("resolveMatrixConversationRouteOwner read-only projections", () => {
         for (const threadId of [undefined, "$projection"]) {
           expect(
             resolveMatrixConversationRouteOwner({
-              cfg: {},
+              cfg: {
+                channels: {
+                  matrix: { homeserver: "https://matrix.example.org", accessToken: "token" },
+                },
+              },
               accountId: "default",
               conversation: { kind: "channel", peerId: "!projected:example.org", threadId },
             }),
-          ).toEqual(
+          ).toMatchObject(
+            // A read-only projection blocks native continuation; a Slack direct
+            // projection leaves ordinary Matrix routing in charge.
             boundBy === "session-projection-read-only"
               ? { kind: "unavailable" }
-              : { kind: "agent", agentId: "finance" },
+              : { kind: "agent" },
           );
         }
       } finally {

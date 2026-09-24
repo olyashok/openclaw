@@ -21,7 +21,8 @@ vi.mock("./thread-bindings-shared.js", () => ({
   resolveBindingKey: (row: MatrixThreadBindingRecord) =>
     `${row.accountId}:${row.parentConversationId}:${row.conversationId}`,
 }));
-vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", () => ({
+vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/conversation-binding-runtime")>()),
   getSessionBindingService: () => ({ bind: mocks.bind }),
 }));
 vi.mock("openclaw/plugin-sdk/session-binding-runtime", () => ({

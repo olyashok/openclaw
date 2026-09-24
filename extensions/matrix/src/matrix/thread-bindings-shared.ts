@@ -62,7 +62,7 @@ const MANAGERS_BY_ACCOUNT_ID = new Map<string, MatrixThreadBindingManagerCacheEn
 const BINDINGS_BY_ACCOUNT_CONVERSATION = new Map<string, MatrixThreadBindingRecord>();
 
 export function isMatrixReadOnlyProjectionRoom(accountId: string, roomId: string): boolean {
-  const protocol = getOptionalMatrixRuntime()?.channel.runtimeContexts?.get<{ protocol: string }>({
+  const protocol = getOptionalMatrixRuntime()?.channel?.runtimeContexts?.get<{ protocol: string }>({
     channelId: "matrix",
     capability: "source-session-authorization",
   })?.protocol;

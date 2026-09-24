@@ -86,7 +86,8 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
     },
     { scope: "operator.admin" },
   );
-  api.runtime.channel.runtimeContexts.register({
+  // Minimal plugin hosts (lifecycle tests, tooling) may omit channel runtime contexts.
+  api.runtime.channel?.runtimeContexts?.register({
     channelId: "matrix",
     capability: "session-read-projections",
     context: {

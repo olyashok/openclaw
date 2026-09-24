@@ -333,7 +333,7 @@ describe("SqliteBackedMatrixSyncStore", () => {
       const response = createSyncResponse("large-cursor");
       response.account_data.events.push({
         type: "com.openclaw.large",
-        content: { value: "🦞".repeat(100_000) },
+        content: { value: "🦞".repeat(200_000) },
       });
       const writer = await SqliteBackedMatrixSyncStore.create(storageRoot);
       await writer.setSyncData(response);
@@ -359,9 +359,10 @@ describe("SqliteBackedMatrixSyncStore", () => {
       ).resolves.toBe(true);
       const chunk = sync
         .entries()
-        .find((row) => row.value.kind === "sync-chunk" && row.value.index === 10);
+        // 256KB chunks: this ~800KB payload spans four chunks; tamper with non-first ones.
+        .find((row) => row.value.kind === "sync-chunk" && row.value.index === 1);
       if (!chunk || chunk.value.kind !== "sync-chunk") {
-        throw new Error("expected sync chunk 10");
+        throw new Error("expected sync chunk 1");
       }
       sync.register(chunk.key, { ...chunk.value, data: "modified" });
       expect(
@@ -375,9 +376,9 @@ describe("SqliteBackedMatrixSyncStore", () => {
       ).resolves.toBe(false);
       const laterChunk = sync
         .entries()
-        .find((row) => row.value.kind === "sync-chunk" && row.value.index === 11);
+        .find((row) => row.value.kind === "sync-chunk" && row.value.index === 2);
       if (!laterChunk) {
-        throw new Error("expected sync chunk 11");
+        throw new Error("expected sync chunk 2");
       }
       const { db } = openOpenClawStateDatabase({ env: options.env });
       db.prepare("UPDATE plugin_state_entries SET value_json = ? WHERE entry_key = ?").run(
