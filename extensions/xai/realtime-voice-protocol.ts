@@ -209,7 +209,10 @@ export abstract class XaiRealtimeVoiceProtocol {
         audio: {
           input: {
             format,
-            transcription: { model: XAI_REALTIME_INPUT_TRANSCRIPTION_MODEL },
+            transcription: {
+              model: XAI_REALTIME_INPUT_TRANSCRIPTION_MODEL,
+              ...(cfg.language ? { language_hint: cfg.language } : {}),
+            },
           },
           output: {
             format,
