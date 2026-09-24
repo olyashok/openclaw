@@ -594,6 +594,7 @@ export function createExecTool(
           agentId,
           eventRouting: defaults?.eventRouting,
           notifyDeliveryContext,
+          originRunId: defaults?.runId,
           timeoutSec: effectiveTimeout,
           processContinuationAvailable: allowBackground,
           startupSignal: signal,
