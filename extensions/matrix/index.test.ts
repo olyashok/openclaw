@@ -15,6 +15,7 @@ const runtimeMocks = vi.hoisted(() => ({
   handleMatrixSessionProjectionCreate: vi.fn(async () => {}),
   handleMatrixSessionProjectionInspect: vi.fn(() => {}),
   listReadOnlyMatrixSessionProjections: vi.fn(() => []),
+  planMatrixProjectionRoom: vi.fn(async () => ({ actions: [] })),
   handleMatrixSessionProjectionMessageReceived: vi.fn(async () => {}),
   handleMatrixSessionProjectionReplyPayloadSending: vi.fn(async () => {}),
   handleVerificationBootstrap: vi.fn(async () => {}),
@@ -36,6 +37,9 @@ vi.mock("./runtime-setter-api.js", async (importOriginal) => ({
 }));
 vi.mock("./src/matrix/subagent-hooks.js", () => runtimeMocks);
 vi.mock("./src/matrix/session-projection.js", () => runtimeMocks);
+vi.mock("./src/matrix/session-projection-snapshot.js", () => ({
+  planMatrixProjectionRoom: runtimeMocks.planMatrixProjectionRoom,
+}));
 
 function requireFirstCliRegistration(mock: ReturnType<typeof vi.fn>) {
   const [call] = mock.mock.calls;
@@ -192,6 +196,16 @@ describe("matrix plugin", () => {
     expect(runtimeMocks.handleMatrixSessionProjectionInspect).toHaveBeenCalledWith({
       params: { roomId: "!room" },
     });
+    const planRegistration = registerGatewayMethod.mock.calls.find(
+      ([method]) => method === "matrix.sessionProjection.plan",
+    );
+    expect(planRegistration?.[2]).toEqual({ scope: "operator.admin" });
+    const respond = vi.fn();
+    await planRegistration?.[1]({ params: { roomId: "!room", accountId: "ops" }, respond });
+    expect(runtimeMocks.planMatrixProjectionRoom).toHaveBeenCalledWith(
+      expect.objectContaining({ roomId: "!room", accountId: "ops", sourceSnapshot: undefined }),
+    );
+    expect(respond).toHaveBeenCalledWith(true, { actions: [] });
   });
 
   it("does not delay source delivery while a Matrix projection is pending", async () => {

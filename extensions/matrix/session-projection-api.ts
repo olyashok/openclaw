@@ -86,6 +86,29 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
     },
     { scope: "operator.admin" },
   );
+  api.registerGatewayMethod(
+    "matrix.sessionProjection.plan",
+    async ({ params, respond }) => {
+      // Dry run only: reads the projection thread, never writes to it.
+      try {
+        const { planMatrixProjectionRoom } =
+          await import("./src/matrix/session-projection-snapshot.js");
+        respond(
+          true,
+          await planMatrixProjectionRoom({
+            cfg: (api.runtime.config?.current?.() ?? api.config) as CoreConfig,
+            roomId: params?.roomId,
+            accountId: params?.accountId,
+            sourceSnapshot: params?.sourceSnapshot,
+          }),
+        );
+      } catch (error) {
+        const failure = projectionFailure(error);
+        respond(false, failure.payload, failure.error);
+      }
+    },
+    { scope: "operator.admin" },
+  );
   // Minimal plugin hosts (lifecycle tests, tooling) may omit channel runtime contexts.
   api.runtime.channel?.runtimeContexts?.register({
     channelId: "matrix",
