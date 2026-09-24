@@ -19,6 +19,7 @@ import { registerSlackInstallationState } from "../../installation-identity-stat
 import {
   clearSlackThreadParticipationCache,
   recordSlackThreadParticipation,
+  registerSlackThreadOwnerPeer,
 } from "../../sent-thread-cache.js";
 import type { SlackMessageEvent } from "../../types.js";
 import type { SlackMonitorContext } from "../context.js";
@@ -5730,6 +5731,127 @@ describe("slack implicit mention policy", () => {
 
     expect(explicitFiUser?.ctxPayload.MentionSource).toBe("explicit_bot");
     expect(nextFiAdmin).toBeNull();
+  });
+
+  function createOwnershipPair(options?: { requireMention?: boolean }) {
+    const cfg = {
+      channels: {
+        slack: {
+          enabled: true,
+          implicitMentions: { threadParticipation: true },
+          threadOwnership: { preferredAccounts: ["fi-admin", "fi-user"] },
+          accounts: { "fi-admin": {}, "fi-user": {} },
+        },
+      },
+      session: {},
+    } as OpenClawConfig;
+    const defaultRequireMention = options?.requireMention ?? true;
+    const fiAdmin = createInboundSlackTestContext({
+      cfg,
+      accountId: "fi-admin",
+      defaultRequireMention,
+    });
+    const fiUser = createInboundSlackTestContext({
+      cfg,
+      accountId: "fi-user",
+      defaultRequireMention,
+    });
+    fiAdmin.botUserId = "BADMIN";
+    fiUser.botUserId = "BUSER";
+    for (const ctx of [fiAdmin, fiUser]) {
+      ctx.resolveUserName = async () => ({ name: "Alice" });
+      registerSlackThreadOwnerPeer(ctx.accountId, {
+        botUserId: () => ctx.botUserId,
+        answersUnmentioned: () => !defaultRequireMention,
+      });
+    }
+    return {
+      fiAdmin: {
+        ctx: fiAdmin,
+        account: { ...createSlackTestAccount(), accountId: "fi-admin" },
+      },
+      fiUser: {
+        ctx: fiUser,
+        account: { ...createSlackTestAccount(), accountId: "fi-user" },
+      },
+    };
+  }
+
+  it("runs only the highest-ranked bot when several preferred bots are mentioned", async () => {
+    const { fiAdmin, fiUser } = createOwnershipPair();
+    const message = { text: "<@BUSER> <@BADMIN> please both look" };
+
+    const [userResult, adminResult] = await Promise.all([
+      prepareThreadMessage({ ...fiUser, message }),
+      prepareThreadMessage({ ...fiAdmin, message }),
+    ]);
+
+    expect(userResult).toBeNull();
+    expect(adminResult?.ctxPayload.MentionSource).toBe("explicit_bot");
+  });
+
+  it("runs only the highest-ranked mentioned bot on a top-level channel message", async () => {
+    const { fiAdmin, fiUser } = createOwnershipPair();
+    const message = {
+      text: "<@BUSER> <@BADMIN> please both look",
+      thread_ts: undefined,
+      parent_user_id: undefined,
+    };
+
+    const userResult = await prepareThreadMessage({ ...fiUser, message });
+    const adminResult = await prepareThreadMessage({ ...fiAdmin, message });
+
+    expect(userResult).toBeNull();
+    expect(adminResult?.ctxPayload.MentionSource).toBe("explicit_bot");
+  });
+
+  it("admits one bot for an unmentioned top-level message both bots would answer", async () => {
+    const { fiAdmin, fiUser } = createOwnershipPair({ requireMention: false });
+    const message = { text: "status?", thread_ts: undefined, parent_user_id: undefined };
+
+    const userResult = await prepareThreadMessage({ ...fiUser, message });
+    const adminResult = await prepareThreadMessage({ ...fiAdmin, message });
+
+    expect(userResult).toBeNull();
+    expect(adminResult).not.toBeNull();
+  });
+
+  it("lets a lower-ranked bot own a top-level message that mentions only it", async () => {
+    const { fiAdmin, fiUser } = createOwnershipPair({ requireMention: false });
+    const message = {
+      text: "<@BUSER> status?",
+      thread_ts: undefined,
+      parent_user_id: undefined,
+    };
+
+    const adminResult = await prepareThreadMessage({ ...fiAdmin, message });
+    const userResult = await prepareThreadMessage({ ...fiUser, message });
+
+    expect(adminResult).toBeNull();
+    expect(userResult?.ctxPayload.MentionSource).toBe("explicit_bot");
+  });
+
+  it("drops the current owner when another bot is mentioned, even if it handles the event first", async () => {
+    const threadTs = "1700000000.000000";
+    const { fiAdmin, fiUser } = createOwnershipPair();
+    recordSlackThreadParticipation("fi-admin", "C123", threadTs);
+    recordSlackThreadParticipation("fi-user", "C123", threadTs);
+    await prepareThreadMessage({ ...fiAdmin, message: { thread_ts: threadTs } });
+
+    const mention = { thread_ts: threadTs, text: "<@BUSER> take this one" };
+    // The owner's handler starts before the mentioned bot's forced claim lands.
+    const [adminResult, userResult] = await Promise.all([
+      prepareThreadMessage({ ...fiAdmin, message: mention }),
+      prepareThreadMessage({ ...fiUser, message: mention }),
+    ]);
+    const nextAdmin = await prepareThreadMessage({
+      ...fiAdmin,
+      message: { thread_ts: threadTs, ts: "1700000002.000001" },
+    });
+
+    expect(adminResult).toBeNull();
+    expect(userResult?.ctxPayload.MentionSource).toBe("explicit_bot");
+    expect(nextAdmin).toBeNull();
   });
 
   it("accepts an unmentioned reply more than 24 hours after joining a required-mention thread", async () => {

@@ -48,6 +48,7 @@ import { formatSlackFileReference } from "../../file-reference.js";
 import type { SlackSendIdentity } from "../../send.js";
 import {
   claimSlackThreadOwner,
+  getSlackThreadOwnerPeer,
   hasSlackThreadParticipationWithPersistence,
 } from "../../sent-thread-cache.js";
 import { formatSlackTarget } from "../../target-parsing.js";
@@ -128,6 +129,62 @@ function resolveSlackThreadOwnershipPreference(
   return [...new Set([...preferredAccounts, currentAccountId].map((value) => value.trim()))].filter(
     Boolean,
   );
+}
+
+type SlackThreadOwnerCandidates =
+  | { kind: "mentioned"; accountIds: string[] }
+  | { kind: "participants"; accountIds: readonly string[] }
+  | { kind: "current" | "responders"; accountIds: string[] };
+
+/**
+ * Decides which accounts compete for a shared Slack thread. Every account
+ * computes the same answer from the same message, so the highest-ranked
+ * mentioned bot wins without depending on which handler runs first.
+ */
+function resolveSlackThreadOwnerCandidates(params: {
+  preference: readonly string[];
+  currentAccountId: string;
+  explicitlyMentioned: boolean;
+  mentionedUserIds: readonly string[];
+  hasReplyToCurrentBot: boolean;
+  hasCurrentThreadParticipation: boolean;
+  isThreadReply: boolean;
+  answersUnmentionedTopLevel: boolean;
+  channelId: string;
+  channelName?: string;
+}): SlackThreadOwnerCandidates | undefined {
+  const mentionedOwner = params.preference.find((accountId) => {
+    if (accountId === params.currentAccountId) {
+      return params.explicitlyMentioned;
+    }
+    const botUserId = normalizeSlackId(getSlackThreadOwnerPeer(accountId)?.botUserId());
+    return Boolean(botUserId && params.mentionedUserIds.includes(botUserId));
+  });
+  if (mentionedOwner) {
+    return { kind: "mentioned", accountIds: [mentionedOwner] };
+  }
+  if (params.explicitlyMentioned || params.hasReplyToCurrentBot) {
+    return { kind: "current", accountIds: [params.currentAccountId] };
+  }
+  if (params.isThreadReply) {
+    return params.hasCurrentThreadParticipation
+      ? { kind: "participants", accountIds: params.preference }
+      : undefined;
+  }
+  if (!params.answersUnmentionedTopLevel) {
+    return undefined;
+  }
+  return {
+    kind: "responders",
+    accountIds: params.preference.filter(
+      (accountId) =>
+        accountId === params.currentAccountId ||
+        getSlackThreadOwnerPeer(accountId)?.answersUnmentioned(
+          params.channelId,
+          params.channelName,
+        ) === true,
+    ),
+  };
 }
 
 function resolveSlackGroupSessionSubject(params: {
@@ -1199,32 +1256,32 @@ export async function prepareSlackMessage(params: {
     return null;
   }
   const threadOwnerPreference = resolveSlackThreadOwnershipPreference(cfg, account.accountId);
-  // Slack message events always carry a channel, but keep this boundary explicit
-  // because the ownership cache cannot form a stable key without one.
-  const threadOwnershipChannelId = message.channel ?? "";
-  const threadOwnershipThreadTs = threadTs ?? "";
-  if (!threadOwnershipChannelId || !threadOwnershipThreadTs) {
-    return null;
-  }
-  const hasReplyToCurrentBot =
-    implicitMentionKinds.includes("reply_to_bot") && implicitMentions.replyToBot;
-  const hasCurrentThreadParticipation =
-    implicitMentionKinds.includes("bot_thread_participant") && implicitMentions.threadParticipation;
-  if (
-    threadOwnerPreference &&
-    isRoom &&
-    isThreadReply &&
-    threadOwnershipThreadTs &&
-    (explicitlyMentioned || hasReplyToCurrentBot || hasCurrentThreadParticipation)
-  ) {
+  // Top-level messages are the root of the reply thread they will seed, so
+  // they share one ownership key with the thread replies that follow.
+  const threadOwnershipRootTs = threadTs ?? message.ts;
+  if (threadOwnerPreference && isRoom && message.channel && threadOwnershipRootTs) {
+    const ownerAccountIds = resolveSlackThreadOwnerCandidates({
+      preference: threadOwnerPreference,
+      currentAccountId: account.accountId,
+      explicitlyMentioned,
+      mentionedUserIds,
+      hasReplyToCurrentBot:
+        implicitMentionKinds.includes("reply_to_bot") && implicitMentions.replyToBot,
+      hasCurrentThreadParticipation:
+        implicitMentionKinds.includes("bot_thread_participant") &&
+        implicitMentions.threadParticipation,
+      isThreadReply,
+      answersUnmentionedTopLevel: wasMentioned || !shouldRequireMention,
+      channelId: message.channel,
+      channelName,
+    });
     const candidateAccountIds =
-      explicitlyMentioned || hasReplyToCurrentBot
-        ? [account.accountId]
-        : (
+      ownerAccountIds?.kind === "participants"
+        ? (
             await Promise.all(
-              threadOwnerPreference.map(async (candidateAccountId) => {
+              ownerAccountIds.accountIds.map(async (candidateAccountId) => {
                 if (candidateAccountId === account.accountId) {
-                  return hasCurrentThreadParticipation ? candidateAccountId : undefined;
+                  return candidateAccountId;
                 }
                 const candidateImplicitMentions = resolveChannelImplicitMentions({
                   cfg,
@@ -1236,8 +1293,8 @@ export async function prepareSlackMessage(params: {
                 }
                 return (await hasSlackThreadParticipationWithPersistence({
                   accountId: candidateAccountId,
-                  channelId: threadOwnershipChannelId,
-                  threadTs: threadOwnershipThreadTs,
+                  channelId: message.channel,
+                  threadTs: threadOwnershipRootTs,
                   teamId: opts.eventScope?.teamId,
                 }))
                   ? candidateAccountId
@@ -1246,20 +1303,29 @@ export async function prepareSlackMessage(params: {
             )
           ).filter((candidateAccountId): candidateAccountId is string =>
             Boolean(candidateAccountId),
-          );
-    const ownerAccountId = await claimSlackThreadOwner({
-      channelId: threadOwnershipChannelId,
-      threadTs: threadOwnershipThreadTs,
-      candidateAccountIds,
-      teamId: opts.eventScope?.teamId,
-      force: explicitlyMentioned,
-    });
-    if (ownerAccountId && ownerAccountId !== account.accountId && !explicitlyMentioned) {
+          )
+        : ownerAccountIds?.accountIds;
+    const isMentionedOwner = ownerAccountIds?.kind === "mentioned";
+    // A higher-ranked mentioned bot owns the turn outright; this account never
+    // writes a claim for it, so there is nothing for the two handlers to race.
+    const ownerAccountId =
+      isMentionedOwner && candidateAccountIds?.[0] !== account.accountId
+        ? candidateAccountIds?.[0]
+        : candidateAccountIds && candidateAccountIds.length > 0
+          ? await claimSlackThreadOwner({
+              channelId: message.channel,
+              threadTs: threadOwnershipRootTs,
+              candidateAccountIds,
+              teamId: opts.eventScope?.teamId,
+              force: isMentionedOwner,
+            })
+          : undefined;
+    if (ownerAccountId && ownerAccountId !== account.accountId) {
       logInboundDrop({
         log: logVerbose,
         channel: "slack",
         reason: "thread owned by another Slack account",
-        target: threadTs,
+        target: threadOwnershipRootTs,
       });
       return null;
     }
