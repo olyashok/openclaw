@@ -40,11 +40,6 @@ export function registerSourceReplyAuthorization(
     if (!agentId || !kind || !nativeId) {
       throw new Error("Unsupported source session");
     }
-    // The global superadmin agent may project channel work into Fi, but its
-    // direct Slack conversations are not tenant-owned projection sources.
-    if (kind === "direct" && agentId === "cellect-main") {
-      throw new Error("Unsupported source session");
-    }
     const entry = getSessionEntry({
       agentId,
       sessionKey: params.targetSessionKey,

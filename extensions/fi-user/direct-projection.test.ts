@@ -192,4 +192,44 @@ describe("Fi direct projection discovery", () => {
     ).toEqual(sessions);
     fetchMock.mockRestore();
   });
+  it("discovers an eligible superadmin DM from its existing OpenClaw session", async () => {
+    const mainSession = "agent:cellect-main:slack:direct:u111";
+    mocks.list.mockImplementation(({ agentId }: { agentId: string }) =>
+      agentId === "cellect-main" ? [{ sessionKey: mainSession }] : [],
+    );
+    mocks.entry.mockReturnValue({ origin: { accountId: "cellect-main", nativeChannelId: "D123" } });
+    const readDirect = vi.fn().mockResolvedValue({
+      directSource: { workspaceId: "T123", channelId: "D123", peerSenderId: "U111" },
+      messages: [
+        { messageId: "1700000000.000001", senderId: "U111", content: "Hello", bot: false },
+      ],
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "created" }),
+    } as Response);
+    const api = {
+      config: {
+        bindings: [
+          { agentId: "cellect-main", match: { channel: "slack", accountId: "cellect-main" } },
+        ],
+      },
+      logger: { warn: vi.fn() },
+      runtime: { channel: { runtimeContexts: { get: () => ({ botUserId: "U222", readDirect }) } } },
+    } as unknown as OpenClawPluginApi;
+    const report = await reconcileSlackDirectProjections(
+      api,
+      { baseUrl: "https://fi.example", token: "test" },
+      [],
+      new AbortController().signal,
+    );
+    expect(report).toMatchObject({ scanned: 1, created: 1, error: 0 });
+    expect(readDirect).toHaveBeenCalledWith("D123", "U111");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      agentId: "cellect-main",
+      sessionKey: mainSession,
+      directSource: { workspaceId: "T123", channelId: "D123", peerSenderId: "U111" },
+    });
+    fetchMock.mockRestore();
+  });
 });
