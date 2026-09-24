@@ -376,6 +376,7 @@ describe("Fi Slack channel publisher", () => {
     drifted: Set<string>,
     readFails = false,
     status = "existing",
+    unread = new Set<string>(),
   ) {
     discovery.entry.mockReturnValue({});
     const detachedSource = {
@@ -399,6 +400,7 @@ describe("Fi Slack channel publisher", () => {
     const plan = vi.fn(async (roomId: string) => ({
       converged: !drifted.has(roomId),
       invariantsOk: !drifted.has(roomId),
+      ...(drifted.has(roomId) ? { hasHumanMember: !unread.has(roomId) } : {}),
     }));
     const readThread = vi.fn(async (_channelId: string, rootMessageId: string) => {
       if (readFails) {
@@ -509,6 +511,23 @@ describe("Fi Slack channel publisher", () => {
     expect(f.refreshLines()).toEqual([
       "fi-user: projection refresh lane=channel room=!room1 session=agent:cellect-fi-admin:slack:channel:c123:thread:1700000000.000001 outcome=declined",
     ]);
+  });
+
+  it("never reads Slack for a drifted room that no human can read", async () => {
+    vi.useFakeTimers();
+    const f = driftFixture(
+      1,
+      new Set(["!room1", "!roomD"]),
+      false,
+      "existing",
+      new Set(["!room1", "!roomD"]),
+    );
+    f.service.start();
+    await vi.advanceTimersByTimeAsync(5000 + 60 * 60_000);
+    f.service.stop();
+    expect(f.plan).toHaveBeenCalled();
+    expect(f.readThread).not.toHaveBeenCalled();
+    expect(f.refreshLines()).toEqual([]);
   });
 
   it("neither plans nor refreshes with a zero budget", async () => {

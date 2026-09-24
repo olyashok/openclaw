@@ -9,6 +9,7 @@ import {
   createMatrixSourcePublication,
   MATRIX_PROJECTION_CONTENT_KEY,
 } from "./projection-publication.js";
+import { humanMemberVerdict } from "./projection-readers.js";
 import { noteMatrixSourceSnapshotResult } from "./projection-source-result.js";
 import { getMatrixProjectionStatus, parseProjectionExternalSource } from "./projection-source.js";
 import type { MatrixClient, MatrixRawEvent } from "./sdk.js";
@@ -686,6 +687,7 @@ export async function planMatrixProjectionRoom(params: {
         threadRootEventId,
         source: snapshot ? ("snapshot" as const) : ("history" as const),
         converged: actions.every((action) => action.kind === "unchanged"),
+        ...(await humanMemberVerdict(actions, { cfg: params.cfg, accountId, client, roomId })),
         actions,
         invariants: checkProjectionInvariants(history),
         mapping,

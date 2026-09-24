@@ -195,6 +195,39 @@ describe("projection drift scheduler", () => {
     expect(quiet.selectRefreshes(bound, 1)).toEqual([room.roomId]);
   });
 
+  it("never refreshes or prioritises a drifted room with no human member, until one joins", () => {
+    const time = clock();
+    const drift = createProjectionDriftScheduler(time.now);
+    const bound = rooms(40);
+    const unread = { ...drifted, hasHumanMember: false };
+    const target = bound[0]!.roomId;
+    let refreshes = 0;
+    let plans = 0;
+    for (let minute = 0; minute < 60; minute++) {
+      const planned = drift.selectPlans(bound);
+      plans += planned.filter((roomId) => roomId === target).length;
+      for (const roomId of planned) {
+        drift.recordPlan(roomId, roomId === target ? unread : clean);
+      }
+      refreshes += drift.selectRefreshes(bound, 5).length;
+      time.advance(TICK);
+    }
+    expect(refreshes).toBe(0);
+    // Planned by the rotation only (40 rooms at 4 per tick: every 10 ticks).
+    expect(plans).toBe(6);
+    expect(drift.summary()).toMatchObject({ unread: 1, drifted: 0 });
+    // A reader joins: the next plan that sees drift with a human refreshes it.
+    let refreshed: string[] = [];
+    for (let minute = 0; minute < 10 && !refreshed.length; minute++) {
+      for (const roomId of drift.selectPlans(bound)) {
+        drift.recordPlan(roomId, roomId === target ? { ...drifted, hasHumanMember: true } : clean);
+      }
+      refreshed = drift.selectRefreshes(bound, 5);
+      time.advance(TICK);
+    }
+    expect(refreshed).toEqual([target]);
+  });
+
   it("forgets rooms that are no longer bound", () => {
     const time = clock();
     const drift = createProjectionDriftScheduler(time.now);

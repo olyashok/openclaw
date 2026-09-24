@@ -23,6 +23,11 @@ const mocks = vi.hoisted(() => ({
   note: vi.fn(),
   binding: vi.fn(),
   status: vi.fn(),
+  members: vi.fn(async () => ["@transport:example.org", "@reader:example.org"]),
+  powerLevels: vi.fn(async () => ({ users: { "@admin:example.org": 100 } })),
+}));
+vi.mock("./accounts.js", () => ({
+  resolveConfiguredMatrixBotUserIds: () => new Set(["@otherbot:example.org"]),
 }));
 vi.mock("./projection-source.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./projection-source.js")>()),
@@ -41,6 +46,8 @@ vi.mock("./send/client.js", () => ({
       getEvent: async (_roomId: string, eventId: string) =>
         mocks.events.find((candidate) => candidate.event_id === eventId) ?? null,
       redactEvent: mocks.redact,
+      getJoinedRoomMembers: mocks.members,
+      getRoomStateEvent: mocks.powerLevels,
     }),
 }));
 vi.mock("./send.js", () => ({
@@ -465,6 +472,52 @@ describe("v2 source reconciliation", () => {
     expect(
       result.invariants.filter((verdict) => !verdict.ok).map((verdict) => verdict.name),
     ).toEqual(["oneLiveCopyPerPart", "noStaleDuplicateWhenConverged"]);
+    expect(result.hasHumanMember).toBe(true);
+  });
+  it.each([
+    [
+      "only bots and service identities",
+      ["@transport:example.org", "@otherbot:example.org", "@admin:example.org"],
+      false,
+    ],
+    [
+      "a human reader",
+      ["@transport:example.org", "@admin:example.org", "@reader:example.org"],
+      true,
+    ],
+  ])("reports whether a drifted room has a human member: %s", async (_label, members, expected) => {
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [message] },
+    });
+    mocks.events.push({ ...mocks.events[0], event_id: "$duplicate" });
+    mocks.status.mockReturnValue({
+      status: "existing",
+      roomId: "!room",
+      accountId: "account",
+      threadRootEventId: "$root",
+    });
+    mocks.members.mockResolvedValueOnce(members);
+    const result = await planMatrixProjectionRoom({ cfg: {} as never, roomId: "!room" });
+    expect(result.converged).toBe(false);
+    expect(result.hasHumanMember).toBe(expected);
+  });
+  it("counts an unreadable roster as readable so a refresh is never suppressed by an error", async () => {
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [message] },
+    });
+    mocks.events.push({ ...mocks.events[0], event_id: "$duplicate" });
+    mocks.status.mockReturnValue({
+      status: "existing",
+      roomId: "!room",
+      accountId: "account",
+      threadRootEventId: "$root",
+    });
+    mocks.members.mockRejectedValueOnce(new Error("forbidden"));
+    expect(
+      (await planMatrixProjectionRoom({ cfg: {} as never, roomId: "!room" })).hasHumanMember,
+    ).toBe(true);
   });
   it("plans source edits and deletions only from a supplied snapshot", async () => {
     await reconcileMatrixProjectionSnapshot({
