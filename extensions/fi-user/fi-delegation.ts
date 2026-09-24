@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import { RECONCILE_FULL_REFRESH_BUDGET } from "./reconciliation-batch.js";
 
 export type PluginConfig = {
   baseUrl?: string;
@@ -16,6 +17,11 @@ export type PluginConfig = {
   adminPrincipals?: string[];
   /** Agent that carries out an approved admin action. */
   adminAgentId?: string;
+  /**
+   * Drifted Slack projection rooms the periodic reconciler may refresh from a
+   * full source snapshot per tick. Default 1; 0 keeps readers-only passes.
+   */
+  projectionFullRefreshesPerTick?: number;
 };
 
 export type ResolvedPluginConfig = Required<
@@ -24,6 +30,7 @@ export type ResolvedPluginConfig = Required<
   sharedInboxMailbox?: string;
   adminApprovers: string[];
   adminPrincipals: string[];
+  projectionFullRefreshesPerTick: number;
 };
 
 export type Delegation = {
@@ -54,6 +61,11 @@ function resolve(raw: PluginConfig | undefined): ResolvedPluginConfig {
       : {}),
     adminApprovers: list(raw?.adminApprovers).map((id) => id.trim()),
     adminPrincipals: list(raw?.adminPrincipals).map((id) => id.trim()),
+    projectionFullRefreshesPerTick:
+      Number.isSafeInteger(raw?.projectionFullRefreshesPerTick) &&
+      Number(raw?.projectionFullRefreshesPerTick) >= 0
+        ? Number(raw?.projectionFullRefreshesPerTick)
+        : RECONCILE_FULL_REFRESH_BUDGET,
   };
 }
 

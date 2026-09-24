@@ -27,7 +27,7 @@ export type SlackProjectionContext = {
 
 export function registerSlackChannelProjection(
   api: OpenClawPluginApi,
-  connection: () => { baseUrl: string; token?: string },
+  connection: () => { baseUrl: string; token?: string; fullRefreshesPerTick?: number },
 ) {
   const reconciler = registerSlackProjectionReconciler(api, connection);
   api.registerGatewayMethod(

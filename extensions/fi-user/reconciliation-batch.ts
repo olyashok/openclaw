@@ -11,6 +11,8 @@ export const RECONCILE_BATCH_SIZE = 1;
 // responsive by admitting one historical snapshot at a time; live delivery is
 // still immediate and is deliberately not subject to this maintenance budget.
 export const RECONCILE_HISTORY_BATCH_SIZE = 1;
+/** Default full-snapshot refreshes of drifted bound rooms per reconciler tick. */
+export const RECONCILE_FULL_REFRESH_BUDGET = 1;
 
 export function takeSweepBatch(
   keys: readonly string[],

@@ -117,6 +117,20 @@ export function registerMatrixSessionProjection(api: OpenClawPluginApi): void {
         const { listReadOnlyMatrixSessionProjections } = await loadSessionProjectionModule();
         return listReadOnlyMatrixSessionProjections();
       },
+      // Structural dry run (no source snapshot): the periodic repair lane uses
+      // it to decide whether a bound room needs a full-snapshot refresh.
+      plan: async (roomId: string) => {
+        const { planMatrixProjectionRoom } =
+          await import("./src/matrix/session-projection-snapshot.js");
+        const result = await planMatrixProjectionRoom({
+          cfg: (api.runtime.config?.current?.() ?? api.config) as CoreConfig,
+          roomId,
+        });
+        return {
+          converged: result.converged,
+          invariantsOk: result.invariants.every((verdict) => verdict.ok),
+        };
+      },
     },
   });
   const runInBackground = (operation: string, task: Promise<void>) => {

@@ -18,6 +18,31 @@ export type ProjectionInventoryBinding = {
   externalSource?: Source;
   sourceAccountId?: string;
 };
+export type ProjectionInventory = {
+  list: () => Promise<ProjectionInventoryBinding[]>;
+  /** Structural, read-only dry run of one bound room's reconcile pass. */
+  plan?: (roomId: string) => Promise<{ converged: boolean; invariantsOk: boolean }>;
+};
+
+/**
+ * Whether a bound room needs a full-snapshot refresh instead of a readers-only
+ * pass. Only a plan that would write something qualifies: an invariant that
+ * fails while every action is `unchanged` (an unmarked reply the reconciler
+ * never touches) cannot be repaired by a refresh. Any read failure keeps the
+ * cheap membership pass.
+ */
+export async function projectionNeedsRefresh(
+  inventory: ProjectionInventory | undefined,
+  roomId: string,
+): Promise<boolean> {
+  try {
+    const plan = await inventory?.plan?.(roomId);
+    return plan ? !plan.converged : false;
+  } catch {
+    return false;
+  }
+}
+
 type Scope = NonNullable<ChannelProjectionParams["channelScope"]> & {
   readHistoryPage: (cursor?: string) => Promise<{ roots: string[]; nextCursor?: string }>;
 };
@@ -31,12 +56,14 @@ type ReconcileBudget = {
   maxExistingRooms?: number;
   /** Historical root discovery is intentionally a separate maintenance lane. */
   allowDiscovery?: boolean;
+  /** Drifted existing rooms that may receive a full-snapshot refresh this tick. */
+  maxFullRefreshes?: number;
 };
 const PARENT =
   /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:(?:channel|group):([cg][a-z0-9]+)$/i;
 const identity = (source: Source) =>
   `${source.workspaceId}:${source.channelId}:${source.rootMessageId}`;
-const safeError = (error: unknown) =>
+export const safeError = (error: unknown) =>
   (error instanceof Error ? error.message : "Source unavailable")
     .replace(/xox[baprs]-\S+/g, "[redacted]")
     .replace(/\s+/g, " ")
@@ -56,9 +83,10 @@ export async function verifyDetachedProjectionOrigin(
     readConsistency: "latest",
   });
   const origin = sessionDeliveryOrigin(entry);
-  const inventory = params.api.runtime.channel.runtimeContexts.get<{
-    list: () => Promise<ProjectionInventoryBinding[]>;
-  }>({ channelId: "matrix", capability: "session-read-projections" });
+  const inventory = params.api.runtime.channel.runtimeContexts.get<ProjectionInventory>({
+    channelId: "matrix",
+    capability: "session-read-projections",
+  });
   const persisted = (await inventory?.list())?.find(
     (binding) =>
       binding.sessionKey === params.sessionKey &&
@@ -230,6 +258,11 @@ export function createDetachedProjectionReconciler(
     );
     const existingRooms = scheduled.batch;
     existingCursor = scheduled.cursor;
+    const inventory = api.runtime.channel.runtimeContexts.get<ProjectionInventory>({
+      channelId: "matrix",
+      capability: "session-read-projections",
+    });
+    let refreshes = budget.maxFullRefreshes ?? 0;
     for (const binding of existing) {
       const source = binding.externalSource;
       if (!source) {
@@ -255,7 +288,10 @@ export function createDetachedProjectionReconciler(
         if (!entry || !accountId || !allowed) {
           throw new Error("Detached parent unavailable");
         }
-        await publish({
+        // A detached room already has its historical snapshot, so readers are
+        // reconciled without replaying it; a room whose plan would still write
+        // (duplicates, torn parts, notices) gets one full-snapshot refresh.
+        const existingRoom = {
           api,
           ...connection,
           sessionKey: binding.sessionKey,
@@ -264,11 +300,28 @@ export function createDetachedProjectionReconciler(
           reconcile: true,
           projectionRoomId: binding.roomId,
           channelScope: await scopeFor(accountId, source.channelId),
-          // A detached room already has its historical snapshot.  Reconcile
-          // reader access without replaying that history on every sweep.
-          membershipOnly: true,
           signal,
-        });
+        };
+        const refresh = refreshes > 0 && (await projectionNeedsRefresh(inventory, binding.roomId));
+        if (refresh) {
+          refreshes--;
+        }
+        // A failed refresh must not revoke readers; the readers-only pass
+        // still runs and the room is planned again on its next turn.
+        const refreshed =
+          refresh &&
+          (await publish({ ...existingRoom, membershipOnly: false }).then(
+            () => true,
+            (error: unknown) => {
+              api.logger.warn(
+                `fi-user: detached projection refresh failed room=${binding.roomId} error=${safeError(error)}`,
+              );
+              return false;
+            },
+          ));
+        if (!refreshed) {
+          await publish({ ...existingRoom, membershipOnly: true });
+        }
         existingOutcomes.set(binding.roomId, "ok");
       } catch (error) {
         const revoked = await publish({

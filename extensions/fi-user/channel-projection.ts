@@ -7,11 +7,14 @@ import {
 import {
   createDetachedProjectionReconciler,
   verifyDetachedProjectionOrigin,
-  type ProjectionInventoryBinding,
+  projectionNeedsRefresh,
+  safeError,
+  type ProjectionInventory,
 } from "./detached-projection.js";
 import { reconcileSlackDirectProjections } from "./direct-projection.js";
 import {
   RECONCILE_BATCH_SIZE,
+  RECONCILE_FULL_REFRESH_BUDGET,
   RECONCILE_HISTORY_BATCH_SIZE,
   takeSweepBatch,
 } from "./reconciliation-batch.js";
@@ -260,7 +263,7 @@ async function publishSlackThreadSnapshot(
 /** Reconstruct work from durable session/binding stores; no timer state is authoritative. */
 export function registerSlackProjectionReconciler(
   api: OpenClawPluginApi,
-  connection: () => { baseUrl: string; token?: string },
+  connection: () => { baseUrl: string; token?: string; fullRefreshesPerTick?: number },
 ) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
@@ -312,13 +315,18 @@ export function registerSlackProjectionReconciler(
     running = true;
     try {
       report = { ...report, complete: false };
-      const config = connection();
+      const { fullRefreshesPerTick, ...config } = connection();
       if (!config.token) {
         return;
       }
-      const inventory = api.runtime.channel.runtimeContexts.get<{
-        list: () => Promise<ProjectionInventoryBinding[]>;
-      }>({ channelId: "matrix", capability: "session-read-projections" });
+      // Bound rooms normally get a readers-only pass. One whose structural plan
+      // would still write is refreshed from a full Slack snapshot, as a live
+      // bot reply does, at most this many times per tick.
+      let refreshes = fullRefreshesPerTick ?? RECONCILE_FULL_REFRESH_BUDGET;
+      const inventory = api.runtime.channel.runtimeContexts.get<ProjectionInventory>({
+        channelId: "matrix",
+        capability: "session-read-projections",
+      });
       if (!inventory) {
         throw new Error("Matrix projection inventory unavailable");
       }
@@ -509,30 +517,55 @@ export function registerSlackProjectionReconciler(
               channelScope = await cached.scope;
             }
           }
+          const refresh =
+            roomId && entry && accountId && refreshes > 0
+              ? await projectionNeedsRefresh(inventory, roomId)
+              : false;
+          if (refresh) {
+            refreshes--;
+          }
           enteredPublisher = true;
-          await projectSlackChannelThread({
-            api,
-            ...config,
-            token: config.token,
-            sessionKey,
-            accountId: accountId ?? "unavailable",
-            unavailable: !entry || !accountId,
-            reconcile: Boolean(roomId),
-            discover: !roomId,
-            projectionRoomId: roomId,
-            channelScope,
-            // Existing projections receive source content on live delivery.
-            // The periodic repair path only needs to reconcile current
-            // readers, so it must not re-read and re-upload an entire Slack
-            // thread for every bound room.
-            membershipOnly: Boolean(roomId),
-            onResult: (status) => {
-              if (identity) {
-                outcomes.set(identity, status);
-              }
-            },
-            signal: AbortSignal.any([generation.signal, AbortSignal.timeout(90_000)]),
-          });
+          const token = config.token;
+          const project = (membershipOnly: boolean) =>
+            projectSlackChannelThread({
+              api,
+              ...config,
+              token,
+              sessionKey,
+              accountId: accountId ?? "unavailable",
+              unavailable: !entry || !accountId,
+              reconcile: Boolean(roomId),
+              discover: !roomId,
+              projectionRoomId: roomId,
+              channelScope,
+              // Existing projections receive source content on live delivery.
+              // The periodic repair path only needs to reconcile current
+              // readers, so it must not re-read and re-upload an entire Slack
+              // thread for every bound room; only a drifted room is refreshed.
+              membershipOnly,
+              onResult: (status) => {
+                if (identity) {
+                  outcomes.set(identity, status);
+                }
+              },
+              signal: AbortSignal.any([generation.signal, AbortSignal.timeout(90_000)]),
+            });
+          // A failed refresh falls back to the readers-only pass; the room is
+          // planned again on its next turn.
+          const refreshed =
+            refresh &&
+            (await project(false).then(
+              () => true,
+              (error: unknown) => {
+                api.logger.warn(
+                  `fi-user: Slack projection refresh failed session=${sessionKey}: ${safeError(error)}`,
+                );
+                return false;
+              },
+            ));
+          if (!refreshed) {
+            await project(Boolean(roomId));
+          }
         } catch (error) {
           if (identity) {
             outcomes.set(identity, "error");
@@ -589,7 +622,11 @@ export function registerSlackProjectionReconciler(
           generation.signal,
           knownRoots,
           detachedWorkKind === "acl"
-            ? { maxExistingRooms: RECONCILE_BATCH_SIZE, allowDiscovery: false }
+            ? {
+                maxExistingRooms: RECONCILE_BATCH_SIZE,
+                allowDiscovery: false,
+                maxFullRefreshes: refreshes,
+              }
             : { maxExistingRooms: 0, allowDiscovery: true },
         );
         detachedWorkKind = detachedWorkKind === "acl" ? "history" : "acl";
