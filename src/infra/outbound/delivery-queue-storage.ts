@@ -579,13 +579,7 @@ export const loadCompletedDeliveryReceipt = async (
   stateDir?: string,
   context?: DeliveryQueueStateContext,
 ): Promise<Readonly<{ platformMessageId: string }> | null> => {
-  const entry = loadDeliveryQueueEntry(
-    OUTBOUND_DELIVERY_QUEUE_NAME,
-    id,
-    stateDir,
-    "all",
-    context,
-  ) as QueuedDelivery | null;
+  const entry = loadDeliveryQueueEntry(OUTBOUND_DELIVERY_QUEUE_NAME, id, stateDir, "all", context);
   return entry?.completionReceipt ?? null;
 };
 

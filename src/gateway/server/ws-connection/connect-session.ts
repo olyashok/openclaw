@@ -17,16 +17,8 @@ import { resolveLocalNodeId } from "../../../node-host/local-id.js";
 import { intersectOperatorScopes } from "../../../shared/operator-scope-compat.js";
 import { recordRemoteNodeInfo, refreshRemoteNodeBins } from "../../../skills/runtime/remote.js";
 import { classifyTailscaleLogin } from "../../../state/user-profiles-tailscale-login.js";
-import {
-  adoptTailscaleProfileAvatar,
-  ensureProfileForEmail,
-  ensureProfileForTailscaleIdentity,
-  getUserProfileDisplay,
-} from "../../../state/user-profiles.js";
-import {
-  isBrowserCopilotClient,
-  isEphemeralGatewayClient,
-} from "../../../utils/message-channel.js";
+import { adoptTailscaleProfileAvatar } from "../../../state/user-profiles.js";
+import { isEphemeralGatewayClient } from "../../../utils/message-channel.js";
 import { resolveRuntimeServiceBuildId, resolveRuntimeServiceVersion } from "../../../version.js";
 import { verifyAgentRuntimeIdentityToken } from "../../agent-runtime-identity-token.js";
 import { resolveGatewayAuthPolicyGeneration } from "../../auth-policy.js";

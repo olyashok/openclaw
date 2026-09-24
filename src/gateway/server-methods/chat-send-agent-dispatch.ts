@@ -136,7 +136,10 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
       sessionKey,
       agentId,
       ctx,
-      replies: replyDispatch.deliveredReplies,
+      replies: replyDispatch.deliveredReplies.map((reply) => ({
+        payload: readChatSendReplyPayload(reply.input),
+        kind: reply.kind,
+      })),
       fallbackError,
       ...(activeRunAbort.entry?.ownerConnId
         ? { ownerConnId: activeRunAbort.entry.ownerConnId }

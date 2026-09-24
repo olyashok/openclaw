@@ -48,7 +48,6 @@ import {
   WEBCHAT_COMPLETION_DELIVERY_SECRET_ENV,
   type WebchatCompletionDeliveryState,
 } from "../webchat-completion-delivery.js";
-import { formatForLog } from "../ws-log.js";
 import {
   buildAbortedChatSendPayload,
   readPreRegisteredRun,

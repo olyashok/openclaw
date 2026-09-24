@@ -20,6 +20,7 @@ import { controlRealtimeVoiceAgentRun } from "../../../talk/agent-run-control.js
 import { ensureClientVoiceAgentSessionEntry } from "../../../talk/client-voice-session.js";
 import { projectInternalRealtimeVoicePublicConfig } from "../../../talk/provider-internal.js";
 import { resolveConfiguredRealtimeVoiceProvider } from "../../../talk/provider-resolver.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../../matrix-browser-session-authorization.js";
 import { resolveSandboxedSessionCreation } from "../../operator-role-policy.js";
 import { ADMIN_SCOPE } from "../../operator-scopes.js";
 import { resolveOperatorSessionCreation } from "../../server-methods/session-creation-provenance.js";
@@ -28,10 +29,11 @@ import { assertValidParams } from "../../server-methods/validation.js";
 import { getSessionRowProjection } from "../../session-row-projection-access.js";
 import { SessionMutationAuthorizationChangedError } from "../../session-sharing.js";
 import { resolveSessionKeyFromResolveParams } from "../../sessions-resolve.js";
+import { consumeTalkBindingCapability } from "../../talk-binding-capability.js";
+import { isWebchatSessionAllowed } from "../../webchat-agent-authorization.js";
 import { formatForLog } from "../../ws-log.js";
 import { resolveTalkAgentConsultAuthority } from "../client-gateway-control.js";
 import { createTalkHandoff, getTalkHandoff, revokeTalkHandoff } from "../handoff.js";
-import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import {
   cancelTalkRealtimeRelayTurn,
   createTalkRealtimeRelaySession,
@@ -65,14 +67,12 @@ import {
   requireUnifiedTalkSessionConn,
 } from "../session-registry.js";
 import { prepareTalkSessionTarget, requirePreparedTalkSessionTarget } from "../session-target.js";
-import { consumeTalkBindingCapability } from "../talk-binding-capability.js";
 import {
   createTalkTranscriptionRelaySession,
   sendTalkTranscriptionRelayAudio,
   stopTalkTranscriptionRelaySession,
 } from "../transcription-relay.js";
 import { prepareTalkVoiceReplacement } from "../voice-selection.js";
-import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { acknowledgeTalkSessionMark } from "./session-mark.js";
 
 function isActiveManagedRoomClient(
@@ -318,12 +318,11 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             sessionKey: target.canonicalKey,
             authorizedByBinding: Boolean(bound),
           }) ||
-          (requestedSessionKey &&
-            !isWebchatSessionAllowed({
-              cfg: runtimeConfig,
-              client,
-              sessionKey: requestedSessionKey,
-            }))
+          !isWebchatSessionAllowed({
+            cfg: runtimeConfig,
+            client,
+            sessionKey: target.canonicalKey,
+          })
         ) {
           return respondInvalidRequest(
             respond,

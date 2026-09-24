@@ -30,18 +30,19 @@ import {
   type InternalRealtimeVoiceBrowserSessionCreateRequest,
 } from "../../../talk/provider-internal.js";
 import { resolveConfiguredRealtimeVoiceProvider } from "../../../talk/provider-resolver.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../../matrix-browser-session-authorization.js";
 import { resolveSandboxedSessionCreation } from "../../operator-role-policy.js";
 import { resolveOperatorSessionCreation } from "../../server-methods/session-creation-provenance.js";
 import type { GatewayRequestHandler, RespondFn } from "../../server-methods/types.js";
 import { assertValidParams } from "../../server-methods/validation.js";
 import { SessionMutationAuthorizationChangedError } from "../../session-sharing.js";
+import { isWebchatSessionAllowed } from "../../webchat-agent-authorization.js";
 import { formatForLog } from "../../ws-log.js";
 import { createTalkClientAgentConsultRunner } from "../client-agent-consult.js";
 import {
   createTalkClientGatewayControlOwner,
   resolveTalkAgentConsultAuthority,
 } from "../client-gateway-control.js";
-import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import {
   buildRealtimeInstructions,
   buildRealtimeVoiceLaunchOptions,
@@ -56,7 +57,6 @@ import {
   prepareTalkVoiceReplacement,
   registerTalkVoiceSession,
 } from "../voice-selection.js";
-import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import {
   forgetLegacyVoiceBinding,
   rememberLegacyVoiceBinding,

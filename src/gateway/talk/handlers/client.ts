@@ -31,10 +31,12 @@ import {
   resolveClientVoiceSessionOrigin,
   resolveOpenClientVoiceSessionId,
 } from "../../../talk/client-voice-session.js";
+import { isUnauthorizedRawMatrixBrowserSession } from "../../matrix-browser-session-authorization.js";
 import { resolveSandboxedSessionCreation } from "../../operator-role-policy.js";
 import type { GatewayRequestHandlers } from "../../server-methods/types.js";
 import { assertValidParams } from "../../server-methods/validation.js";
 import { SessionMutationAuthorizationChangedError } from "../../session-mutation-authorization-error.js";
+import { isWebchatSessionAllowed } from "../../webchat-agent-authorization.js";
 import { formatForLog } from "../../ws-log.js";
 import { startTalkRealtimeAgentConsult } from "../agent-consult.js";
 import { prepareTalkClientControlAuthority } from "../client-agent-consult.js";
@@ -42,7 +44,6 @@ import {
   closeTalkClientGatewayControlSession,
   resolveTalkAgentConsultAuthority,
 } from "../client-gateway-control.js";
-import { isUnauthorizedRawMatrixBrowserSession } from "../matrix-browser-session-authorization.js";
 import {
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
@@ -51,7 +52,6 @@ import { relaySessions } from "../relay/state.js";
 import { resolveOwnedActiveTalkRunTarget } from "../run-ownership.js";
 import { prepareTalkSessionTarget, requirePreparedTalkSessionTarget } from "../session-target.js";
 import { unregisterTalkVoiceSession } from "../voice-selection.js";
-import { isWebchatSessionAllowed } from "../webchat-agent-authorization.js";
 import { createTalkClient } from "./client-create.js";
 import {
   forgetLegacyVoiceBinding,
@@ -110,7 +110,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       return;
     }
     const sessionKey =
-      (!providedSessionKey && relay?.connId === connId
+      (!providedSessionKey && relay && relay.connId === connId
         ? relay.sessionTarget.canonicalKey
         : undefined) ?? providedSessionKey;
     if (!sessionKey) {
@@ -137,7 +137,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           connId &&
           relay?.matrixRoute &&
           relay.connId === connId &&
-          relay.sessionKey === sessionKey,
+          relay.sessionTarget.canonicalKey === sessionKey,
         ),
       })
     ) {
@@ -177,11 +177,6 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           sessionKey,
           origin: "client",
         });
-      // Pin the resolved id to this connection so a legacy client's later consults
-      // reuse one record instead of forking a new never-closed session each time.
-      if (connId && !relaySessionId) {
-        rememberLegacyVoiceBinding({ connId, sessionKey, voiceSessionId });
-      }
       if (relaySessionId && connId) {
         await ensureClientVoiceAgentSessionEntry({
           agentId,
@@ -215,7 +210,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       }
       // Only validated calls may replace the legacy client's connection binding.
       if (connId && !relaySessionId) {
-        rememberLegacyVoiceBinding({ connId, sessionKey: params.sessionKey, voiceSessionId });
+        rememberLegacyVoiceBinding({ connId, sessionKey, voiceSessionId });
       }
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)));

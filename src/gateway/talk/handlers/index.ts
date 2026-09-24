@@ -76,6 +76,7 @@ import { respondUnavailable } from "../../server-methods/response.js";
 import { inferSpeechMimeType } from "../../server-methods/speech-mime.js";
 import type { GatewayRequestHandlers } from "../../server-methods/types.js";
 import { assertValidParams } from "../../server-methods/validation.js";
+import { mintTalkBindingCapability } from "../../talk-binding-capability.js";
 import { resolveMatrixTalkBinding } from "../../talk-matrix-binding.js";
 import { formatForLog } from "../../ws-log.js";
 import {
@@ -85,7 +86,6 @@ import {
   listTalkTranscriptionProviders,
   resolveConfiguredRealtimeTranscriptionProvider,
 } from "../session-config.js";
-import { mintTalkBindingCapability } from "../talk-binding-capability.js";
 import { talkClientHandlers } from "./client.js";
 import { talkSessionHandlers } from "./session.js";
 import { talkVoiceHandlers } from "./voice.js";

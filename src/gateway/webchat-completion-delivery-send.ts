@@ -15,8 +15,8 @@ import {
   enqueueClaimedSessionDelivery,
   loadPendingSessionDelivery,
   resolveSessionDeliveryId,
-  type QueuedSessionDelivery,
 } from "../infra/session-delivery-queue-storage.js";
+import type { QueuedSessionDelivery } from "../infra/session-delivery-queue.records.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import { isSuppressedControlReplyText } from "./control-reply-text.js";
 import {
