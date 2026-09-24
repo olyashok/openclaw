@@ -277,7 +277,9 @@ export function createEsignTool(
           candidate.templateId === input.templateId,
       );
       if (!template) {
-        throw new Error("That document has no reviewed e-sign template you can send");
+        throw new Error(
+          "That document has no reviewed e-sign template yet; use request_admin_action with esign_prepare_template",
+        );
       }
       if (template.sent) {
         throw new Error("That reviewed template was already sent; use status or resend");
