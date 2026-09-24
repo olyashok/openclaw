@@ -158,6 +158,8 @@ export type SlackAccountConfig = Omit<
   ChannelReactionConfig<SlackReactionNotificationMode, never, string, true> & {
     /** Post a room-specific introduction when joining a group. Default: true. */
     joinIntro?: boolean;
+    /** Reply once, in thread, when a channel message appears to contain bank details. Default: false. */
+    paymentDetailWarning?: boolean;
     /** Emoji name (without colons) -> agent turn started in the reacted message's thread. */
     reactionTriggers?: Record<string, SlackReactionTriggerConfig>;
     /** @deprecated Doctor-only legacy input. */
