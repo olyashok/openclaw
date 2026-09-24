@@ -76,6 +76,15 @@ describe("tool mutation helpers", () => {
     expect(isMutatingToolCall("exec", { command })).toBe(true);
   });
 
+  it("keeps fi-psql SELECTs confirmation-gated until the wrapper has a read-only DB role", () => {
+    const command = 'fi-psql -v ON_ERROR_STOP=1 -Atc "select 1"';
+
+    // fi-psql currently forwards to the general DATABASE_URL, which also permits
+    // writes. A SELECT-shaped command is not proof that the session is read-only.
+    expect(isMutatingToolCall("exec", { command })).toBe(true);
+    expect(isReplaySafeToolCall("exec", { command })).toBe(false);
+  });
+
   it.each([
     ["exec", "sed -i 's/a/b/' file.txt"],
     ["exec", "sed --in-place 's/a/b/' file.txt"],
