@@ -218,6 +218,7 @@ describe("deliverWebchatCompletionFallback", () => {
         text: "The answer",
       }),
       100,
+      queueContext,
     );
     expect(sessionDelivery.schedule).toHaveBeenCalledWith("queued-completion", queueContext);
     expect(deliverInboundReplyWithMessageSendContextCore).not.toHaveBeenCalled();

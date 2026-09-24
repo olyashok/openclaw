@@ -5,15 +5,15 @@ import {
   beginSessionWorkAdmission,
   isSessionWorkAdmissionActive,
 } from "../sessions/session-lifecycle-admission.js";
-import { closeRelaySession } from "./talk-realtime-relay-operations.js";
-import { relaySessions, type RelaySession } from "./talk-realtime-relay-state.js";
-import { RelayToolCallLedger } from "./talk-realtime-relay-tool-call-ledger.js";
 import { prepareTalkRelayConsultAdmission } from "./talk-relay-consult-admission.js";
+import { closeRelaySession } from "./talk/relay/operations.js";
+import { relaySessions, type RelaySession } from "./talk/relay/state.js";
+import { RelayToolCallLedger } from "./talk/relay/tool-call-ledger.js";
 
 // Persistence is outside this admission/ownership test; relay close and lease
 // ownership remain real, including the default Matrix detach decision.
-vi.mock("./talk-realtime-relay-voice.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./talk-realtime-relay-voice.js")>()),
+vi.mock("./talk/relay/voice.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./talk/relay/voice.js")>()),
   closeRelayVoiceSession: async () => {},
 }));
 
@@ -45,7 +45,7 @@ function fixture() {
   const relay = {
     id: relayId,
     connId,
-    sessionKey,
+    sessionTarget: { agentId: "assistant", sessionKey, canonicalKey: sessionKey, storePath: "" },
     speakerMxid: "@speaker:example.test",
     matrixRoute: { ...route },
     expiresAtMs: Date.now() + 60_000,
@@ -55,6 +55,7 @@ function fixture() {
       chatAbortControllers: new Map([["accepted-run", { controller, sessionKey }]]),
     },
     harness: { close: vi.fn(), talk: { emit: vi.fn((event) => event) } },
+    confirmationReadiness: { close: vi.fn() },
     outputOwnership: {},
     activeAgentRuns: new Map([["accepted-run", sessionKey]]),
     activeAgentToolCalls: new Map([[callId, "accepted-run"]]),

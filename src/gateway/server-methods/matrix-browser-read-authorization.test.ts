@@ -2,6 +2,8 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { bindSessionRowProjection } from "../session-row-projection-access.js";
+import { createSessionRowProjection } from "../session-row-projection.js";
 import { chatHistoryHandlers } from "./chat-history-handler.js";
 import { sessionReadHandlers } from "./sessions-read.js";
 import type { GatewayRequestContext } from "./types.js";
@@ -30,7 +32,15 @@ describe("Matrix browser read authorization", () => {
           },
         },
       );
-      const context = { getRuntimeConfig: () => ({}) } as unknown as GatewayRequestContext;
+      // 2026.9.6 previews read from the gateway session-row projection.
+      const projection = await createSessionRowProjection({ cfg: {}, modelCatalog: [] });
+      do {
+        await projection.ensureMaterialized();
+      } while (projection.needsMaterialization);
+      const context = bindSessionRowProjection(
+        { getRuntimeConfig: () => ({}) },
+        () => projection,
+      ) as unknown as GatewayRequestContext;
       const client = { connect: { client: WEBCHAT } } as never;
 
       const metadataRespond = vi.fn();

@@ -5,7 +5,8 @@ import { createDirectChatContext } from "./server-chat.agent-events.test-helpers
 import { handleGatewayRequest } from "./server-methods.js";
 import type { GatewayRequestHandler } from "./server-methods/types.js";
 import { roleClient, rolePolicyConfig } from "./session-sharing.test-utils.js";
-import { relaySessions, type RelaySession } from "./talk-realtime-relay-state.js";
+import { relaySessions, type RelaySession } from "./talk/relay/state.js";
+import { prepareTalkSessionTarget } from "./talk/session-target.js";
 
 const METHOD = "talk.client.toolCall";
 const SESSION_KEY = "agent:main:matrix:channel:private-room:thread:root";
@@ -31,7 +32,7 @@ describe("bound Talk relay authorization at gateway dispatch", () => {
         relaySessions.set(RELAY_ID, {
           id: RELAY_ID,
           connId: scenario === "foreign" ? "other-connection" : requestClient.connId,
-          sessionKey: SESSION_KEY,
+          sessionTarget: prepareTalkSessionTarget(cfg, SESSION_KEY),
           expiresAtMs: Date.now() + (scenario === "expired" ? -1_000 : 60_000),
         } as RelaySession);
       }

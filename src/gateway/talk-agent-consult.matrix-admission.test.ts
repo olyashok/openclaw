@@ -9,15 +9,15 @@ vi.mock("./server-methods/chat-send-pre-admission.js", async (importOriginal) =>
   ...(await importOriginal<typeof import("./server-methods/chat-send-pre-admission.js")>()),
   runChatSendPreAdmission: mocks.preAdmission,
 }));
-vi.mock("./talk-realtime-relay.js", () => ({
+vi.mock("./talk/relay/index.js", () => ({
   prepareTalkRealtimeRelayAgentRunRegistration: () => mocks.register,
 }));
 
 import { handleChatSend } from "./server-methods/chat-send-handler.js";
 import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
-import { startTalkRealtimeAgentConsult } from "./talk-agent-consult.js";
-import { relaySessions, type RelaySession } from "./talk-realtime-relay-state.js";
-import { RelayToolCallLedger } from "./talk-realtime-relay-tool-call-ledger.js";
+import { startTalkRealtimeAgentConsult } from "./talk/agent-consult.js";
+import { relaySessions, type RelaySession } from "./talk/relay/state.js";
+import { RelayToolCallLedger } from "./talk/relay/tool-call-ledger.js";
 
 const sessionKey = "agent:admin:matrix:channel:!private:example.test:thread:$root";
 const route = {
@@ -42,13 +42,37 @@ function params() {
     },
     isWebchatConnect: () => true,
     requestId: "request",
+    req: { id: "request", type: "req", method: "talk.client.toolCall" },
     sessionKey,
     callId: "provider-call",
     args: { question: "Read the current time" },
     relaySessionId: "owned-relay",
     connId: "browser-owner",
     matrixRoute: route,
-  } as unknown as Parameters<typeof startTalkRealtimeAgentConsult>[0];
+  } as unknown as GatewayRequestHandlerOptions & {
+    callId: string;
+    args: unknown;
+    relaySessionId: string;
+    connId: string;
+    matrixRoute: typeof route;
+  };
+}
+
+// 2026.9.6 splits the consult into the handler request and a prepared session target.
+function consult(input: ReturnType<typeof params>) {
+  return startTalkRealtimeAgentConsult(input, {
+    sessionTarget: {
+      agentId: "admin",
+      sessionKey,
+      canonicalKey: sessionKey,
+      storePath: "/test/sessions.json",
+    },
+    callId: input.callId,
+    args: input.args,
+    relaySessionId: input.relaySessionId,
+    connId: input.connId,
+    matrixRoute: input.matrixRoute,
+  });
 }
 
 describe("Matrix voice consult crosses the real browser chat authorization boundary", () => {
@@ -63,7 +87,7 @@ describe("Matrix voice consult crosses the real browser chat authorization bound
     relaySessions.set("owned-relay", {
       id: "owned-relay",
       connId: "browser-owner",
-      sessionKey,
+      sessionTarget: { agentId: "assistant", sessionKey, canonicalKey: sessionKey, storePath: "" },
       matrixRoute: route,
       expiresAtMs: Date.now() + 60_000,
       toolCalls,
@@ -87,10 +111,17 @@ describe("Matrix voice consult crosses the real browser chat authorization bound
 
   it("admits an owned, live Matrix voice consult without dropping browser identity", async () => {
     const input = params();
-    const result = await startTalkRealtimeAgentConsult(input);
+    const result = await consult(input);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    // The chat path derives its own client view; browser identity and ceilings must survive.
     expect(mocks.preAdmission).toHaveBeenCalledWith(
-      expect.objectContaining({ client: input.client }),
+      expect.objectContaining({
+        client: expect.objectContaining({
+          connId: "browser-owner",
+          pairedClientId: "openclaw-control-ui",
+          allowedAgentIds: ["admin"],
+        }),
+      }),
     );
   });
 
@@ -115,7 +146,7 @@ describe("Matrix voice consult crosses the real browser chat authorization bound
   it("does not widen the paired device agent ceiling", async () => {
     const input = params();
     input.client!.allowedAgentIds = ["other-agent"];
-    expect(await startTalkRealtimeAgentConsult(input)).toMatchObject({ ok: false });
+    expect(await consult(input)).toMatchObject({ ok: false });
     expect(mocks.preAdmission).not.toHaveBeenCalled();
   });
 
@@ -152,7 +183,7 @@ describe("Matrix voice consult crosses the real browser chat authorization bound
         canonicalKey: sessionKey + "-other",
       });
     }
-    expect(await startTalkRealtimeAgentConsult(input)).toMatchObject({ ok: false });
+    expect(await consult(input)).toMatchObject({ ok: false });
     expect(mocks.preAdmission).not.toHaveBeenCalled();
   });
 });

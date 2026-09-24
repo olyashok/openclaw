@@ -143,6 +143,35 @@ export function resolveTalkSessionTargetInput(
     const retained = sessionId ? resolveUnifiedTalkSessionTarget(sessionId, connId) : undefined;
     return retained ? { kind: "relay", ...retained } : undefined;
   }
+  if (method === "talk.client.toolCall") {
+    const relaySessionId = readSessionSharingStringParam(params, "relaySessionId");
+    if (relaySessionId) {
+      // Matrix browsers hold a relay capability, not the private canonical key.
+      // Resolve it before the sharing fence using the same owner as the handler.
+      const relay = resolveOwnedTalkRealtimeRelaySession(relaySessionId, connId);
+      const requestedKey = readSessionSharingStringParam(params, "sessionKey");
+      const target = relay?.sessionTarget;
+      if (requestedKey) {
+        // An explicit key keeps the upstream request target, but never one that the
+        // caller's own live relay contradicts.
+        if (target && requestedKey !== target.canonicalKey && requestedKey !== target.sessionKey) {
+          return undefined;
+        }
+        return { kind: "request", sessionKey: requestedKey };
+      }
+      if (!relay || !target) {
+        // No owned live relay: leave the required target unresolved so dispatch rejects it.
+        return undefined;
+      }
+      return {
+        kind: "relay",
+        target,
+        isCurrent: () =>
+          resolveOwnedTalkRealtimeRelaySession(relaySessionId, connId) === relay &&
+          relay.sessionTarget === target,
+      };
+    }
+  }
   if (
     method !== "talk.client.create" &&
     method !== "talk.client.toolCall" &&
@@ -184,7 +213,7 @@ export function resolveSessionMutationTargets(params: {
       // Resolve it before the sharing fence using the same owner as the handler.
       const relay = resolveOwnedTalkRealtimeRelaySession(relaySessionId, params.client?.connId);
       const requestedKey = readSessionSharingStringParam(params.requestParams, "sessionKey");
-      const relaySessionKey = relay?.sessionTarget.canonicalKey;
+      const relaySessionKey = relay?.sessionTarget?.canonicalKey;
       return relaySessionKey && (!requestedKey || requestedKey === relaySessionKey)
         ? [{ sessionKey: relaySessionKey }]
         : undefined;

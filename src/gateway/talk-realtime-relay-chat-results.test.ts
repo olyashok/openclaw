@@ -17,16 +17,16 @@ import {
   closeRelaySession,
   registerTalkRealtimeRelayAgentRun,
   submitTalkRealtimeRelayToolResult,
-} from "./talk-realtime-relay-operations.js";
-import { relaySessions, type RelaySession } from "./talk-realtime-relay-state.js";
-import { RelayToolCallLedger } from "./talk-realtime-relay-tool-call-ledger.js";
+} from "./talk/relay/operations.js";
+import { relaySessions, type RelaySession } from "./talk/relay/state.js";
+import { RelayToolCallLedger } from "./talk/relay/tool-call-ledger.js";
 
 vi.mock("../talk/client-voice-session.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../talk/client-voice-session.js")>()),
   registerClientVoiceConsultRun: vi.fn(),
 }));
-vi.mock("./talk-realtime-relay-voice.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./talk-realtime-relay-voice.js")>()),
+vi.mock("./talk/relay/voice.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./talk/relay/voice.js")>()),
   closeRelayVoiceSession: async () => {},
 }));
 vi.mock("../config/io.js", async (importOriginal) => ({
@@ -56,8 +56,7 @@ function fixture() {
   const relay = {
     id: relayId,
     connId: "owner",
-    sessionKey,
-    agentId: "assistant",
+    sessionTarget: { agentId: "assistant", sessionKey, canonicalKey: sessionKey, storePath: "" },
     context,
     speakerMxid: "@speaker:example.test",
     matrixRoute: {
@@ -68,6 +67,7 @@ function fixture() {
     },
     expiresAtMs: Date.now() + 60_000,
     voiceSessionCreated: true,
+    confirmationReadiness: { close: vi.fn() },
     harness: {
       close: vi.fn(),
       forcedConsults: { handles: () => [] },

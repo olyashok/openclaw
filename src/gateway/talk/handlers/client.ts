@@ -95,7 +95,9 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     if (
       relaySessionId &&
       (!relay ||
-        (providedSessionKey && relay.sessionTarget.canonicalKey !== providedSessionKey) ||
+        (providedSessionKey &&
+          relay.sessionTarget.canonicalKey !== providedSessionKey &&
+          relay.sessionTarget.sessionKey !== providedSessionKey) ||
         !connId ||
         relay.connId !== connId)
     ) {

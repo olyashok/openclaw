@@ -369,7 +369,7 @@ describe("device.pair.setupCode", () => {
         bootstrapProfile: {
           roles: ["operator"],
           scopes: ["operator.read", "operator.talk", "operator.write"],
-          purpose: "control-ui",
+          purpose: "webchat",
           allowedAgentIds: ["fi-admin", "fi-user"],
         },
       }),

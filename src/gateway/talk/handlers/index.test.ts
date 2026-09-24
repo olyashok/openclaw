@@ -36,7 +36,9 @@ import { bindSessionRowProjection } from "../../session-row-projection-access.js
 import type { SessionRowProjection } from "../../session-row-projection.js";
 import { resolveSessionMutationAuthorization } from "../../session-sharing.js";
 import { prepareTalkAgentConsultTranscript } from "../agent-consult-transcript.js";
+import { relaySessions, type RelaySession } from "../relay/state.js";
 import { buildTalkRealtimeConfig } from "../session-config.js";
+import { prepareTalkSessionTarget } from "../session-target.js";
 import { forgetLegacyVoiceBinding } from "./client-legacy-voice-bindings.js";
 import { talkConfigAccentCases } from "./config-accent.test-support.js";
 import {
@@ -50,7 +52,6 @@ import {
   expectRespondOk,
   mockCallArg,
 } from "./responses.test-support.js";
-import { relaySessions, type RelaySession } from "../relay/state.js";
 
 const mocks = vi.hoisted(() => ({
   getRuntimeConfig: vi.fn<() => OpenClawConfig>(),
@@ -2928,7 +2929,7 @@ describe("talk.client.toolCall handler", () => {
     relaySessions.set("relay-1", {
       id: "relay-1",
       connId: "conn-1",
-      sessionKey: "main",
+      sessionTarget: prepareTalkSessionTarget({} as OpenClawConfig, "main"),
       expiresAtMs: Date.now() + 60_000,
     } as RelaySession);
     vi.clearAllMocks();
@@ -3028,10 +3029,11 @@ describe("talk.client.toolCall handler", () => {
       pendingWrite.resolve();
       await request;
       expect(mocks.chatSend).not.toHaveBeenCalled();
-      expectRespondError(respond, {
-        code: ErrorCodes.INVALID_REQUEST,
-        message: "Error: Talk relay is unavailable",
-      });
+      // The relay target is part of the upstream session-mutation fence.
+      expect(mockCallArg(respond)).toBe(false);
+      expect(String((mockCallArg(respond, 0, 2) as { message?: string }).message)).toContain(
+        "retry the request",
+      );
     },
   );
 
@@ -3050,7 +3052,7 @@ describe("talk.client.toolCall handler", () => {
     const input = mockCallArg(mocks.chatSend) as { sessionMutationCommitGuard: () => void };
     expect(() => input.sessionMutationCommitGuard()).not.toThrow();
     relaySessions.delete("relay-1");
-    expect(() => input.sessionMutationCommitGuard()).toThrow("Talk relay is unavailable");
+    expect(() => input.sessionMutationCommitGuard()).toThrow("retry the request");
   });
 
   it("implicitly creates a voice session for consults without a binding", async () => {

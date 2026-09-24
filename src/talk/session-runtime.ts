@@ -322,9 +322,13 @@ export function createRealtimeVoiceBridgeSession(
         }
       }
     },
-    onTranscript: (role, text, isFinal) => {
+    onTranscript: (role, text, isFinal, update) => {
       if (isAdmitting() || (phase === "closing" && isFinal)) {
-        params.onTranscript?.(role, text, isFinal);
+        if (update) {
+          params.onTranscript?.(role, text, isFinal, update);
+        } else {
+          params.onTranscript?.(role, text, isFinal);
+        }
       }
     },
     ...(handleDelegationInput
