@@ -32,6 +32,7 @@ import {
   createXaiVideoGenerationProviderMetadata,
   normalizeXaiRealtimeTranscriptionProviderConfig,
 } from "./capability-provider-metadata.js";
+import { attachLiteLlmRealtimeVoiceCapabilities } from "./realtime-voice-capabilities.js";
 import { serializeXaiRealtimeToolResult } from "./realtime-voice-config.js";
 import { createXaiSpeechProviderMetadata } from "./speech-provider-metadata.js";
 
@@ -675,7 +676,7 @@ export function createLazyXaiRealtimeVoiceProvider(): RealtimeVoiceProviderPlugi
 }
 
 export function createLazyLiteLlmRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
-  return {
+  return attachLiteLlmRealtimeVoiceCapabilities({
     ...createLiteLlmRealtimeVoiceProviderMetadata(),
     createBridge: (req) =>
       createLazyRealtimeVoiceBridge(req, {
@@ -683,5 +684,5 @@ export function createLazyLiteLlmRealtimeVoiceProvider(): RealtimeVoiceProviderP
         label: "LiteLLM",
         validate: assertLiteLlmRealtimeVoiceRequestSupported,
       }),
-  };
+  });
 }

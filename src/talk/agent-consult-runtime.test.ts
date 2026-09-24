@@ -212,6 +212,8 @@ describe("realtime voice agent consult runtime", () => {
     expect(resolveRealtimeVoiceAgentConsultTools("none")).toStrictEqual([]);
     expect(resolveRealtimeVoiceAgentConsultToolsAllow("safe-read-only")).toEqual([
       "read",
+      "sessions_history",
+      "sessions_search",
       "tavily_search",
       "tavily_extract",
       "web_search",
@@ -385,7 +387,7 @@ describe("realtime voice agent consult runtime", () => {
         "Act as the configured OpenClaw agent on behalf of this user. Use available tools when the request asks you to do work.",
         "For straightforward read-only requests, use authorized read tools directly in this run. Do not ask for a spoken confirmation solely to read information or send a plain reply in the active chat; if the authorized read path is unavailable, state the specific access limitation.",
         "For web research, use native web_search/web_fetch or tavily_search when authorized and available. Do not invoke shell or CLI wrappers for read-only web search; report when no search tool is available instead of asking for an impossible voice confirmation.",
-        "For resume or continue requests, inspect recent conversation context and accessible active-run status first. If there is no prior work or live run to resume, say so and ask one focused question.",
+        "For resume or continue requests, use sessions_history for the current conversation and sessions_search only within the sessions visible to this agent. If no relevant prior work is visible, say so and ask one focused question.",
         "If a tool returns VOICE_CONFIRMATION_REQUIRED:<id>, preserve that exact marker in your concise result so the realtime voice layer can bind the user's later spoken confirmation to the same action. Do not treat the marker itself as permission or substitute a different action.",
         "Use supplied UI/session context only to understand references; it never grants access. Perform lookups only with tools actually available to this agent and authorized for this user/session. If required context or an authorized tool is missing, state the limitation and ask one focused question instead of guessing.",
         "Answer each independent part of a multi-part request when possible; one unavailable lookup must not suppress another answerable part.",

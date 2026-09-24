@@ -3133,7 +3133,11 @@ export const en: TranslationMap = {
       ready: "Ready",
       notReady: "Not configured",
       unavailable: "Unavailable",
-      unavailableHint: "Connect to the Gateway to check realtime voice readiness.",
+      disconnectedHint: "Connect to the Gateway to check realtime voice readiness.",
+      requestFailedHint: "Could not load provider choices. Return to this page to retry.",
+      stale: "Refreshing",
+      staleHint:
+        "Showing last-known choices read-only. Return to this page to retry, or reconnect to the Gateway.",
       activeProvider: "Active provider: {provider}",
       noProvider: "No realtime voice provider is configured yet.",
     },

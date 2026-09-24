@@ -1879,6 +1879,8 @@ describe("talk.session unified handlers", () => {
         senderIsOwner: false,
         toolsAllow: [
           "read",
+          "sessions_history",
+          "sessions_search",
           "tavily_search",
           "tavily_extract",
           "web_search",
@@ -2815,6 +2817,8 @@ describe("talk.client.toolCall handler", () => {
     expect(chatInput.params?.idempotencyKey).toMatch(/^talk-call-1-/);
     expect(mockCallArg(mocks.chatSend, 0, 1)).toEqual([
       "read",
+      "sessions_history",
+      "sessions_search",
       "tavily_search",
       "tavily_extract",
       "web_search",
@@ -3486,9 +3490,12 @@ describe("talk.client.create handler", () => {
         ],
         surface: "a browser Talk session",
         abortSignal: consultSignal,
+        userLabel: "User",
         senderIsOwner: false,
         toolsAllow: [
           "read",
+          "sessions_history",
+          "sessions_search",
           "tavily_search",
           "tavily_extract",
           "web_search",

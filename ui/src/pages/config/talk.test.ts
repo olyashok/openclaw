@@ -67,6 +67,19 @@ function createTalkMutationHarness(options: TalkMutationHarnessOptions = {}) {
                 transports: ["gateway-relay"],
                 defaultModel: "grok-voice",
               },
+              {
+                id: "litellm",
+                label: "LiteLLM Realtime",
+                configured: true,
+                aliases: ["litellm-realtime"],
+                models: ["grok-voice-think-fast-2.0", "gemini-3.8-live"],
+                voices: [],
+                voicesByModel: {
+                  "grok-voice-think-fast-2.0": ["eve", "ara", "rex", "sal", "leo"],
+                },
+                transports: ["gateway-relay"],
+                defaultModel: "grok-voice-think-fast-2.0",
+              },
             ],
           },
         } satisfies TalkCatalogResult;
@@ -81,6 +94,15 @@ function createTalkMutationHarness(options: TalkMutationHarnessOptions = {}) {
     sessionKey: "main",
     lastError: null,
     lastErrorCode: null,
+  };
+  let notifyGateway: (() => void) | undefined;
+  const subscribeGateway = (notify: () => void) => {
+    notifyGateway = notify;
+    return () => undefined;
+  };
+  const updateGateway = (patch: Partial<ApplicationGatewaySnapshot>) => {
+    Object.assign(snapshot, patch);
+    notifyGateway?.();
   };
   const subscribe = () => () => undefined;
   const configForm = {
@@ -109,14 +131,19 @@ function createTalkMutationHarness(options: TalkMutationHarnessOptions = {}) {
     subscribe,
   };
   const context = {
-    gateway: { snapshot, subscribe },
+    gateway: {
+      snapshot,
+      connection: { gatewayUrl: "ws://gateway.test" },
+      connectionRevision: 0,
+      subscribe: subscribeGateway,
+    },
     runtimeConfig,
   } as unknown as ApplicationContext;
   const page = document.createElement("openclaw-talk-settings") as TalkSettingsPageTestElement;
   page.context = context;
   page.configObject = configForm;
   document.body.append(page);
-  return { page, request, runtimeConfig };
+  return { page, request, runtimeConfig, configForm, updateGateway };
 }
 
 async function selectModel(model: string, options: TalkMutationHarnessOptions = {}) {
@@ -328,6 +355,59 @@ describe("renderTalk", () => {
 });
 
 describe("TalkSettingsPage realtime transport mutation", () => {
+  it("keeps same-Gateway provider and model-specific voice choices visible through reconnect and refresh failure", async () => {
+    const harness = createTalkMutationHarness();
+    const { page, request, configForm, updateGateway } = harness;
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    await page.updateComplete;
+
+    const litellmForm = {
+      ...configForm,
+      talk: {
+        ...configForm.talk,
+        realtime: {
+          ...configForm.talk.realtime,
+          provider: "litellm",
+          model: "grok-voice-think-fast-2.0",
+        },
+      },
+    };
+    page.context.runtimeConfig.state.configForm = litellmForm;
+    page.configObject = litellmForm;
+    await page.updateComplete;
+
+    expect(page.querySelector("wa-radio-group")).not.toBeNull();
+    expect([...page.querySelectorAll("select option")].map((option) => option.value)).toEqual([
+      "",
+      "eve",
+      "ara",
+      "rex",
+      "sal",
+      "leo",
+    ]);
+
+    updateGateway({ phase: "reconnecting" });
+    await page.updateComplete;
+    expect(page.textContent).toContain(t("talkPage.status.staleHint"));
+    expect(
+      page.querySelector<HTMLElement & { disabled?: boolean }>("wa-radio-group")?.disabled,
+    ).toBe(true);
+    expect(page.querySelector("select")?.disabled).toBe(true);
+
+    request.mockRejectedValueOnce(new Error("temporary gateway refresh failure"));
+    updateGateway({ phase: "connected" });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    await page.updateComplete;
+    expect(page.querySelector("wa-radio-group")).not.toBeNull();
+    expect(page.querySelector("select")?.disabled).toBe(true);
+
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
+    await page.updateComplete;
+    expect(page.textContent).not.toContain(t("talkPage.status.staleHint"));
+    expect(page.querySelector("select")?.disabled).toBe(false);
+  });
+
   it.each([
     ["gpt-live-1-codex", null, ["", "cove", "spruce"]],
     [null, null, ["", "cove", "spruce"]],

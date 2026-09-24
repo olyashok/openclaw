@@ -9,12 +9,19 @@ import {
 describe("tool mutation helpers", () => {
   it("treats session_status as mutating only when model override is provided", () => {
     expect(isMutatingToolCall("session_status", { sessionKey: "agent:main:main" })).toBe(false);
+    expect(isReplaySafeToolCall("session_status", { sessionKey: "agent:main:main" })).toBe(true);
     expect(
       isMutatingToolCall("session_status", {
         sessionKey: "agent:main:main",
         model: "openai/gpt-4o",
       }),
     ).toBe(true);
+    expect(
+      isReplaySafeToolCall("session_status", {
+        sessionKey: "agent:main:main",
+        model: "openai/gpt-4o",
+      }),
+    ).toBe(false);
   });
 
   it("classifies portal list as replay-safe and portal mutations as mutating", () => {

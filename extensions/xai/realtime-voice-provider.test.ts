@@ -2,8 +2,13 @@
 import { REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ } from "openclaw/plugin-sdk/realtime-voice";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  resolveInternalRealtimeVoiceBrowserSessionCapabilities,
+  resolveInternalRealtimeVoiceGatewayRelayCapabilities,
+} from "../../src/talk/provider-internal.js";
+import {
   normalizeXaiRealtimeProviderConfig,
   XAI_REALTIME_MAX_PENDING_PLAYBACK_MARKS,
+  XAI_REALTIME_VOICES,
 } from "./realtime-voice-config.js";
 import {
   buildLiteLlmRealtimeVoiceProvider,
@@ -2227,6 +2232,29 @@ describe("buildLiteLlmRealtimeVoiceProvider", () => {
     expect(provider.defaultModel).toBe("grok-voice-think-fast-2.0");
     expect(provider.capabilities?.supportsSessionResumption).toBe(false);
     expect(provider.capabilities?.transports).toEqual(["gateway-relay"]);
+  });
+
+  it("offers model-specific voices only for the LiteLLM Grok voice model", () => {
+    const provider = buildLiteLlmRealtimeVoiceProvider();
+
+    expect(
+      resolveInternalRealtimeVoiceGatewayRelayCapabilities({
+        provider,
+        providerConfig: { model: "grok-voice-think-fast-2.0" },
+      })?.voicesByModel,
+    ).toEqual({ "grok-voice-think-fast-2.0": XAI_REALTIME_VOICES });
+    expect(
+      resolveInternalRealtimeVoiceBrowserSessionCapabilities({
+        provider,
+        providerConfig: { model: "grok-voice-think-fast-2.0" },
+      })?.voicesByModel,
+    ).toEqual({ "grok-voice-think-fast-2.0": XAI_REALTIME_VOICES });
+    expect(
+      resolveInternalRealtimeVoiceGatewayRelayCapabilities({
+        provider,
+        providerConfig: { model: "gemini-3.8-live" },
+      })?.voicesByModel,
+    ).toBeUndefined();
   });
 
   it("is configured only when the Fi-scoped proxy key and fixed endpoint are present", () => {

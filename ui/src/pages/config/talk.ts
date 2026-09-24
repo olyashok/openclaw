@@ -34,12 +34,14 @@ export type TalkRealtimeProviderOption = {
  */
 export type TalkCatalogState =
   | { kind: "loading" }
-  | { kind: "unavailable" }
+  | { kind: "unavailable"; reason: "disconnected" | "request-failed" }
   | {
       kind: "ready";
       ready: boolean;
       activeProvider: string | null;
       providers: readonly TalkRealtimeProviderOption[];
+      /** Last successful catalog retained while a same-Gateway refresh recovers. */
+      stale?: boolean;
     };
 
 type TalkViewProps = {
@@ -165,8 +167,18 @@ function renderStatusRow(props: TalkViewProps) {
   if (catalog.kind === "unavailable") {
     return renderSettingsRow({
       title: t("talkPage.status.title"),
-      description: t("talkPage.status.unavailableHint"),
+      description:
+        catalog.reason === "disconnected"
+          ? t("talkPage.status.disconnectedHint")
+          : t("talkPage.status.requestFailedHint"),
       control: renderSettingsStatus({ kind: "muted", label: t("talkPage.status.unavailable") }),
+    });
+  }
+  if (catalog.stale) {
+    return renderSettingsRow({
+      title: t("talkPage.status.title"),
+      description: t("talkPage.status.staleHint"),
+      control: renderSettingsStatus({ kind: "warn", label: t("talkPage.status.stale") }),
     });
   }
   return renderSettingsRow({
@@ -208,7 +220,7 @@ function renderProviderRow(props: TalkViewProps) {
         ...(unknownConfigured ? [{ value: unknownConfigured, label: unknownConfigured }] : []),
         { value: TALK_PICKER_UNSET, label: t("talkPage.provider.auto") },
       ],
-      disabled: props.configBusy,
+      disabled: talkPickersDisabled(props),
       ariaLabel: t("talkPage.provider.title"),
       onChange: (value) => props.onProviderChange(value || null),
     }),
@@ -248,7 +260,7 @@ function renderModelRow(props: TalkViewProps) {
       label: t("talkPage.model.title"),
       value: model ?? TALK_PICKER_UNSET,
       options: options.map(({ value, label }) => ({ value, label, provider: provider.id })),
-      disabled: props.configBusy,
+      disabled: talkPickersDisabled(props),
       onChange: (value) => props.onModelChange(value || null),
     }),
   });
@@ -276,9 +288,13 @@ function renderVoiceRow(props: TalkViewProps) {
     description: t("talkPage.voice.description"),
     value: voice ?? TALK_PICKER_UNSET,
     options,
-    disabled: props.configBusy,
+    disabled: talkPickersDisabled(props),
     onChange: (value) => props.onVoiceChange(value || null),
   });
+}
+
+function talkPickersDisabled(props: TalkViewProps): boolean {
+  return props.configBusy || (props.catalog.kind === "ready" && props.catalog.stale === true);
 }
 
 /**
