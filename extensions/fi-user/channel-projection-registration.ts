@@ -8,6 +8,8 @@ import { recoverSlackDirectProjection } from "./direct-projection.js";
 
 export { projectSlackChannelThread };
 
+const MATRIX_ROOM_ID = /![^:\s]+:[^\s]+/;
+
 export type SlackProjectionMessage = {
   content: string;
   sessionKey?: string;
@@ -79,6 +81,7 @@ export function registerSlackChannelProjection(
       return;
     }
     const sessionKey = event.sessionKey ?? context.sessionKey;
+    reconciler.noteActivity(sessionKey);
     const { baseUrl, token } = connection();
     if (!sessionKey || !token) {
       return;
@@ -98,4 +101,17 @@ export function registerSlackChannelProjection(
       api.logger.warn("fi-user: channel projection failed after Slack delivery");
     });
   });
+  return {
+    /** Inbound Slack or Matrix activity: plan its projection rooms ahead of the rotation. */
+    noteInboundActivity: (context: {
+      channelId: string;
+      sessionKey?: string;
+      conversationId?: string;
+    }) => {
+      reconciler.noteActivity(context.sessionKey);
+      if (context.channelId === "matrix") {
+        reconciler.noteActivity(MATRIX_ROOM_ID.exec(context.conversationId ?? "")?.[0]);
+      }
+    },
+  };
 }
