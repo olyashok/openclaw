@@ -5,6 +5,7 @@ import { getSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CoreConfig } from "../types.js";
 import { resolveDefaultMatrixAccountId } from "./accounts.js";
+import { ProjectionError } from "./projection-error.js";
 import { getMatrixThreadBindingManager, toSessionBindingRecord } from "./thread-bindings-shared.js";
 export const MATRIX_SESSION_PROJECTION_BOUND_BY = "session-projection";
 function clean(value: unknown): string {
@@ -35,23 +36,23 @@ export function resolveProjectionTarget(params: ProjectionTarget) {
   const targetSessionKey = clean(params.targetSessionKey);
   const roomId = clean(params.roomId);
   if (!targetSessionKey || !roomId) {
-    throw new Error("targetSessionKey and roomId are required");
+    throw new ProjectionError("invalid_request", "targetSessionKey and roomId are required");
   }
   if (!roomId.startsWith("!")) {
-    throw new Error("roomId must be a Matrix room id");
+    throw new ProjectionError("invalid_request", "roomId must be a Matrix room id");
   }
   if (targetSessionKey.length > 512 || roomId.length > 255) {
-    throw new Error("targetSessionKey or roomId is too long");
+    throw new ProjectionError("invalid_request", "targetSessionKey or roomId is too long");
   }
   const accountId = normalizeAccountId(
     clean(params.accountId) || resolveDefaultMatrixAccountId(params.cfg),
   );
   if (!getMatrixThreadBindingManager(accountId)) {
-    throw new Error(`Matrix account ${accountId} is not running`);
+    throw new ProjectionError("account_unavailable", `Matrix account ${accountId} is not running`);
   }
   const agentId = resolveSessionAgentIdStrict({ config: params.cfg, sessionKey: targetSessionKey });
   if (!getSessionEntry({ sessionKey: targetSessionKey, agentId })) {
-    throw new Error("target OpenClaw session does not exist");
+    throw new ProjectionError("session_missing", "target OpenClaw session does not exist");
   }
   return { targetSessionKey, accountId, agentId, roomId };
 }
