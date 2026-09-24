@@ -188,7 +188,7 @@ describe("source reply authorization", () => {
       | {
           resolveSource: (params: {
             targetSessionKey: string;
-            externalSource?: typeof source;
+            externalSource?: typeof source & { peerSenderId?: string };
           }) => Promise<{ sourceAccountId: string }>;
         }
       | undefined;
