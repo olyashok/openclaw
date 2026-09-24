@@ -165,11 +165,23 @@ export async function exchange(
         : "This operation requires a verified requester on Cellect Fi",
     );
   }
+  const { channel: _channel, ...requester } = identity;
+  const delegation = await lookupDelegation(config, requester);
+  if (!delegation) {
+    throw new Error("The current requester is not linked to an active Fi member");
+  }
+  return { delegation, config, identity };
+}
+
+/** Fi's delegation for a channel-verified person; null when no active member is linked. */
+export async function lookupDelegation(
+  config: Pick<ResolvedPluginConfig, "baseUrl" | "brokerTokenEnv">,
+  requester: Record<string, string>,
+): Promise<Delegation | null> {
   const token = brokerToken(config);
   if (!token) {
     throw new Error("Fi user delegation broker is not configured");
   }
-  const { channel: _channel, ...requester } = identity;
   const response = await fetch(`${config.baseUrl}/api/openclaw-user-delegation`, {
     method: "POST",
     headers: {
@@ -178,14 +190,13 @@ export async function exchange(
     },
     body: JSON.stringify({ ...requester, agentId: FI_USER_AGENT_ID }),
   });
-  if (!response.ok) {
-    throw new Error(
-      response.status === 404
-        ? "The current requester is not linked to an active Fi member"
-        : `Fi user delegation failed (${response.status})`,
-    );
+  if (response.status === 404) {
+    return null;
   }
-  return { delegation: (await response.json()) as Delegation, config, identity };
+  if (!response.ok) {
+    throw new Error(`Fi user delegation failed (${response.status})`);
+  }
+  return (await response.json()) as Delegation;
 }
 
 export async function delegatedFetch(
