@@ -1,6 +1,5 @@
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-binding-runtime";
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/core";
-import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import { isSilentReplyPayloadText } from "openclaw/plugin-sdk/reply-chunking";
@@ -15,6 +14,7 @@ import {
   READ_ONLY_SOURCE_HISTORY_NOTICE,
   SOURCE_HISTORY_SYNCHRONIZED_NOTICE,
 } from "./binding-notice.js";
+import { ProjectionError, projectionFailure } from "./projection-error.js";
 import {
   createMatrixSourcePublication,
   resolveMatrixReplyPublication,
@@ -363,12 +363,12 @@ export async function rebaseMatrixSessionProjection(params: {
   const { accountId, roomId, targetSessionKey, agentId } = target;
   const previousRootId = clean(params.expectedThreadRootEventId);
   if (!previousRootId.startsWith("$")) {
-    throw new Error("Expected projection root required");
+    throw new ProjectionError("invalid_request", "Expected projection root required");
   }
   return projectionCreationQueue.enqueue(`${accountId}\u0000${roomId}\u0000read-only`, async () => {
     const existing = findProjectionBinding(target, true);
     if (!existing || existing.metadata?.boundBy !== "session-projection-read-only") {
-      throw new Error("Existing read-only projection required");
+      throw new ProjectionError("readonly_required", "Existing read-only projection required");
     }
     return withResolvedMatrixSendClient(
       { cfg: params.cfg, accountId, timeoutMs: 10_000 },
@@ -378,7 +378,10 @@ export async function rebaseMatrixSessionProjection(params: {
           await client.doRequest("GET", `${base}/state/m.room.history_visibility/`),
         );
         if (visibility?.history_visibility !== "shared") {
-          throw new Error("Shared history policy required before rebase");
+          throw new ProjectionError(
+            "history_policy_missing",
+            "Shared history policy required before rebase",
+          );
         }
         let root = existing.conversation.conversationId;
         const bindingService = getSessionBindingService();
@@ -389,7 +392,7 @@ export async function rebaseMatrixSessionProjection(params: {
           const content = asNonArrayRecord(event?.content);
           const rebase = asNonArrayRecord(content?.["com.openclaw.projection_rebase"]);
           if (rebase?.previousRootId !== previousRootId) {
-            throw new Error("Projection generation changed");
+            throw new ProjectionError("generation_changed", "Projection generation changed");
           }
         } else {
           const sent = await sendMessageMatrix(
@@ -472,7 +475,8 @@ export async function handleMatrixSessionProjectionRebase({
     });
     respond(true, result);
   } catch (error) {
-    respond(false, { error: formatErrorMessage(error) });
+    const failure = projectionFailure(error);
+    respond(false, failure.payload, failure.error);
   }
 }
 
@@ -549,7 +553,10 @@ export async function createMatrixSessionProjection(params: {
     environment.length > 64 ||
     conversationId.length > 255
   ) {
-    throw new Error("Projection environment and conversationId must be supplied together");
+    throw new ProjectionError(
+      "invalid_request",
+      "Projection environment and conversationId must be supplied together",
+    );
   }
 
   const label = (clean(params.label) || `${agentId} session`).slice(0, 160);
@@ -559,7 +566,10 @@ export async function createMatrixSessionProjection(params: {
   }
   if (params.sourceDirect) {
     if (!/^agent:[^:]+:slack:direct:[uw][a-z0-9]+$/i.test(targetSessionKey)) {
-      throw new Error("Source direct projection requires a canonical Slack DM session");
+      throw new ProjectionError(
+        "invalid_request",
+        "Source direct projection requires a canonical Slack DM session",
+      );
     }
     parseSourceProjectionSnapshot(params.sourceSnapshot);
   }
@@ -569,10 +579,13 @@ export async function createMatrixSessionProjection(params: {
     !params.sourceDirect &&
     !params.sourceReplyAuthorization
   ) {
-    throw new Error("Source snapshots require a read-only projection");
+    throw new ProjectionError("invalid_request", "Source snapshots require a read-only projection");
   }
   if (params.refreshSourceSnapshot && !params.sourceSnapshot) {
-    throw new Error("Snapshot refresh requires a complete source snapshot");
+    throw new ProjectionError(
+      "snapshot_incomplete",
+      "Snapshot refresh requires a complete source snapshot",
+    );
   }
   const sourceSnapshotDigest = params.sourceSnapshot
     ? sourceProjectionSnapshotDigest(params.sourceSnapshot)
@@ -588,7 +601,10 @@ export async function createMatrixSessionProjection(params: {
       let authorizedSource: Awaited<ReturnType<typeof resolveProjectionReplyUpgrade>> | undefined;
       if (params.sourceReplyAuthorization) {
         if (!params.channelRuntime) {
-          throw new Error("Requested source reply authorization is unavailable");
+          throw new ProjectionError(
+            "source_auth_unavailable",
+            "Requested source reply authorization is unavailable",
+          );
         }
         authorizedSource = await resolveProjectionReplyUpgrade({
           channelRuntime: params.channelRuntime,
@@ -629,7 +645,10 @@ export async function createMatrixSessionProjection(params: {
           (existing.metadata?.projectedConversationId &&
             existing.metadata.projectedConversationId !== conversationId)
         ) {
-          throw new Error("Projection conversation ownership cannot change");
+          throw new ProjectionError(
+            "ownership_changed",
+            "Projection conversation ownership cannot change",
+          );
         }
         if (!existing.metadata?.environment) {
           existing = await bindingService.bind({
@@ -651,7 +670,7 @@ export async function createMatrixSessionProjection(params: {
           params.sourceDetached &&
           JSON.stringify(existing.metadata?.externalSource) !== JSON.stringify(externalSource)
         ) {
-          throw new Error("Projection external source cannot change");
+          throw new ProjectionError("source_changed", "Projection external source cannot change");
         }
         if (
           params.sourceDirect &&
@@ -659,7 +678,10 @@ export async function createMatrixSessionProjection(params: {
           !params.sourceReplyAuthorization &&
           existing.metadata?.boundBy === "session-projection-read-only"
         ) {
-          throw new Error("Read-only direct projection cannot become writable");
+          throw new ProjectionError(
+            "readonly_conflict",
+            "Read-only direct projection cannot become writable",
+          );
         }
         if (
           params.sourceDirect &&
@@ -686,7 +708,7 @@ export async function createMatrixSessionProjection(params: {
           params.readOnly === true &&
           existing.metadata?.boundBy !== "session-projection-read-only"
         ) {
-          throw new Error("Existing projection is writable");
+          throw new ProjectionError("readonly_conflict", "Existing projection is writable");
         }
         // Retry callers may race the original hook or arrive after a prior
         // bind. The narrow in-process reservation and durable delivery key
@@ -846,7 +868,8 @@ export async function handleMatrixSessionProjectionCreate(
     });
     respond(true, result);
   } catch (error) {
-    respond(false, { error: formatErrorMessage(error) });
+    const failure = projectionFailure(error);
+    respond(false, failure.payload, failure.error);
   }
 }
 
@@ -868,6 +891,7 @@ export function handleMatrixSessionProjectionInspect({
       }),
     );
   } catch (error) {
-    respond(false, { error: formatErrorMessage(error) });
+    const failure = projectionFailure(error);
+    respond(false, failure.payload, failure.error);
   }
 }

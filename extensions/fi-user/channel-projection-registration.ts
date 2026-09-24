@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { ErrorCodes, errorShape } from "openclaw/plugin-sdk/gateway-runtime";
 import {
   projectSlackChannelThread,
   registerSlackProjectionReconciler,
@@ -67,9 +68,8 @@ export function registerSlackChannelProjection(
         }
         respond(true, { projected: true });
       } catch (error) {
-        respond(false, {
-          error: error instanceof Error ? error.message : "Slack projection failed",
-        });
+        const message = error instanceof Error ? error.message : "Slack projection failed";
+        respond(false, { error: message }, errorShape(ErrorCodes.UNAVAILABLE, message));
       }
     },
     { scope: "operator.admin" },

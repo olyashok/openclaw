@@ -60,20 +60,30 @@ describe("Slack projection source snapshot", () => {
     expect(slack.conversations.members).toHaveBeenCalledTimes(2);
     expect(slack.conversations.replies).toHaveBeenCalledTimes(2);
   });
-  it("discovers real history roots with paginated progress and refuses partial pages", async () => {
+  it("discovers only roots this bot is part of, with paginated progress", async () => {
     const slack = client();
+    slack.auth.test.mockResolvedValue({
+      ok: true,
+      team_id: "T123",
+      user_id: "UBOT",
+      bot_id: "BBOT",
+    });
     slack.conversations.history.mockResolvedValueOnce({
       ok: true,
       messages: [
-        { ts: "1.000001", reply_count: 2 },
-        { ts: "1.000002", bot_id: "B123" },
-        { ts: "1.000003", text: "not a bot conversation" },
+        { ts: "1.000001", user: "U111", reply_count: 2, reply_users: ["U222"] },
+        { ts: "1.000002", bot_id: "BOTHER", text: "another app's post" },
+        { ts: "1.000003", user: "U111", text: "hi <@U222>" },
+        { ts: "1.000004", user: "U111", text: "not a bot conversation" },
+        { ts: "1.000005", user: "U111", text: "<@UBOT> can you check this?" },
+        { ts: "1.000006", user: "UBOT", bot_id: "BBOT", text: "Report ready" },
+        { ts: "1.000007", user: "U111", reply_count: 3, reply_users: ["U222", "UBOT"] },
       ],
       response_metadata: { next_cursor: "older" },
     });
     const scope = await readSlackProjectionChannel(slack as unknown as WebClient, "T123", "C123");
     expect(await scope.readHistoryPage()).toEqual({
-      roots: ["1.000001", "1.000002"],
+      roots: ["1.000005", "1.000006", "1.000007"],
       nextCursor: "older",
     });
     slack.conversations.history.mockResolvedValueOnce({ ok: true, messages: [], has_more: true });

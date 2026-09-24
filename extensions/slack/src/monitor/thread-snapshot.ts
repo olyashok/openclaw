@@ -48,6 +48,21 @@ export async function readSlackProjectionChannel(
     }
   } while (cursor);
   const source = { workspaceId, channelId, memberSenderIds: [...new Set(memberSenderIds)] };
+  const readerUserId = identity.user_id;
+  const readerBotId = identity.bot_id;
+  const involvesReader = (message: {
+    user?: string;
+    bot_id?: string;
+    text?: string;
+    reply_users?: string[];
+  }) =>
+    Boolean(
+      (readerBotId && message.bot_id === readerBotId) ||
+      (readerUserId &&
+        (message.user === readerUserId ||
+          message.reply_users?.includes(readerUserId) ||
+          (message.text ?? "").includes(`<@${readerUserId}>`))),
+    );
   return {
     ...source,
     readHistoryPage: async (historyCursor?: string) => {
@@ -61,14 +76,12 @@ export async function readSlackProjectionChannel(
       if ((page.has_more && !nextCursor) || (nextCursor && nextCursor === historyCursor)) {
         throw new Error("Incomplete Slack channel history pagination");
       }
+      // Only threads this bot is part of are projected: it wrote the root, was
+      // mentioned in it, or replied in it. Human-only threads, and other apps'
+      // posts, stay in Slack.
       return {
         roots: page.messages.flatMap((message) =>
-          message.ts &&
-          (message.bot_id ||
-            (message.reply_count ?? 0) > 0 ||
-            /<@[UW][A-Z0-9]+>/.test(message.text ?? ""))
-            ? [message.ts]
-            : [],
+          message.ts && involvesReader(message) ? [message.ts] : [],
         ),
         nextCursor,
       };
