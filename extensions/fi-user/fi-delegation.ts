@@ -137,7 +137,15 @@ export type RequesterIdentity =
   | { channel: "matrix"; requesterMatrixUserId: string }
   | { channel: "webchat"; appContextToken: string };
 
-/** The trusted requester of this Fi-user turn, as the channel proved it. */
+/**
+ * The trusted requester of this Fi-user turn, as the channel proved it.
+ *
+ * A realtime voice consult bound to a Matrix conversation arrives on the
+ * Matrix channel with the speaker as its sender: Fi attested that Matrix
+ * identity for its signed-in user when it minted the Talk binding, and the
+ * Gateway stamps it on the consult run. Fi maps it back to the member exactly
+ * as it does a typed Matrix message; the relaying browser is never the sender.
+ */
 export function requesterIdentity(context: OpenClawPluginToolContext): RequesterIdentity | null {
   if (context.agentId !== FI_USER_AGENT_ID) {
     return null;
@@ -156,12 +164,16 @@ export function requesterIdentity(context: OpenClawPluginToolContext): Requester
   return null;
 }
 
-/** Whether this turn has a channel that can carry a verified Fi-user requester. */
+/**
+ * Whether this turn carries a verified Fi-user requester. Webchat shares its
+ * credential inside the message, so its tools stay offered to explain a
+ * missing one; Slack and Matrix turns, voice included, need a proven sender.
+ */
 export function isFiUserTurn(context: OpenClawPluginToolContext): boolean {
   if (context.agentId !== FI_USER_AGENT_ID || !FI_USER_CHANNELS.has(context.messageChannel ?? "")) {
     return false;
   }
-  return context.messageChannel === "webchat" || Boolean(context.requesterSenderId?.trim());
+  return context.messageChannel === "webchat" || requesterIdentity(context) !== null;
 }
 
 export async function exchange(

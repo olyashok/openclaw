@@ -10,6 +10,11 @@ export type TalkRelayConsultAdmission = {
     connId: string | undefined,
     origin: ChatSendExplicitOrigin | undefined,
   ): void;
+  /**
+   * The Matrix speaker the app server attested when it minted the Talk binding
+   * (operator-scoped `talk.binding.resolve`). It is the consult run's requester.
+   */
+  readonly speakerMxid?: string;
 };
 
 export function prepareTalkRelayConsultAdmission(params: {
@@ -58,5 +63,8 @@ export function prepareTalkRelayConsultAdmission(params: {
     accountId: route.accountId,
     messageThreadId: route.threadRootEventId,
   });
-  return Object.freeze({ assertCurrent });
+  return Object.freeze({
+    assertCurrent,
+    ...(relay?.speakerMxid ? { speakerMxid: relay.speakerMxid } : {}),
+  });
 }
