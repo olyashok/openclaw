@@ -26,6 +26,9 @@ const MAX_OUTPUT_BYTES = 512 * 1024;
 const COMMAND_TIMEOUT_MS = 60_000;
 const MAX_DRIVE_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_DRIVE_TEXT_CHARS = 200_000;
+const MAX_RESULTS = 50;
+// GAM exits 60 when a list matches nothing; that is an empty result.
+const GAM_NO_ENTITIES_EXIT = 60;
 
 type PluginConfig = {
   baseUrl?: string;
@@ -195,12 +198,29 @@ async function runGam(
   mailbox: string,
   args: string[],
 ): Promise<string> {
-  const { stdout, stderr } = await execFileAsync(config.gamBinary, ["user", mailbox, ...args], {
-    env: { ...process.env, GAMCFGDIR: config.gamConfigDir },
-    timeout: COMMAND_TIMEOUT_MS,
-    maxBuffer: MAX_OUTPUT_BYTES,
-  });
-  return [stdout, stderr].filter(Boolean).join("\n").trim();
+  try {
+    const { stdout, stderr } = await execFileAsync(config.gamBinary, ["user", mailbox, ...args], {
+      env: { ...process.env, GAMCFGDIR: config.gamConfigDir },
+      timeout: COMMAND_TIMEOUT_MS,
+      maxBuffer: MAX_OUTPUT_BYTES,
+    });
+    return [stdout, stderr].filter(Boolean).join("\n").trim();
+  } catch (error) {
+    const failed = error as { code?: unknown; stdout?: unknown; stderr?: unknown };
+    const output = [failed.stdout, failed.stderr]
+      .filter((part): part is string => typeof part === "string" && part.length > 0)
+      .join("\n")
+      .trim();
+    if (failed.code === GAM_NO_ENTITIES_EXIT && /\bGot 0 /.test(output)) {
+      return output;
+    }
+    throw error;
+  }
+}
+
+/** Accept any positive request and reduce it to GAM's 50-result page. */
+function resultLimit(value: number | undefined): string {
+  return String(Math.min(Math.max(Math.trunc(value ?? 10), 1), MAX_RESULTS));
 }
 
 function requireMailbox(delegation: Delegation, service = "Gmail"): string {
@@ -231,7 +251,9 @@ const GmailSchema = Type.Object(
   {
     action: stringEnum(["search", "read", "draft", "send"] as const),
     query: Type.Optional(Type.String({ maxLength: 1_000 })),
-    maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+    maxResults: Type.Optional(
+      Type.Integer({ minimum: 1, description: "Values above 50 are reduced to 50." }),
+    ),
     messageId: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9_-]+$" })),
     to: Type.Optional(Type.Array(Type.String({ format: "email" }), { minItems: 1, maxItems: 25 })),
     cc: Type.Optional(Type.Array(Type.String({ format: "email" }), { maxItems: 25 })),
@@ -275,8 +297,9 @@ function createGmailTool(api: OpenClawPluginApi, context: OpenClawPluginToolCont
           "messages",
           "query",
           input.query.trim(),
-          "maxtoshow",
-          String(input.maxResults ?? 10),
+          // `maxtoshow` belongs to `show messages`; `print messages` rejects it.
+          "max_to_print",
+          resultLimit(input.maxResults),
         ]);
         return jsonResult({ mailbox, output });
       }
@@ -329,7 +352,9 @@ const GDriveSchema = Type.Object(
   {
     action: stringEnum(["search", "read"] as const),
     query: Type.Optional(Type.String({ maxLength: 1_000 })),
-    maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+    maxResults: Type.Optional(
+      Type.Integer({ minimum: 1, description: "Values above 50 are reduced to 50." }),
+    ),
     fileId: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9_-]+$" })),
     startPage: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
     maxPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
@@ -531,7 +556,7 @@ function createGDriveTool(
           input.query.trim(),
           "excludetrashed",
           "maxfiles",
-          String(input.maxResults ?? 10),
+          resultLimit(input.maxResults),
           "fields",
           "id,name,mimetype,size,modifiedtime,parents",
           "filepath",

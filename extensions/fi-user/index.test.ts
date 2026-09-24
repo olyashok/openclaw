@@ -266,6 +266,61 @@ describe("Fi user requester-bound Google Drive", () => {
     });
   });
 
+  it("clamps Gmail search to 50 results with print-messages syntax", async () => {
+    mocks.execFile.mockResolvedValue({ stdout: "User,threadId,id", stderr: "" });
+    const gmail = registeredTools(slackContext()).find((tool) => tool.name === "fi_user_gmail");
+    if (!gmail) {
+      throw new Error("expected Gmail tool");
+    }
+
+    await gmail.execute("call-3", { action: "search", query: "invoice", maxResults: 200 });
+
+    expect(mocks.execFile).toHaveBeenCalledWith(
+      "/opt/gam",
+      ["user", "member@example.com", "print", "messages", "query", "invoice", "max_to_print", "50"],
+      expect.anything(),
+    );
+  });
+
+  it("treats a zero-match GAM exit as an empty result", async () => {
+    mocks.execFile.mockRejectedValue(
+      Object.assign(new Error("Command failed"), {
+        code: 60,
+        stdout: "Owner,id,name",
+        stderr: "Got 0 Drive Files/Folders that matched query",
+      }),
+    );
+    const drive = registeredTools(slackContext()).find((tool) => tool.name === "fi_user_gdrive");
+    if (!drive) {
+      throw new Error("expected Drive tool");
+    }
+
+    const result = await drive.execute("call-4", { action: "search", query: "name = 'none'" });
+
+    expect(result.details).toEqual({
+      mailbox: "member@example.com",
+      output: "Owner,id,name\nGot 0 Drive Files/Folders that matched query",
+    });
+  });
+
+  it("still fails on other GAM errors", async () => {
+    mocks.execFile.mockRejectedValue(
+      Object.assign(new Error("Command failed"), {
+        code: 2,
+        stdout: "",
+        stderr: "ERROR: Invalid argument",
+      }),
+    );
+    const drive = registeredTools(slackContext()).find((tool) => tool.name === "fi_user_gdrive");
+    if (!drive) {
+      throw new Error("expected Drive tool");
+    }
+
+    await expect(drive.execute("call-5", { action: "search", query: "x" })).rejects.toThrow(
+      "Command failed",
+    );
+  });
+
   it("downloads and extracts a requester-visible PDF for the model", async () => {
     mockPdfDownload();
     mocks.extractDocumentContent.mockResolvedValue({
