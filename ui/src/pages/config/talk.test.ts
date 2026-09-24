@@ -84,6 +84,17 @@ function createTalkMutationHarness(options: TalkMutationHarnessOptions = {}) {
           transports: ["gateway-relay"],
           defaultModel: "grok-voice",
         },
+        {
+          id: "litellm",
+          label: "LiteLLM Realtime",
+          configured: true,
+          aliases: ["litellm-realtime"],
+          models: ["grok-voice-think-fast-2.0", "gemini-3.8-live"],
+          voices: [],
+          voicesByModel: { "grok-voice-think-fast-2.0": ["eve", "ara", "rex", "sal", "leo"] },
+          transports: ["gateway-relay"],
+          defaultModel: "grok-voice-think-fast-2.0",
+        },
       ],
     },
   } satisfies TalkCatalogResult;
@@ -155,6 +166,7 @@ function createTalkMutationHarness(options: TalkMutationHarnessOptions = {}) {
     gateway: {
       snapshot,
       connection: gatewayConnection,
+      connectionRevision: 0,
       subscribe: (listener: () => void) => {
         gatewayListeners.add(listener);
         return () => gatewayListeners.delete(listener);
@@ -170,6 +182,11 @@ function createTalkMutationHarness(options: TalkMutationHarnessOptions = {}) {
     page,
     request,
     runtimeConfig,
+    configForm,
+    updateGateway: (patch: Partial<ApplicationGatewaySnapshot>) => {
+      Object.assign(snapshot, patch);
+      gatewayListeners.forEach((notify) => notify());
+    },
     setConfigHash: (hash: string | null) => {
       runtimeConfig.state.configSnapshot.hash = hash;
       runtimeConfigListeners.forEach((notify) => notify());
@@ -670,6 +687,59 @@ describe("Talk device and voice wake settings", () => {
 });
 
 describe("TalkSettingsPage realtime transport mutation", () => {
+  it("keeps same-Gateway provider and model-specific voice choices visible through reconnect and refresh failure", async () => {
+    const harness = createTalkMutationHarness();
+    const { page, request, configForm, updateGateway } = harness;
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    await page.updateComplete;
+
+    const litellmForm = {
+      ...configForm,
+      talk: {
+        ...configForm.talk,
+        realtime: {
+          ...configForm.talk.realtime,
+          provider: "litellm",
+          model: "grok-voice-think-fast-2.0",
+        },
+      },
+    };
+    page.context.runtimeConfig.state.configForm = litellmForm;
+    page.configObject = litellmForm;
+    await page.updateComplete;
+
+    expect(page.querySelector("wa-radio-group")).not.toBeNull();
+    expect([...page.querySelectorAll("select option")].map((option) => option.value)).toEqual([
+      "",
+      "eve",
+      "ara",
+      "rex",
+      "sal",
+      "leo",
+    ]);
+
+    updateGateway({ phase: "reconnecting" });
+    await page.updateComplete;
+    expect(page.textContent).toContain(t("talkPage.status.staleHint"));
+    expect(
+      page.querySelector<HTMLElement & { disabled?: boolean }>("wa-radio-group")?.disabled,
+    ).toBe(true);
+    expect(page.querySelector("select")?.disabled).toBe(true);
+
+    request.mockRejectedValueOnce(new Error("temporary gateway refresh failure"));
+    page.context.gateway.connectionRevision += 1;
+    updateGateway({ phase: "connected" });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    await page.updateComplete;
+    expect(page.querySelector("wa-radio-group")).not.toBeNull();
+    expect(page.querySelector("select")?.disabled).toBe(true);
+
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(page.textContent).not.toContain(t("talkPage.status.staleHint")));
+    expect(page.querySelector("select")?.disabled).toBe(false);
+  });
+
   it.each([
     ["allowlist-default", true],
     [undefined, false],

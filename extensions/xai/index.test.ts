@@ -11,6 +11,7 @@ import {
   type LiveModelCatalogFetchGuard,
 } from "openclaw/plugin-sdk/provider-catalog-live-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveInternalRealtimeVoiceGatewayRelayCapabilities } from "../../src/talk/provider-internal.js";
 
 const providerAuthRuntimeMocks = vi.hoisted(() => ({
   resolveApiKeyForProvider: vi.fn(),
@@ -653,6 +654,18 @@ describe("xai provider plugin", () => {
     expect(litellmProvider.label).toBe("LiteLLM Realtime");
     expect(litellmProvider.models).toEqual(["grok-voice-think-fast-2.0", "gemini-3.8-live"]);
     expect(litellmProvider.capabilities?.transports).toEqual(["gateway-relay"]);
+    expect(
+      resolveInternalRealtimeVoiceGatewayRelayCapabilities({
+        provider: litellmProvider,
+        providerConfig: { model: "grok-voice-think-fast-2.0" },
+      })?.voicesByModel,
+    ).toEqual({ "grok-voice-think-fast-2.0": ["eve", "ara", "rex", "sal", "leo"] });
+    expect(
+      resolveInternalRealtimeVoiceGatewayRelayCapabilities({
+        provider: litellmProvider,
+        providerConfig: { model: "gemini-3.8-live" },
+      })?.voicesByModel,
+    ).toBeUndefined();
   });
 
   it("forwards exact caller cancellation through the registered lazy X search factory", async () => {

@@ -8,6 +8,7 @@ import {
 } from "./capability-provider-metadata.js";
 import { resolveXaiRealtimeApiKey } from "./realtime-voice-auth.runtime.js";
 import { XaiRealtimeVoiceBridge } from "./realtime-voice-bridge.js";
+import { attachLiteLlmRealtimeVoiceCapabilities } from "./realtime-voice-capabilities.js";
 import {
   LITELLM_REALTIME_BASE_URL,
   LITELLM_REALTIME_VOICE_MODELS,
@@ -87,7 +88,7 @@ export function buildXaiRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
 }
 
 export function buildLiteLlmRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
-  return {
+  const provider: RealtimeVoiceProviderPlugin = {
     ...createLiteLlmRealtimeVoiceProviderMetadata(),
     createBridge: (req) => {
       const config = normalizeXaiRealtimeProviderConfig(req.providerConfig, "litellm");
@@ -125,4 +126,5 @@ export function buildLiteLlmRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin
       });
     },
   };
+  return attachLiteLlmRealtimeVoiceCapabilities(provider);
 }

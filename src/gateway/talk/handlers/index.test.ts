@@ -2128,6 +2128,8 @@ describe("talk.session unified handlers", () => {
         }),
         toolsAllow: [
           "read",
+          "sessions_history",
+          "sessions_search",
           "tavily_search",
           "tavily_extract",
           "web_search",
@@ -3264,6 +3266,8 @@ describe("talk.client.toolCall handler", () => {
     expect(mockCallArg(mocks.chatSend, 0, 2)).toMatchObject({
       toolsAllow: [
         "read",
+        "sessions_history",
+        "sessions_search",
         "tavily_search",
         "tavily_extract",
         "web_search",
@@ -3956,9 +3960,12 @@ describe("talk.client.create handler", () => {
         ],
         surface: "a browser Talk session",
         abortSignal: consultSignal,
+        userLabel: "User",
         senderIsOwner: false,
         toolsAllow: [
           "read",
+          "sessions_history",
+          "sessions_search",
           "tavily_search",
           "tavily_extract",
           "web_search",

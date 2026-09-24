@@ -138,6 +138,8 @@ describe("realtime voice session policy", () => {
     expect(policy.toolPolicy).toBe("safe-read-only");
     expect(policy.consultToolsAllow).toEqual([
       "read",
+      "sessions_history",
+      "sessions_search",
       "tavily_search",
       "tavily_extract",
       "web_search",
