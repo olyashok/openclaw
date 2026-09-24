@@ -152,6 +152,7 @@ const SlackAccountSchema = z
       })
       .strict()
       .optional(),
+    memberInfoScope: z.enum(["requester", "workspace"]).optional(),
     slashCommand: z
       .object({
         enabled: z.boolean().optional(),

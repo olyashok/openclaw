@@ -43,7 +43,7 @@ import {
 import { createSlackStartupAuthClient, createSlackWebClient } from "../client.js";
 import { normalizeSlackWebhookPath, registerSlackHttpHandler } from "../http/index.js";
 import { registerSlackInstallationState } from "../installation-identity-state.js";
-import { SLACK_TEXT_LIMIT } from "../limits.js";
+import { resolveSlackMediaMaxBytes, SLACK_TEXT_LIMIT } from "../limits.js";
 import { resolveSlackChannelAllowlist } from "../resolve-channels.js";
 import { resolveSlackUserAllowlist, type SlackUserResolution } from "../resolve-users.js";
 import { registerSlackThreadOwnerPeer } from "../sent-thread-cache.js";
@@ -400,7 +400,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
   });
   const ackReactionScope = cfg.messages?.ackReactionScope ?? "group-mentions";
   const typingReaction = slackCfg.typingReaction?.trim() ?? "";
-  const mediaMaxBytes = (opts.mediaMaxMb ?? slackCfg.mediaMaxMb ?? 20) * 1024 * 1024;
+  const mediaMaxBytes = resolveSlackMediaMaxBytes(opts.mediaMaxMb ?? slackCfg.mediaMaxMb);
   const slackDispatcher = resolveSlackProxyDispatcher();
   const clientOptions = resolveSlackWebClientOptions({}, slackDispatcher);
   const durableIngress = createSlackDurableIngress({

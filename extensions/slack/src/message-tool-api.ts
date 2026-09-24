@@ -35,6 +35,28 @@ function createSlackFileActionSchema(): Record<string, TSchema> {
   };
 }
 
+function createSlackPermalinkSchema(): Record<string, TSchema> {
+  return {
+    permalink: Type.Optional(
+      Type.String({
+        description:
+          'Slack permalink pasted by the requester, e.g. https://<workspace>.slack.com/archives/<conversation>/p<ts> (message) or .../files/<user>/<file>/<name> (file). For action="read" it selects that conversation and message; for action="download-file" it selects the file, or the files attached to the linked message. Allowed when the requester is a member of the linked conversation and this Slack app can see it.',
+      }),
+    ),
+  };
+}
+
+function createSlackOriginalFileSchema(): Record<string, TSchema> {
+  return {
+    original: Type.Optional(
+      Type.Boolean({
+        description:
+          'For action="download-file": return only the staged original file (path, size, contentType) without an inline image preview. Downloads always stage Slack\'s original upload; the inline preview may be resized.',
+      }),
+    ),
+  };
+}
+
 function createSlackReactionEmojiSchema(emojiListAvailable: boolean): Record<string, TSchema> {
   const discoveryHint = emojiListAvailable
     ? ' Discover workspace custom emoji with action:"emoji-list".'
@@ -138,8 +160,17 @@ export function describeSlackMessageTool({
   }
   if (actions.includes("download-file")) {
     schema.push({
-      properties: createSlackFileActionSchema(),
+      properties: { ...createSlackFileActionSchema(), ...createSlackOriginalFileSchema() },
       actions: ["download-file"],
+    });
+  }
+  const permalinkActions = (["read", "download-file"] as const).filter((action) =>
+    actions.includes(action),
+  );
+  if (permalinkActions.length > 0) {
+    schema.push({
+      properties: createSlackPermalinkSchema(),
+      actions: [...permalinkActions],
     });
   }
   if (actions.includes("send")) {

@@ -20,7 +20,7 @@ import {
 import { assertSlackDetachedTargetAllowed } from "./detached-target-admission.js";
 import { buildSlackEditTextPayload } from "./edit-text.js";
 import { normalizeSlackOutboundText } from "./format.js";
-import { SLACK_EDIT_TEXT_MAX_BYTES } from "./limits.js";
+import { assertSlackFileWithinDownloadCap, SLACK_EDIT_TEXT_MAX_BYTES } from "./limits.js";
 import { hasSlackMessageTableBlock, resolveSlackMessageText } from "./monitor/block-text.js";
 import { resolveSlackMedia } from "./monitor/media.js";
 import type { SlackMediaResult } from "./monitor/media.js";
@@ -219,7 +219,7 @@ function hasSlackPlatformError(err: unknown, code: string): boolean {
   return (data as { error?: unknown }).error === code;
 }
 
-async function getClient(opts: SlackActionClientOpts = {}, mode: "read" | "write" = "read") {
+export async function getClient(opts: SlackActionClientOpts = {}, mode: "read" | "write" = "read") {
   if (opts.client) {
     return opts.client;
   }
@@ -742,6 +742,7 @@ export async function downloadSlackFile(
   if (!isFileAllowed(file)) {
     return null;
   }
+  assertSlackFileWithinDownloadCap(fileId, (file as { size?: number }).size, opts.maxBytes);
 
   const results = await resolveSlackMedia({
     files: [
