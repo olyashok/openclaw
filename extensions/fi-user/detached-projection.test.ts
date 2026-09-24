@@ -36,7 +36,7 @@ describe("native parent-session Slack history discovery", () => {
       runtime: {
         channel: { runtimeContexts: { get: () => ({ workspaceId: "T123", readChannel }) } },
       },
-      logger: { warn: vi.fn() },
+      logger: { warn: vi.fn(), info: vi.fn() },
     } as unknown as OpenClawPluginApi;
     const publish = vi.fn(async (params: ChannelProjectionParams) => {
       params.onResult?.("created");
@@ -215,6 +215,10 @@ describe("native parent-session Slack history discovery", () => {
         projectionRoomId: "!room1",
         detachedSource: { rootMessageId: "1700000000.000001" },
       });
+      expect(f.api.logger.info).toHaveBeenCalledTimes(1);
+      expect(f.api.logger.info).toHaveBeenCalledWith(
+        `fi-user: projection refresh lane=detached room=!room1 session=${f.sessionKey} outcome=refreshed`,
+      );
     });
 
     it("never plans or refreshes without a budget", async () => {
@@ -252,6 +256,28 @@ describe("native parent-session Slack history discovery", () => {
       ]);
       expect(f.publish.mock.calls.some(([params]) => params.unavailable)).toBe(false);
       expect(result.error).toBe(0);
+      expect(f.api.logger.warn).toHaveBeenCalledWith(
+        `fi-user: projection refresh lane=detached room=!room0 session=${f.sessionKey} outcome=failed error=Fi channel projection failed (502)`,
+      );
+      expect(f.api.logger.info).not.toHaveBeenCalled();
+    });
+
+    it("logs a failed plan and keeps the readers-only pass", async () => {
+      const f = fixture();
+      const plan = withPlan(f, new Set());
+      plan.mockRejectedValueOnce(new Error("Matrix unavailable"));
+      const { reconcile } = createDetachedProjectionReconciler(f.api, f.publish);
+      await reconcile(
+        { baseUrl: "https://fi.example", token: "test" },
+        bindingsFor(f.sessionKey, 1),
+        new AbortController().signal,
+        new Set(),
+        { maxExistingRooms: 1, allowDiscovery: false, maxFullRefreshes: 1 },
+      );
+      expect(membership(f)).toEqual([["!room0", true]]);
+      expect(f.api.logger.warn).toHaveBeenCalledWith(
+        "fi-user: projection refresh plan failed room=!room0 error=Matrix unavailable",
+      );
     });
   });
   it("rescans completed skipped roots after opt-out restoration and live parent activity", async () => {

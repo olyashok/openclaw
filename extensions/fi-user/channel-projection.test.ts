@@ -401,6 +401,7 @@ describe("Fi Slack channel publisher", () => {
         memberSenderIds: ["U111"],
         readThread,
       }));
+      const logger = { warn: vi.fn(), info: vi.fn() };
       const fetchMock = vi
         .fn()
         .mockResolvedValue({ ok: true, json: async () => ({ status: "existing" }) });
@@ -412,7 +413,7 @@ describe("Fi Slack channel publisher", () => {
             { agentId: "cellect-fi-admin", match: { channel: "slack", accountId: "fi-admin" } },
           ],
         },
-        logger: { warn: vi.fn(), info: vi.fn() },
+        logger,
         registerGatewayMethod: vi.fn(),
         registerService: (value: typeof service) => {
           service = value;
@@ -453,6 +454,15 @@ describe("Fi Slack channel publisher", () => {
       ).toEqual(refreshed);
       expect(readThread).toHaveBeenCalledTimes(refreshed.length);
       expect(plan.mock.calls.map(([roomId]) => roomId)).toEqual(planned);
+      const refreshLines = logger.info.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith("fi-user: projection refresh"));
+      expect(refreshLines).toEqual(
+        refreshed.map(
+          (root) =>
+            `fi-user: projection refresh lane=channel room=!room1 session=agent:cellect-fi-admin:slack:channel:c123:thread:${root} outcome=refreshed`,
+        ),
+      );
     },
   );
   it.each([false, true])(
