@@ -5,6 +5,7 @@ import {
   type MatrixPublication,
 } from "./projection-publication.js";
 import {
+  planMatrixProjectionRoom,
   reconcileMatrixProjectionSnapshot,
   MATRIX_SESSION_PROJECTION_CONTENT_KEY as key,
 } from "./session-projection-snapshot.js";
@@ -21,7 +22,9 @@ const mocks = vi.hoisted(() => ({
   redact: vi.fn(),
   note: vi.fn(),
   binding: vi.fn(),
+  status: vi.fn(),
 }));
+vi.mock("./projection-source.js", () => ({ getMatrixProjectionStatus: mocks.status }));
 vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", () => ({
   getSessionBindingService: () => ({ resolveByConversation: mocks.binding }),
 }));
@@ -412,5 +415,81 @@ describe("v2 source reconciliation", () => {
       "$active",
       "$intro",
     ]);
+  });
+  it("plans a room read-only: one redact for a seeded duplicate, verdicts and mapping", async () => {
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [message] },
+    });
+    mocks.events.push({ ...mocks.events[0], event_id: "$duplicate" });
+    mocks.status.mockReturnValue({
+      status: "existing",
+      roomId: "!room",
+      accountId: "account",
+      threadRootEventId: "$root",
+    });
+    vi.clearAllMocks();
+    const result = await planMatrixProjectionRoom({ cfg: {} as never, roomId: " !room " });
+    expect(mocks.status).toHaveBeenCalledWith("!room", undefined);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.edit).not.toHaveBeenCalled();
+    expect(mocks.redact).not.toHaveBeenCalled();
+    expect(mocks.note).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      roomId: "!room",
+      accountId: "account",
+      threadRootEventId: "$root",
+      source: "history",
+      converged: false,
+      actions: [
+        { kind: "unchanged", messageId: message.messageId, finalEventId: "$event0" },
+        { kind: "redact", eventId: "$duplicate", reason: "duplicate" },
+      ],
+      mapping: [
+        {
+          messageId: message.messageId,
+          parts: [{ partIndex: 0, eventId: "$event0" }],
+          liveEventIds: ["$event0", "$duplicate"],
+        },
+      ],
+    });
+    expect(
+      result.invariants.filter((verdict) => !verdict.ok).map((verdict) => verdict.name),
+    ).toEqual(["oneLiveCopyPerPart", "noStaleDuplicateWhenConverged"]);
+  });
+  it("plans source edits and deletions only from a supplied snapshot", async () => {
+    await reconcileMatrixProjectionSnapshot({
+      ...options,
+      snapshot: { complete: true, messages: [message] },
+    });
+    mocks.status.mockReturnValue({
+      status: "existing",
+      roomId: "!room",
+      accountId: "account",
+      threadRootEventId: "$root",
+    });
+    vi.clearAllMocks();
+    const result = await planMatrixProjectionRoom({
+      cfg: {} as never,
+      roomId: "!room",
+      accountId: "account",
+      sourceSnapshot: { complete: true, messages: [{ ...message, content: "After" }] },
+    });
+    expect(result.source).toBe("snapshot");
+    expect(result.actions).toEqual([
+      { kind: "edit", messageId: message.messageId, eventId: "$event0", revision: 2 },
+    ]);
+    expect(mocks.edit).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{ roomId: "room" }, "invalid_request"],
+    [{ roomId: "!room", sourceSnapshot: { complete: false } }, "invalid_request"],
+    [{ roomId: "!room" }, "session_missing"],
+  ])("rejects plan request %# with a typed reason and no reads", async (request, reason) => {
+    mocks.status.mockReturnValue({ status: "missing", roomId: "!room" });
+    await expect(planMatrixProjectionRoom({ cfg: {} as never, ...request })).rejects.toMatchObject({
+      reason,
+    });
+    expect(mocks.getRelations).not.toHaveBeenCalled();
   });
 });
