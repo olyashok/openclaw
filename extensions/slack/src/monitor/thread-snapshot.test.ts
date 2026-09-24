@@ -97,6 +97,35 @@ describe("Slack projection source snapshot", () => {
     slack.conversations.history.mockResolvedValueOnce({ ok: true, messages: [], has_more: true });
     await expect(scope.readHistoryPage("older")).rejects.toThrow("Incomplete");
   });
+  it("counts every Claw bot in the workspace, not only the reading one", async () => {
+    const slack = client();
+    slack.auth.test.mockResolvedValue({
+      ok: true,
+      team_id: "T123",
+      user_id: "UBOT",
+      bot_id: "BBOT",
+    });
+    slack.conversations.history.mockResolvedValueOnce({
+      ok: true,
+      messages: [
+        { ts: "2.000001", user: "U111", text: "<@UADMIN> please file this" },
+        { ts: "2.000002", user: "U111", text: "<@UADMIN|fi-admin> named mention" },
+        { ts: "2.000003", user: "U111", reply_count: 2, reply_users: ["UADMIN"] },
+        { ts: "2.000004", user: "UADMIN", bot_id: "BADMIN", text: "Done", reply_count: 1 },
+        { ts: "2.000005", user: "U111", thread_ts: "2.000001", text: "<@UBOT> broadcast reply" },
+        { ts: "2.000006", user: "U111", text: "<@UOTHER> not a Claw bot" },
+      ],
+    });
+    const scope = await readSlackProjectionChannel(slack as unknown as WebClient, "T123", "C123", [
+      "UADMIN",
+    ]);
+    expect((await scope.readHistoryPage()).roots).toEqual([
+      "2.000001",
+      "2.000002",
+      "2.000003",
+      "2.000004",
+    ]);
+  });
   it("rejects a mismatched workspace before reading private channel data", async () => {
     const slack = client();
     slack.auth.test.mockResolvedValue({ ok: true, team_id: "T999" });
