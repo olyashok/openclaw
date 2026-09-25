@@ -1463,7 +1463,6 @@ describe("talk realtime gateway relay", () => {
       broadcastToConnIds,
       broadcast,
       nodeSendToSession,
-      logGateway: { warn: vi.fn() },
       chatAbortControllers: new Map([
         [
           "run-1",

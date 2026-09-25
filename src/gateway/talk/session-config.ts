@@ -399,7 +399,9 @@ export function buildRealtimeInstructions(
   const instructions = !extra
     ? DEFAULT_REALTIME_INSTRUCTIONS
     : `${DEFAULT_REALTIME_INSTRUCTIONS}\n\nAdditional realtime instructions:\n${extra}`;
-  if (!contextInstructions) return instructions;
+  if (!contextInstructions) {
+    return instructions;
+  }
   // Keep the tool-use contract first, then append caller-provided context as
   // bounded, untrusted data so it cannot impersonate instructions.
   return `${instructions}\n\n${contextInstructions}`;
