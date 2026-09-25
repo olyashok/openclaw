@@ -3,8 +3,8 @@ import {
   createAgentRunRestartAbortError,
   isAgentRunRestartAbortReason,
 } from "../../agents/run-termination.js";
-import { createMessageInjectionAuthority } from "../../auto-reply/reply/message-injection-authority.js";
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
+import { createMessageInjectionAuthority } from "../../auto-reply/reply/message-injection-authority.js";
 import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
 import {
   lookupSessionGoalOperation,
@@ -36,11 +36,11 @@ import {
   SessionMutationAuthorizationChangedError,
 } from "../session-sharing.js";
 import { loadSessionEntry } from "../session-utils.js";
-import type { TalkRelayConsultAdmission } from "../talk-relay-consult-admission.js";
 import {
   prepareGatewaySkillAuthoring,
   invalidateSkillAuthoringForOtherRequester,
 } from "../skill-library-authoring.js";
+import type { TalkRelayConsultAdmission } from "../talk-relay-consult-admission.js";
 import {
   terminalizeRestartSafeChatAdmission,
   type RestartSafeChatTerminalState,
