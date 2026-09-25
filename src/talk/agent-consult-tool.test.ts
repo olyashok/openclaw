@@ -182,6 +182,7 @@ describe("realtime voice agent consult tool", () => {
     expect(resolveRealtimeVoiceAgentConsultTools("none")).toStrictEqual([]);
     expect(resolveRealtimeVoiceAgentConsultToolsAllow("safe-read-only")).toEqual([
       "read",
+      "fi_user_api",
       "sessions_history",
       "sessions_search",
       "tavily_search",
