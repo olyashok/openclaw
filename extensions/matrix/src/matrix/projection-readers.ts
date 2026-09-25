@@ -23,7 +23,7 @@ export async function projectionRoomHasHumanMember(params: {
       params.client.getRoomStateEvent(params.roomId, "m.room.power_levels", ""),
       params.client.getUserId(),
     ]);
-    const bots = resolveConfiguredMatrixBotUserIds({
+    const bots = await resolveConfiguredMatrixBotUserIds({
       cfg: params.cfg,
       accountId: params.accountId,
     });
