@@ -95,12 +95,20 @@ function plugin() {
       }
       return tool;
     },
-    hook(name: string) {
-      const handler = hooks.get(name)?.[0];
-      if (!handler) {
+    hook(name: string): Hook {
+      // The host runs every handler registered for a hook, in order.
+      const handlers = hooks.get(name) ?? [];
+      if (handlers.length === 0) {
         throw new Error(`missing hook ${name}`);
       }
-      return handler;
+      if (handlers.length === 1) {
+        return handlers[0]!;
+      }
+      return async (...args: Parameters<Hook>) => {
+        for (const handler of handlers) {
+          await handler(...args);
+        }
+      };
     },
   };
 }
