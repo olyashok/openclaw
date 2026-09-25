@@ -78,7 +78,7 @@ function registeredMessageReceivedHook(config = runtimeConfig) {
       },
     }),
   );
-  const hook = hooks[0];
+  const hook = hooks.at(-1);
   if (!hook) {
     throw new Error("expected message_received hook");
   }
@@ -165,58 +165,25 @@ describe("Fi user requester-bound Google Drive", () => {
     expect(registeredTools(slackContext({ agentId: "cellect-fi-admin" }))).toEqual([]);
   });
 
-  it("asks Fi to create one verified private Matrix projection for a direct Slack session", async () => {
-    const hook = registeredMessageReceivedHook();
-    await hook(
-      {
-        content: "Check this invoice",
-        senderId: "U12345678",
-        messageId: "1710000000.000001",
-        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
-      } as never,
-      {
-        channelId: "slack",
-        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
-      } as never,
-    );
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(
-      "https://fi.example.test/api/openclaw-session-projection",
-      expect.objectContaining({
-        body: JSON.stringify({
-          requesterSenderId: "U12345678",
-          agentId: "cellect-fi-user",
-          sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
+  it.each(["cellect-fi-user", "cellect-fi-admin", "cellect-main"])(
+    "leaves %s DM projection to the canonical full-source reconciler",
+    async (agentId) => {
+      const hook = registeredMessageReceivedHook();
+      await hook(
+        {
           content: "Check this invoice",
+          senderId: "U12345678",
           messageId: "1710000000.000001",
-        }),
-      }),
-    );
-  });
-
-  it("uses a broker token resolved from the private plugin configuration", async () => {
-    const config = structuredClone(runtimeConfig);
-    config.plugins.entries["fi-user"].config.brokerTokenEnv = "resolved-broker-token";
-    const hook = registeredMessageReceivedHook(config);
-    await hook(
-      {
-        content: "Check this invoice",
-        senderId: "U12345678",
-        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
-      } as never,
-      {
-        channelId: "slack",
-        sessionKey: "agent:cellect-fi-user:slack:direct:D12345678",
-      } as never,
-    );
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(
-      "https://fi.example.test/api/openclaw-session-projection",
-      expect.objectContaining({
-        headers: expect.objectContaining({ authorization: "Bearer resolved-broker-token" }),
-      }),
-    );
-  });
+          sessionKey: `agent:${agentId}:slack:direct:u12345678`,
+        } as never,
+        {
+          channelId: "slack",
+          sessionKey: `agent:${agentId}:slack:direct:u12345678`,
+        } as never,
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it("never projects an unthreaded channel or another agent's DM", async () => {
     const hook = registeredMessageReceivedHook();
@@ -232,7 +199,7 @@ describe("Fi user requester-bound Google Drive", () => {
       {
         content: "other",
         senderId: "U12345678",
-        sessionKey: "agent:cellect-fi-admin:slack:direct:D1",
+        sessionKey: "agent:cellect-fi-admin:slack:direct:u1",
       } as never,
       { channelId: "slack" } as never,
     );

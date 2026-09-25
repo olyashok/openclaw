@@ -24,12 +24,12 @@ import {
   type SlackProjectionContext,
 } from "./channel-projection-registration.js";
 import { createDataRoomTool } from "./dataroom-tool.js";
+import { isSlackDirectSessionKey } from "./direct-projection.js";
 import { createFiUserApiTool } from "./fi-api-tool.js";
 import {
   brokerToken,
   configFromRuntime,
   exchange,
-  FI_USER_AGENT_ID,
   isFiUserTurn,
   rememberWebchatContext,
   type Delegation,
@@ -57,13 +57,14 @@ import {
 import { registerSourceReplyAuthorization } from "./source-reply-authorization.js";
 
 const MAX_DRIVE_TEXT_CHARS = 200_000;
-const DIRECT_SLACK_SESSION = /^agent:cellect-fi-user:slack:direct:[^\s]{1,480}$/;
 const SLACK_USER_ID = /^U[A-Z0-9]{8,}$/i;
 
 /**
- * Mirror verified Slack DMs and explicitly mapped channel threads into the
- * Matrix room Fi authorizes for their readers. This is best-effort
- * secondary delivery: an unavailable Fi or Matrix path never delays Slack.
+ * Mirror verified Slack channel threads into the Matrix room Fi authorizes for
+ * their readers. Direct sessions use the canonical full-source snapshot path
+ * registered with the Slack projection reconciler; do not infer their source
+ * from a single message event. This is best-effort secondary delivery: an
+ * unavailable Fi or Matrix path never delays Slack.
  */
 async function projectVerifiedSlackMessage(
   api: OpenClawPluginApi,
@@ -75,6 +76,9 @@ async function projectVerifiedSlackMessage(
   if (context.channelId !== "slack" || !sessionKey || !SLACK_USER_ID.test(senderId)) {
     return;
   }
+  if (isSlackDirectSessionKey(sessionKey)) {
+    return;
+  }
 
   const config = configFromRuntime(api);
   const token = brokerToken(config);
@@ -84,42 +88,16 @@ async function projectVerifiedSlackMessage(
   }
 
   try {
-    if (!DIRECT_SLACK_SESSION.test(sessionKey)) {
-      if (context.accountId) {
-        await projectSlackChannelThread({
-          api,
-          sessionKey,
-          accountId: context.accountId,
-          requesterSenderId: senderId,
-          baseUrl: config.baseUrl,
-          token,
-        });
-      }
-      return;
-    }
-    const response = await fetch(`${config.baseUrl}/api/openclaw-session-projection`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        requesterSenderId: senderId,
-        agentId: FI_USER_AGENT_ID,
+    if (context.accountId) {
+      await projectSlackChannelThread({
+        api,
         sessionKey,
-        content: event.content,
-        ...((event.messageId ?? context.messageId)
-          ? { messageId: event.messageId ?? context.messageId }
-          : {}),
-        ...((event.runId ?? context.runId) ? { runId: event.runId ?? context.runId } : {}),
-      }),
-    });
-    // A caller without an active Fi membership simply has no Matrix mirror.
-    // A Matrix-disabled environment likewise stays quiet.
-    if (response.ok || response.status === 404 || response.status === 409) {
-      return;
+        accountId: context.accountId,
+        requesterSenderId: senderId,
+        baseUrl: config.baseUrl,
+        token,
+      });
     }
-    api.logger.warn(`fi-user: Slack projection failed (${response.status})`);
   } catch {
     api.logger.warn("fi-user: Slack projection failed");
   }

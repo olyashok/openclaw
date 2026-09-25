@@ -14,6 +14,12 @@ export const RECONCILE_HISTORY_BATCH_SIZE = 1;
 /** Default full-snapshot refreshes of drifted bound rooms per reconciler tick. */
 export const RECONCILE_FULL_REFRESH_BUDGET = 1;
 
+export type ProjectionMaintenanceLane = "channel" | "detached" | "direct";
+
+export function nextMaintenanceLane(lane: ProjectionMaintenanceLane): ProjectionMaintenanceLane {
+  return lane === "channel" ? "detached" : lane === "detached" ? "direct" : "channel";
+}
+
 export function takeSweepBatch(
   keys: readonly string[],
   seen: Set<string>,

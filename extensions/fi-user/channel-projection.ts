@@ -9,9 +9,11 @@ import {
   verifyDetachedProjectionOrigin,
   type ProjectionInventory,
 } from "./detached-projection.js";
-import { reconcileSlackDirectProjections } from "./direct-projection.js";
+import { isSlackDirectSessionKey, reconcileSlackDirectProjections } from "./direct-projection.js";
 import { createProjectionDriftScheduler, runProjectionDriftPass } from "./projection-drift.js";
 import {
+  nextMaintenanceLane,
+  type ProjectionMaintenanceLane,
   RECONCILE_BATCH_SIZE,
   RECONCILE_FULL_REFRESH_BUDGET,
   RECONCILE_HISTORY_BATCH_SIZE,
@@ -272,7 +274,7 @@ export function registerSlackProjectionReconciler(
   let running = false;
   let wakeRequested = false;
   let prioritySessionKey: string | undefined;
-  let maintenanceLane: "channel" | "detached" | "direct" = "channel";
+  let maintenanceLane: ProjectionMaintenanceLane = "channel";
   let channelWorkKind: "acl" | "history" = "acl";
   let detachedWorkKind: "acl" | "history" = "acl";
   let discoveryCursor = "";
@@ -477,7 +479,7 @@ export function registerSlackProjectionReconciler(
       if (projects.length && !priority) {
         channelWorkKind = channelWorkKind === "acl" ? "history" : "acl";
       }
-      if (priority) {
+      if (priority && maintenanceLane === "channel") {
         prioritySessionKey = undefined;
       }
       // A full-room ACL sweep exhausts Fi's shared provisioning credential before
@@ -606,6 +608,8 @@ export function registerSlackProjectionReconciler(
         );
         detachedWorkKind = detachedWorkKind === "acl" ? "history" : "acl";
       } else if (maintenanceLane === "direct") {
+        const directPrioritySessionKey = prioritySessionKey;
+        prioritySessionKey = undefined;
         directReport = await reconcileSlackDirectProjections(
           api,
           { ...config, token: config.token },
@@ -613,6 +617,7 @@ export function registerSlackProjectionReconciler(
           generation.signal,
           directSweepSeen,
           RECONCILE_HISTORY_BATCH_SIZE,
+          directPrioritySessionKey,
         );
       }
       // Drift pass, every tick and independent of the lane rotation.
@@ -638,12 +643,7 @@ export function registerSlackProjectionReconciler(
               signal: AbortSignal.any([generation.signal, AbortSignal.timeout(90_000)]),
             }),
         })) ?? driftReport;
-      maintenanceLane =
-        maintenanceLane === "channel"
-          ? "detached"
-          : maintenanceLane === "detached"
-            ? "direct"
-            : "channel";
+      maintenanceLane = wakeRequested ? maintenanceLane : nextMaintenanceLane(maintenanceLane);
       report = {
         scanned: candidates.size,
         pending,
@@ -706,10 +706,15 @@ export function registerSlackProjectionReconciler(
   return {
     /** Slack or Matrix activity: plan the matching rooms ahead of the rotation. */
     noteActivity: (key: string | undefined) => drift.noteActivity(key),
-    wake: (sessionKey: string) => {
-      reconcileDetached.invalidate(sessionKey);
+    wake: (sessionKey: string, lane: ProjectionMaintenanceLane = "channel") => {
+      if (lane === "direct" && !isSlackDirectSessionKey(sessionKey)) {
+        return;
+      }
+      if (lane !== "direct") {
+        reconcileDetached.invalidate(sessionKey);
+      }
       prioritySessionKey = sessionKey;
-      maintenanceLane = "channel";
+      maintenanceLane = lane;
       if (stopped) {
         return;
       }

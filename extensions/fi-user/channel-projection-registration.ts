@@ -4,7 +4,7 @@ import {
   projectSlackChannelThread,
   registerSlackProjectionReconciler,
 } from "./channel-projection.js";
-import { recoverSlackDirectProjection } from "./direct-projection.js";
+import { isSlackDirectSessionKey, recoverSlackDirectProjection } from "./direct-projection.js";
 
 export { projectSlackChannelThread };
 
@@ -76,6 +76,15 @@ export function registerSlackChannelProjection(
     },
     { scope: "operator.admin" },
   );
+  api.on("message_received", (event, context) => {
+    if (context.channelId !== "slack") {
+      return;
+    }
+    const sessionKey = event.sessionKey ?? context.sessionKey;
+    if (sessionKey && isSlackDirectSessionKey(sessionKey)) {
+      reconciler.wake(sessionKey, "direct");
+    }
+  });
   api.on("message_sent", async (event, context) => {
     if (!event.success || context.channelId !== "slack" || !context.accountId) {
       return;
@@ -88,6 +97,10 @@ export function registerSlackChannelProjection(
     }
     if (/^agent:[^:]+:slack:(channel|group):[cg][a-z0-9]+$/i.test(sessionKey)) {
       reconciler.wake(sessionKey);
+      return;
+    }
+    if (isSlackDirectSessionKey(sessionKey)) {
+      reconciler.wake(sessionKey, "direct");
       return;
     }
     void projectSlackChannelThread({

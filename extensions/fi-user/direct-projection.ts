@@ -8,6 +8,10 @@ import { RECONCILE_HISTORY_BATCH_SIZE, takeSweepBatch } from "./reconciliation-b
 
 const DIRECT_SESSION =
   /^agent:(cellect-fi-user|cellect-fi-admin|cellect-main):slack:direct:([uw][a-z0-9]+)$/i;
+
+export function isSlackDirectSessionKey(sessionKey: string): boolean {
+  return DIRECT_SESSION.test(sessionKey);
+}
 type DirectReader = {
   botUserId: string;
   readDirect: (
@@ -124,6 +128,7 @@ export async function reconcileSlackDirectProjections(
   signal: AbortSignal,
   sweepSeen = new Set<string>(),
   limit = RECONCILE_HISTORY_BATCH_SIZE,
+  prioritySessionKey?: string,
 ) {
   const config = api.runtime.config?.current?.() ?? api.config;
   const configured = (config?.bindings ?? []).filter(
@@ -145,8 +150,14 @@ export async function reconcileSlackDirectProjections(
       }
     }
   }
+  if (prioritySessionKey && isSlackDirectSessionKey(prioritySessionKey)) {
+    sessions.add(prioritySessionKey);
+  }
   const sessionKeys = [...sessions].toSorted();
-  const scheduled = takeSweepBatch(sessionKeys, sweepSeen, limit);
+  const scheduled =
+    prioritySessionKey && sessions.has(prioritySessionKey)
+      ? [prioritySessionKey]
+      : takeSweepBatch(sessionKeys, sweepSeen, limit);
   const report = { scanned: sessions.size, created: 0, existing: 0, skipped: 0, error: 0 };
   const post = async (body: unknown) => {
     const response = await fetch(`${connection.baseUrl}/api/openclaw-session-projection`, {

@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerSlackChannelProjection } from "./channel-projection-registration.js";
 import {
   projectSlackChannelThread,
   registerSlackProjectionReconciler,
@@ -634,4 +635,113 @@ describe("Fi Slack channel publisher", () => {
       }
     },
   );
+
+  it("immediately snapshots the active DM on inbound and agent replies, without waiting for the history sweep", async () => {
+    vi.useFakeTimers();
+    const sessionKeys = [
+      "agent:cellect-main:slack:direct:u001",
+      "agent:cellect-main:slack:direct:u002",
+    ];
+    const targetSession = sessionKeys[1];
+    if (!targetSession) {
+      throw new Error("Expected test session");
+    }
+    const directBinding = {
+      sessionKey: targetSession,
+      roomId: "!direct-room",
+      sourceAccountId: "cellect-main",
+      externalSource: { channelId: "D002", peerSenderId: "U002" },
+    };
+    discovery.list.mockImplementation(({ agentId }) =>
+      agentId === "cellect-main"
+        ? sessionKeys.map((sessionKey) => ({ sessionKey, entry: {} }))
+        : [],
+    );
+    discovery.entry.mockImplementation(({ sessionKey }: { sessionKey: string }) => ({
+      accountId: "cellect-main",
+      nativeChannelId: sessionKey.endsWith("u002") ? "D002" : "D001",
+    }));
+    const readDirect = vi.fn(async (channelId: string, peerSenderId: string) => ({
+      directSource: { workspaceId: "T123", channelId, peerSenderId },
+      messages: [
+        { messageId: "1710000000.000001", senderId: peerSenderId, content: "hello", bot: false },
+        { messageId: "1710000000.000002", senderId: "U222", content: "hi", bot: true },
+      ],
+    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ status: "existing" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    let service: { start: () => void; stop: () => void } | undefined;
+    const hooks = new Map<string, Array<(event: never, context: never) => void>>();
+    const api = {
+      config: {
+        bindings: [
+          { agentId: "cellect-main", match: { channel: "slack", accountId: "cellect-main" } },
+        ],
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+      registerGatewayMethod: vi.fn(),
+      registerService: (value: typeof service) => {
+        service = value;
+      },
+      on: (name: string, handler: (event: never, context: never) => void) => {
+        hooks.set(name, [...(hooks.get(name) ?? []), handler]);
+      },
+      runtime: {
+        channel: {
+          runtimeContexts: {
+            get: ({ channelId }: { channelId: string }) =>
+              channelId === "matrix"
+                ? { list: async () => [directBinding] }
+                : { botUserId: "U222", readDirect },
+          },
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    registerSlackChannelProjection(api, () => ({
+      baseUrl: "https://fi.example",
+      token: "test-token",
+    }));
+    if (!service) {
+      throw new Error("Missing registered reconciler");
+    }
+    const inbound = hooks.get("message_received")?.[0];
+    const outbound = hooks.get("message_sent")?.[0];
+    if (!inbound || !outbound) {
+      throw new Error("Missing DM projection hooks");
+    }
+    service.start();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    inbound(
+      { sessionKey: targetSession } as never,
+      { channelId: "slack", accountId: "cellect-main", sessionKey: targetSession } as never,
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(readDirect).toHaveBeenLastCalledWith("D002", "U002");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      agentId: "cellect-main",
+      sessionKey: targetSession,
+      directSource: { workspaceId: "T123", channelId: "D002", peerSenderId: "U002" },
+      snapshot: {
+        complete: true,
+        messages: [
+          { messageId: "1710000000.000001", role: "user" },
+          { messageId: "1710000000.000002", role: "assistant", agentId: "cellect-main" },
+        ],
+      },
+    });
+
+    outbound(
+      { success: true, sessionKey: targetSession } as never,
+      { channelId: "slack", accountId: "cellect-main", sessionKey: targetSession } as never,
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    service.stop();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(readDirect).toHaveBeenCalledTimes(2);
+  });
 });
