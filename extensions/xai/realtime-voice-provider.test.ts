@@ -2698,7 +2698,9 @@ describe("buildLiteLlmRealtimeVoiceProvider", () => {
     expect(options.headers.Authorization).toBe("Bearer litellm-fi-test-key");
     expect(requireSession(socket)).toMatchObject({ voice, output_modalities: ["audio"] });
     if (model === "gemini-3.8-live") {
-      expect(requireSession(socket).audio?.output).toMatchObject({ transcription: {} });
+      expect(requireSession(socket)).toMatchObject({
+        audio: { output: { transcription: {} } },
+      });
     }
     expect(requireSession(socket)).not.toHaveProperty("reasoning");
     expect(requireSession(socket)).not.toHaveProperty("resumption");
