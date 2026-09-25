@@ -79,6 +79,8 @@ export function buildRealtimeVoiceAgentConsultWorkingResponse(
 /** Default safe tool allowlist for voice consults in read-only mode. */
 const SAFE_READ_ONLY_TOOLS = [
   "read",
+  // Fi's user API is GET-only and resolves access from a verified requester.
+  "fi_user_api",
   // Session reads retain OpenClaw's configured tools.sessions.visibility checks.
   "sessions_history",
   "sessions_search",
