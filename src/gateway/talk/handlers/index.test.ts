@@ -2128,6 +2128,7 @@ describe("talk.session unified handlers", () => {
         }),
         toolsAllow: [
           "read",
+          "fi_user_api",
           "sessions_history",
           "sessions_search",
           "tavily_search",
@@ -3266,6 +3267,7 @@ describe("talk.client.toolCall handler", () => {
     expect(mockCallArg(mocks.chatSend, 0, 2)).toMatchObject({
       toolsAllow: [
         "read",
+        "fi_user_api",
         "sessions_history",
         "sessions_search",
         "tavily_search",
@@ -3964,6 +3966,7 @@ describe("talk.client.create handler", () => {
         senderIsOwner: false,
         toolsAllow: [
           "read",
+          "fi_user_api",
           "sessions_history",
           "sessions_search",
           "tavily_search",
